@@ -40,3 +40,53 @@ Python for Scout/validation agents, PostgreSQL/Supabase for later persistent sto
 
 ## Immediate next work
 Implement a deterministic, offline Scout normalization and deduplication library with test fixtures. No outreach or external API keys required.
+
+## Granular release gates (each gate requires observed evidence)
+Status: M0 repository and roadmap present; all implementation gates below pending until verified. Gate completion is binary; do not infer completion from version numbers.
+| Gate | Deliverable / acceptance test |
+|---|---|
+| E01 | Repository inventory and pinned reuse-source commit |
+| E02 | Reuse dependency, license and security audit |
+| E03 | Reproducible local test command |
+| E04 | CI executes unit tests on pull requests |
+| E05 | Opportunity schema rejects malformed input |
+| E06 | Source URL and retrieval timestamp preserved |
+| E07 | Stable identifiers and duplicate detection |
+| E08 | Currency and deadline normalization |
+| E09 | Offline procurement fixtures |
+| E10 | Read-only procurement adapter |
+| E11 | Rate limits, retries and pagination |
+| E12 | Source failure and stale-data handling |
+| E13 | Council deterministic scoring |
+| E14 | Missing evidence and rejection reason codes |
+| E15 | Council task delegation and bounded retries |
+| E16 | Governor default-deny action policy |
+| E17 | Emergency halt and restart tests |
+| E18 | Persistent opportunity and event storage |
+| E19 | Database migration and access isolation tests |
+| E20 | Buyer/supplier profile schema |
+| E21 | Supply-demand matching and qualification |
+| E22 | Cost, fee and probability-adjusted return calculation |
+| E23 | Property intelligence adapter and licensing gate |
+| E24 | Draft-only quotation request generation |
+| E25 | Correspondence thread and recipient verification |
+| E26 | Browser sandbox with allowlisted domains |
+| E27 | Document extraction and untrusted-input isolation |
+| E28 | Contract template and obligation tracking |
+| E29 | Signature sandbox and authority verification |
+| E30 | Mock invoice and reconciliation |
+| E31 | Idempotency and interrupted workflow recovery |
+| E32 | End-to-end simulated deal with audit trail |
+| E33 | Dashboard opportunity Matrix |
+| E34 | Council and activity dashboard |
+| E35 | Revenue and exposure dashboard |
+| E36 | Authentication and role authorization |
+| E37 | Security, dependency and secret scanning |
+| E38 | Performance and failure-injection tests |
+| E39 | Preview deployment and end-to-end smoke tests |
+| E40 | Release packaging, runbook and recovery drill |
+| E41 | Independent legal and commercial readiness review |
+| E42 | Verified release candidate; live operations remain gated |
+
+## Shared engineering directive
+Use relevant installed plugins where access and task fit are confirmed: Superpowers for planning/TDD/review, GitHub for source and CI, Linear for milestones, Supabase for isolated database work, Vercel for previews, Figma for design, PostHog for observability, TinyFish for permitted browser research/testing, Gmail/Drive/Calendar/Contacts/DocuSign for sandbox or authorized commercial integration. Do not force irrelevant calls, copy secrets, expose private data in public repositories, incur unapproved costs, or mistake installed plugins for runtime credentials. Maximize useful work within available time, context and tool limits; batch independent reads, parallelize isolated tasks when supported, and avoid redundant scans. Prioritize implementation and verification over status-only commits. Each report must identify completed gate IDs, changed files, exact commit/PR, observed tests, remaining blockers, next gate and verified gate count out of 42. Keep Nexus Operative independent and read-only as a reuse source during Exchange work.
