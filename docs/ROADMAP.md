@@ -90,3 +90,11 @@ Status: M0 repository and roadmap present; all implementation gates below pendin
 
 ## Shared engineering directive
 Use relevant installed plugins where access and task fit are confirmed: Superpowers for planning/TDD/review, GitHub for source and CI, Linear for milestones, Supabase for isolated database work, Vercel for previews, Figma for design, PostHog for observability, TinyFish for permitted browser research/testing, Gmail/Drive/Calendar/Contacts/DocuSign for sandbox or authorized commercial integration. Do not force irrelevant calls, copy secrets, expose private data in public repositories, incur unapproved costs, or mistake installed plugins for runtime credentials. Maximize useful work within available time, context and tool limits; batch independent reads, parallelize isolated tasks when supported, and avoid redundant scans. Prioritize implementation and verification over status-only commits. Each report must identify completed gate IDs, changed files, exact commit/PR, observed tests, remaining blockers, next gate and verified gate count out of 42. Keep Nexus Operative independent and read-only as a reuse source during Exchange work.
+
+## Sprint 01 — candidate evidence (review branch)
+- E01: repository inventory and Operative reference pinned in docs/SCOUT_FOUNDATION.md.
+- E02: preliminary audit; licensing and full security review remain pending. No code copied.
+- E03, E05–E09: Scout implementation and offline fixtures tested locally (six tests); require matching remote blobs and integration review before recording on main.
+- E04: workflow added; hosted execution not yet observed.
+- Verified main implementation gates: 0/42 until integration. Candidate locally supported gates: E01, E03, E05–E09 (7/42).
+- Next: CI evidence, review source identity and malformed inputs, then authorized read-only procurement adapter E10–E12.
