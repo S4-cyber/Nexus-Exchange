@@ -219,3 +219,40 @@ class ScenarioEvidenceTests(unittest.TestCase):
                 self.verify(store,key)
             with self.assertRaises(ValueError):
                 self.coverage(store)
+
+    def test_complete_reference_coverage_is_not_factual_verification(self):
+        with ScenarioEvidenceStore(self.db) as store:
+            for field in ASSUMPTION_FIELDS:
+                self.attach(store,field)
+            report=self.coverage(store)
+            self.assertEqual(report["referenced"],17)
+            self.assertEqual(report["independently_verified_count"],0)
+            for flag in ("independently_verified","genesis_verified","execution_eligible","external_authority"):
+                self.assertIs(report[flag],False)
+            self.assertTrue(all(f["state"]=="REFERENCE_NOTED_UNVERIFIED" for f in report["fields"]))
+
+    def test_cross_connection_replay_and_no_private_payload(self):
+        with ScenarioEvidenceStore(self.db) as first, ScenarioEvidenceStore(self.db) as second:
+            key=self.attach(first)
+            self.assertEqual(self.attach(second),key)
+            rows=second.db.execute("SELECT payload FROM scout_assumption_evidence_v1").fetchall()
+            self.assertEqual(len(rows),1)
+            for private in (str(self.file),self.file.name,"synthetic terms fixture"):
+                self.assertNotIn(private,rows[0][0])
+
+    def test_supersession_during_recheck_blocks_return(self):
+        from nexus_exchange.evidence import verify_reference
+        with ScenarioEvidenceStore(self.db) as store:
+            key=self.attach(store)
+            def changed(path,reference,**kwargs):
+                result=verify_reference(path,reference,**kwargs)
+                later=NOW+timedelta(seconds=1)
+                updated=copy.deepcopy(self.report)
+                updated["leads"][0]["retrieved_at"]=later.isoformat()
+                with ScenarioStore(self.db) as other:
+                    other.record(updated,now=later,halted=False)
+                return result
+            with patch("nexus_exchange.scenario_evidence.verify_reference",side_effect=changed):
+                with self.assertRaises(ValueError):
+                    self.verify(store,key)
+            self.assertFalse(store.db.in_transaction)
