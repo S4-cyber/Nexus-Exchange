@@ -83,3 +83,12 @@ def decide_canada_read(*, approved=None, halted=None):
     if approved is not True:
         return Decision(False, "CANADA_READ_CONSENT_REQUIRED")
     return Decision(True, "CANADA_OPEN_TENDERS_ONLY")
+
+
+def decide_usaspending_read(*, approved=None, halted=None):
+    """Trusted UI consent for one bounded public prime award search only."""
+    if halted is not False:
+        return Decision(False, "HALTED_OR_UNKNOWN")
+    if approved is not True:
+        return Decision(False, "USASPENDING_READ_CONSENT_REQUIRED")
+    return Decision(True, "USASPENDING_PRIME_AWARD_RESEARCH_ONLY")

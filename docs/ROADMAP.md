@@ -208,3 +208,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R05/R06/E18/E31/E33: unified source-scoped historical observation store for four procurement adapters, automatic guarded persistence before successful task logging, bounded SQLite transactions, canonical report projection, replay and conflict protection, source/title search and explicit export. Historical display rechecks stale/expired records and known later UK events; no previous eligibility or authority persisted as current. Nine new regression methods; CI/build pending.
 - Previous CanadaBuys candidate 45bc03d707d468bf75d3a1552b796aca00a98dbd passed 158 tests (45532423219) and Windows 45532423258 (artifact 14985557823). No new dependencies or paid service. Existing compiled OCDS archive unchanged. Main accepted gates remain 0/42.
 - Next: live source validation and lifecycle reconciliation, USAspending contractor intelligence, durable lead-bound To Do and owner profile evidence, safe restart/interrupt handling, consolidation. See docs/SCOUT_LEAD_MEMORY.md.
+
+
+## USAspending contractor intelligence pilot
+- S03/R03/R05/E10–E12/E18/E20: bounded official prime-award search by NAICS and signed-date range; preserve contractor and award identity separately from active tenders, never award amounts as revenue. Native search, source-specific checklist and unified historical memory. Ten regression methods; CI/build pending at entry.
+- Reuse official USAspending API contract pinned 24290f79dbec0e07238cd4e890a9e3ef6044d984 (CC0). No upstream code copied. No actual provider request, paid service or commercial dispatch during development. Next: authorized live validation, subaward discovery, owner capability/profile and durable evidence tasks.
+- Prior unified lead memory head ac7c4184e3129579d7cbd5762d2bd4713679f4c1: 167 tests passed; Windows 45532680488 artifact 14985935006 passed. Main formal acceptance remains 0/42 pending consolidation/review.
