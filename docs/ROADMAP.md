@@ -149,3 +149,11 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - Reuse: existing Atlas, Governor and Scout, Python Decimal context. No third-party dependency or code copy; no additional spending. See docs/ECONOMICS.md for formulas, assumptions and limitations.
 - E22 remains partial: assumption evidence, legal liability modeling, UI integration, scenario persistence and actual quote verification pending. E20/E21 remain partial pending source verification and desktop integration. Main accepted gates remain 0/42; all implementation branches are review candidates.
 - Next: local scenario input bound to archived observations, integrate Atlas/economics into Windows preview; consolidate branch stack; durable halt and recovery; permitted source collection.
+
+
+## Desktop deal simulator candidate
+- E20–E22/E33–E34: imported scenario resolves an exact latest historical observation among newest 100 rows for the selected release-scoped key; Atlas and fee-only economics evaluate at explicit current time. Report includes raw input SHA-256, normalized source assertion, profiles, terms, exact-decimal results and reasons. No live transaction authority.
+- E18/E31: existing task journal records completion/cancellation/failure; report export is explicit JSON; full automatic scenario persistence and cross-release supersession still pending.
+- E38–E40: seven additional scenario/integration test methods; Windows packaging branch enabled with existing source and frozen GUI smoke checks. Results pending at entry. Prior economics head 215d44c1c579ee6006c6a20c19bfb200e4359148 passed CI run 45527912902.
+- Reuses existing Governor, archive, strict import helpers, Atlas, economics and desktop journal. No new runtime dependencies or external actions.
+- Main formal accepted gates remain 0/42; consolidate review stack and verify full integrated build before release. Next: review and consolidate, persistent halt/restart recovery, source-specific collection and independently verified counterparty/quote evidence.

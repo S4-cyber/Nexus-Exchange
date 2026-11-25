@@ -13,6 +13,7 @@ from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
+from nexus_exchange.scenario_import import evaluate_scenario
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -83,7 +84,7 @@ def main(*, data_directory=None, gui_smoke=False):
     from tkinter.scrolledtext import ScrolledText
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
-    root.geometry("980x760")
+    root.geometry("1080x820")
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     if gui_smoke:
         root.withdraw()
@@ -92,6 +93,7 @@ def main(*, data_directory=None, gui_smoke=False):
     executor = ThreadPoolExecutor(max_workers=1)
     stop = Event()
     future = None
+    scenario_report = None
     def close():
         stop.set()
         executor.shutdown(wait=True, cancel_futures=True)
@@ -113,7 +115,7 @@ def main(*, data_directory=None, gui_smoke=False):
         history.heading(key,text=label)
         history.column(key,width=220 if key=="time" else 160)
     history.pack(fill="both",padx=20,pady=8)
-    output = tk.Text(root,height=8,wrap="word")
+    output = ScrolledText(root,height=8,wrap="word")
     output.pack(fill="both",expand=True,padx=20,pady=16)
     output.configure(state="disabled")
     status = ttk.Label(root)
@@ -144,23 +146,28 @@ def main(*, data_directory=None, gui_smoke=False):
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
-    def worker(work=None, target="Offline screening"):
+    def worker(work=None, target="Offline screening", scenario=False):
         local = EventStore(directory / "events.sqlite3")
         try:
+            if scenario:
+                return run_logged(local, stop, work=work, target=target)
             with OpportunityArchive(directory / "archive.sqlite3") as archive:
                 return run_logged(local, stop, archive, work=work, target=target)
         finally:
             local.close()
-    def run(work=None, target="Offline screening"):
-        nonlocal future
+    def run(work=None, target="Offline screening", scenario=False):
+        nonlocal future, scenario_report
         if stop.is_set() or future is not None:
             return
         launch.configure(state="disabled")
         importer.configure(state="disabled")
-        future = executor.submit(worker, work, target)
+        simulator.configure(state="disabled")
+        scenario_report = None
+        exporter.configure(state="disabled")
+        future = executor.submit(worker, work, target, scenario)
         poll()
     def poll():
-        nonlocal future
+        nonlocal future, scenario_report
         refresh()
         if not future.done():
             root.after(100,poll)
@@ -168,7 +175,12 @@ def main(*, data_directory=None, gui_smoke=False):
         output.configure(state="normal")
         output.delete("1.0","end")
         try:
-            for item in future.result():
+            result = future.result()
+            if type(result) is dict:
+                scenario_report = result
+                output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
+                exporter.configure(state="normal")
+            for item in (() if type(result) is dict else result):
                 o=item.observation.opportunity
                 output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nHistorical observation; source assertions are unverified.\n")
         except Exception as exc:
@@ -180,16 +192,19 @@ def main(*, data_directory=None, gui_smoke=False):
             if not stop.is_set():
                 launch.configure(state="normal")
                 importer.configure(state="normal")
+                simulator.configure(state="normal")
     def halt():
         stop.set()
         launch.configure(state="disabled")
         importer.configure(state="disabled")
+        simulator.configure(state="disabled")
         halt_status.configure(text="HALTED — new tasks blocked")
     def resume():
         if future is None:
             stop.clear()
             launch.configure(state="normal")
             importer.configure(state="normal")
+            simulator.configure(state="normal")
             halt_status.configure(text="Offline ready")
     def import_file():
         if stop.is_set() or future is not None:
@@ -197,6 +212,23 @@ def main(*, data_directory=None, gui_smoke=False):
         path = filedialog.askopenfilename(parent=root,filetypes=[("Compiled snapshot manifest","*.json")])
         if path:
             run(partial(evaluate_file,path),target="Local compiled snapshot import")
+    def import_scenario():
+        if stop.is_set() or future is not None:
+            return
+        path = filedialog.askopenfilename(parent=root,filetypes=[("Deal scenario JSON","*.json")])
+        if path:
+            run(partial(evaluate_scenario,path,directory / "archive.sqlite3"),
+                target="Offline deal simulation",scenario=True)
+    def export_scenario():
+        if scenario_report is None:
+            return
+        path = filedialog.asksaveasfilename(parent=root,defaultextension=".json",
+            filetypes=[("JSON","*.json")],initialfile="nexus-deal-report.json")
+        if path:
+            try:
+                export_report(path,scenario_report)
+            except OSError as exc:
+                messagebox.showerror("Export failed",type(exc).__name__,parent=root)
     def browse_archive():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Historical opportunities")
@@ -245,6 +277,12 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(controls,text="Emergency halt",command=halt).pack(side="left")
     ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
     ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
+    simulation_controls = ttk.Frame(root)
+    simulation_controls.pack(pady=5)
+    simulator = ttk.Button(simulation_controls,text="Evaluate deal scenario JSON",command=import_scenario)
+    simulator.pack(side="left")
+    exporter = ttk.Button(simulation_controls,text="Export deal report",command=export_scenario,state="disabled")
+    exporter.pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
     if gui_smoke:
