@@ -12,6 +12,7 @@ from nexus_exchange.event_store import EventStore
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
+from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
@@ -803,8 +804,63 @@ def main(*, data_directory=None, gui_smoke=False):
                 message.configure(text=str(exc))
             except Exception:
                 message.configure(text="Save failed. Reload before retrying.")
+        def pick_evidence(path=None):
+            if not tree.selection() or data is None:
+                return False
+            try:
+                current_context()
+                if path is None:
+                    path=filedialog.askopenfilename(parent=window,title="Select local evidence file")
+                if not path:
+                    return False
+                ref=fingerprint(path,halted=stop.is_set(),halt_check=stop.is_set)
+                current_context()
+                state.set(labels["evidence_noted"])
+                reference.set(ref)
+                message.configure(text="File fingerprint created. Save selected task to retain it. Contents and path are not stored.")
+                return True
+            except (EvidenceError,PermissionError,ValueError):
+                message.configure(text="File fingerprint unavailable, invalid or context changed. Reload and select a local file.")
+                return False
+            except Exception:
+                message.configure(text="Unable to fingerprint file.")
+                return False
+        def check_evidence(path=None):
+            selection=tree.selection()
+            if not selection or data is None:
+                return None
+            key=selection[0]
+            try:
+                with ChecklistStore(directory / "scout-todo.sqlite3") as store:
+                    latest=store.load(current_context(),halted=stop.is_set())
+                if latest["revision"]!=data["revision"]:
+                    raise ValueError("Checklist changed")
+                saved=next(t for t in latest["tasks"] if t["key"]==key)
+                if saved["state"]!="evidence_noted" or not saved["reference"].startswith("sha256:"):
+                    message.configure(text="Save a file fingerprint for this task first.")
+                    return None
+                if path is None:
+                    path=filedialog.askopenfilename(parent=window,title="Reselect evidence file to check")
+                if not path:
+                    return None
+                result=verify_reference(path,saved["reference"],halted=stop.is_set(),halt_check=stop.is_set)
+                with ChecklistStore(directory / "scout-todo.sqlite3") as store:
+                    again=store.load(current_context(),halted=stop.is_set())
+                if again["revision"]!=latest["revision"]:
+                    raise ValueError("Checklist changed")
+                message.configure(text=("Byte fingerprint matches saved reference." if result["byte_match"]
+                    else "File differs from saved fingerprint.")+" Content accuracy, origin and authorization remain unverified.")
+                return result
+            except (EvidenceError,PermissionError,ValueError):
+                message.configure(text="Check unavailable or evidence/context changed. Reload before retrying.")
+                return None
+            except Exception:
+                message.configure(text="Unable to check local evidence.")
+                return None
         buttons=ttk.Frame(window)
         buttons.pack(pady=6)
+        ttk.Button(buttons,text="Fingerprint evidence file",command=pick_evidence).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Check saved fingerprint",command=check_evidence).pack(side="left",padx=5)
         ttk.Button(buttons,text="Save selected task",command=save).pack(side="left")
         ttk.Button(buttons,text="Reload",command=reload).pack(side="left",padx=8)
         tree.bind("<<TreeviewSelect>>",select)
@@ -812,14 +868,20 @@ def main(*, data_directory=None, gui_smoke=False):
         if smoke:
             if data is None or not tasks:
                 raise RuntimeError("checklist GUI failed to load")
-            state.set(labels["evidence_noted"])
-            reference.set("Synthetic GUI smoke reference")
+            synthetic=directory / "aegis-smoke-evidence.txt"
+            synthetic.write_bytes(b"Synthetic evidence fixture")
+            if not pick_evidence(synthetic):
+                raise RuntimeError("evidence GUI failed to fingerprint")
             save()
             if data["evidence_noted"]!=1:
                 raise RuntimeError("checklist GUI failed to save")
             reload()
             if data is None or data["evidence_noted"]!=1:
                 raise RuntimeError("checklist GUI failed to reload")
+            checked=check_evidence(synthetic)
+            if checked is None or not checked["byte_match"] or checked["independently_verified"]:
+                raise RuntimeError("evidence GUI failed to compare saved fingerprint")
+            synthetic.unlink()
         return window
     def browse_leads():
         window=tk.Toplevel(root)
