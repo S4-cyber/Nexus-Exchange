@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from pathlib import Path
@@ -14,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
 from nexus_exchange.scenario_import import evaluate_scenario
+from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -229,6 +231,73 @@ def main(*, data_directory=None, gui_smoke=False):
                 export_report(path,scenario_report)
             except OSError as exc:
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
+    def revenue_workspace():
+        window = tk.Toplevel(root)
+        window.title("Nexus Exchange | Scout revenue pathways")
+        window.geometry("900x760")
+        ttk.Label(window,text="SCOUT — Revenue pathways",font=("Segoe UI",18)).pack(pady=10)
+        ttk.Label(window,text="Planning only. Budget entries do not connect a bank or authorize spending.").pack()
+        settings = ttk.Frame(window)
+        settings.pack(fill="x",padx=15,pady=10)
+        mode = tk.StringVar(value=Mode.GENESIS.value)
+        source = tk.StringVar(value=SOURCES[0].key)
+        budget = tk.StringVar(value="0")
+        exposure = tk.StringVar(value="")
+        for i,(label,var,values) in enumerate((
+                ("Pathway",mode,[m.value for m in Mode]),
+                ("Official source",source,[s.key for s in SOURCES]),
+                ("USD planning budget",budget,None),
+                ("USD maximum cash exposure (blank = unknown)",exposure,None))):
+            ttk.Label(settings,text=label).grid(row=i,column=0,sticky="w",pady=3)
+            widget=ttk.Combobox(settings,textvariable=var,values=values,state="readonly") if values else ttk.Entry(settings,textvariable=var)
+            widget.grid(row=i,column=1,sticky="ew",padx=8)
+        settings.columnconfigure(1,weight=1)
+        prerequisites = ttk.Label(window,wraplength=850,justify="left")
+        prerequisites.pack(fill="x",padx=15,pady=6)
+        flags={key:tk.BooleanVar(value=False) for key,_ in CHECKS}
+        checklist=ttk.LabelFrame(window,text="To do — owner assertions only, independent verification required")
+        checklist.pack(fill="x",padx=15,pady=8)
+        for key,instruction in CHECKS:
+            ttk.Checkbutton(checklist,text=instruction,variable=flags[key]).pack(anchor="w",padx=6,pady=3)
+        result=ttk.Label(window,wraplength=850,justify="left")
+        result.pack(fill="x",padx=15,pady=8)
+        def refresh_plan():
+            try:
+                selected=next(s for s in SOURCES if s.key==source.get())
+                prerequisites.configure(text=selected.title+"\n"+"\n".join("• "+p for p in selected.prerequisites))
+                plan=plan_lead(Mode(mode.get()),source.get(),budget=budget.get(),
+                    exposure=exposure.get() or None,confirmed=tuple(k for k,v in flags.items() if v.get()),
+                    halted=stop.is_set())
+                result.configure(text=("Checklist entered — independent lead review required." if plan.ready_for_review
+                    else "Blocked: "+", ".join(plan.reasons))+"\nExternal authority: none.")
+            except (ValueError,PermissionError) as exc:
+                result.configure(text="Blocked: "+str(exc))
+        def reset_checks(*unused):
+            for flag in flags.values():
+                flag.set(False)
+            if mode.get()==Mode.GENESIS.value and budget.get()!="0":
+                budget.set("0")
+            refresh_plan()
+        def open_source():
+            # Explicit owner click opens only a fixed official homepage in their browser.
+            # No automated fetch, login, form filling or credential handling.
+            if stop.is_set():
+                result.configure(text="Halted. Resume before opening Scout sources.")
+                return
+            try:
+                webbrowser.open(source_url(source.get()),new=2)
+            except (ValueError,OSError) as exc:
+                result.configure(text="Browser unavailable: "+type(exc).__name__)
+        for var in (source,mode,budget,exposure):
+            var.trace_add("write",reset_checks)
+        for flag in flags.values():
+            flag.trace_add("write",lambda *unused:refresh_plan())
+        buttons=ttk.Frame(window)
+        buttons.pack(pady=8)
+        ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
+        ttk.Button(buttons,text="Refresh checklist",command=refresh_plan).pack(side="left")
+        refresh_plan()
+        return window
     def browse_archive():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Historical opportunities")
@@ -283,13 +352,16 @@ def main(*, data_directory=None, gui_smoke=False):
     simulator.pack(side="left")
     exporter = ttk.Button(simulation_controls,text="Export deal report",command=export_scenario,state="disabled")
     exporter.pack(side="left")
+    ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
     if gui_smoke:
         window = browse_archive()
+        pathway_window = revenue_workspace()
         root.update_idletasks()
         root.update()
         window.destroy()
+        pathway_window.destroy()
         close()
         return
     root.mainloop()

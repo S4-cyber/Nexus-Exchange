@@ -163,3 +163,10 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - Consolidate the tested desktop simulator (d4e56a114862736e658eb11640917cae71cb7413) and independent handoff/research/protocol branches into a single main-targeting integration candidate. Preserve bounded archive, exclude parallel review-result store, consolidate CI and update README. See docs/INTEGRATION_BASELINE.md.
 - Prior desktop simulator Windows run 45528842172 completed successfully, artifact 14983957296. New combined test suite expected 91; exact-head CI pending.
 - E15: hardened non-privileged handoff scaffold, independent evidence verifier and actual delegation remain pending. E03/E04/E38/E40: consolidated verification required. Formal main accepted gates remain 0/42 until review and promotion.
+
+
+## Owner directive — dual revenue pathway and native Scout internet workspace
+- See docs/REVENUE_PATHWAYS.md; R01–R10 are granular subgates of existing E01–E42, not additional release gates. Genesis starts at $0, Catalyst models an optional owner-defined budget; earned revenue is separate from restricted funding. Prioritize demonstrably zero pre-payment cash exposure, digital deliverability, independently verifiable eligibility and evidence.
+- R01/R02 candidate: native Scout pathway planning and checklist UI, fixed official SAM/SBA/Grants source links, cost/authority gates, seven new regression tests. User click opens default browser; embedded browser and automated acquisition remain pending. No bank connected or transfer enabled. Checkboxes are assertions only, not permissions.
+- R03 next: official SAM public API adapter with secure key handling, quotas, bounded pagination, read-only authorization and explicit source verification. R04/R05: secure owner profile and persistent lead-specific evidence/checklists.
+- Prior consolidated baseline 6c8f5e5aa1cf971c7a9fc7235d788b3a1e6b3ef4 passed Windows run 45529112749 and unit run 45529126511, still draft PR #21. Main acceptance remains 0/42; no new formal gate acceptance.
