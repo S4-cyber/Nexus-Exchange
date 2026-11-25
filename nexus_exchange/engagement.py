@@ -65,7 +65,7 @@ def compile_brief(path, profile, bank, now, stopped):
         with RankingStore(path) as store:
             ranks = store.rank_review(profile=effective, now=now, halted=False,
                                       operator_focus=True, limit=15)
-        return [dict(title=r["title"], source=r["source"], url=r["source_url"],
+        return [dict(title=r["title"], source=r["source"], notice_id=r["notice_id"], url=r["source_url"],
                      review=r["review_tier"], next_step=r["operator_capability"]["review_tasks"][0])
                 for r in ranks["rows"] if r["source"] in profile["sources"]]
     with LeadStore(path) as store:
@@ -74,7 +74,7 @@ def compile_brief(path, profile, bank, now, stopped):
     for lead in leads:
         ensure_active(stopped)
         fit = assess_lead(lead, source_hold=None, halted=False)
-        rows.append(dict(title=lead["title"], source=lead["source"], url=lead["source_url"],
+        rows.append(dict(title=lead["title"], source=lead["source"], notice_id=lead["notice_id"], url=lead["source_url"],
                          review=fit["state"], next_step=fit["review_tasks"][0]))
     order = ("IMPLEMENTED_TITLE_HINT_ONLY", "NO_IMPLEMENTED_TITLE_HINT", "SOURCE_HELD")
     rows.sort(key=lambda r: order.index(r["review"]))

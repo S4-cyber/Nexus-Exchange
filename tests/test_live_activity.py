@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from nexus_exchange.activity_feed import ActivityFeed
+from nexus_exchange.activity_feed import ActivityFeed, with_shortlist
 from nexus_exchange.engagement import cycle
 from nexus_exchange.engagement_files import folder, INBOX, OUTPUTS, run_files
 from nexus_exchange.event_store import EventStore
@@ -36,6 +36,17 @@ class LiveActivityTests(unittest.TestCase):
         rows = self.feed.snapshot()
         self.assertFalse(any(r[1] in ("Pending", "Engaged") for r in rows))
         self.assertEqual(sum(r[1] == "Finding" for r in rows), sum(data[k]["returned"] for k in ("uk_tender","canada")))
+
+    def test_previous_brief_is_searchable_on_upgrade_without_duplicate_live_findings(self):
+        previous = dict(finished=NOW.isoformat(), shortlist=[dict(source="canada", title="Earlier result",
+                        url="https://example.org/notice", review="SOURCE_HELD", next_step="Check requirements.")])
+        prior, = with_shortlist([], previous)
+        self.assertEqual(prior[1:3], ("Finding", "Earlier result"))
+        current = ("finding-unique", "Finding", "Earlier result", "CanadaBuys\nhttps://example.org/notice", NOW.isoformat())
+        merged, = with_shortlist([current], previous)
+        self.assertEqual(merged[0], "finding-unique")
+        self.assertIn("Check requirements.", merged[3])
+        self.assertIn("CanadaBuys", merged[3])
 
     def test_interrupt_and_reopen_clear_only_unfinished_rows(self):
         self.feed.put("one", [("a", "Completed", "Searched", ""), ("b", "Finding", "Notice", ""),

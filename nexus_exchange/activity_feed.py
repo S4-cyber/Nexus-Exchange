@@ -68,8 +68,31 @@ class ActivityFeed:
         return sorted(by_key.values(), key=lambda row: row[4], reverse=True)
 
 
+def finding_key(source, notice_id):
+    return "finding-" + sha256((source + "\0" + notice_id).encode()).hexdigest()
+
+
+def with_shortlist(rows, brief):
+    """Make the latest review reasoning searchable, including briefs saved before the feed."""
+    if not brief:
+        return rows
+    result = {row[0]: row for row in rows}
+    old_keys = {(title, detail.splitlines()[-1]): key for key, state, title, detail, stamp in rows
+                if state == "Finding" and detail}
+    for item in brief["shortlist"]:
+        title, url = item["title"], item["url"]
+        key = (finding_key(item["source"], item["notice_id"]) if item.get("notice_id") else
+               old_keys.get((title, url)) or finding_key("previous-brief", title + "\0" + url))
+        existing = result.get(key)
+        stamp = existing[4] if existing else brief["finished"]
+        detail = existing[3] if existing else url
+        reason = item["review"].replace("_", " ").lower()
+        note = "Latest shortlist · " + reason + "\n" + item["next_step"]
+        result[key] = (key, "Finding", title, note + "\n" + detail, stamp)
+    return sorted(result.values(), key=lambda row: row[4], reverse=True)
+
+
 def finding_row(source, label, lead):
-    identity = sha256((source + "\0" + lead["notice_id"]).encode()).hexdigest()
     lines = [label + " · " + lead["notice_id"]]
     deadline = lead.get("deadline") or lead.get("earliest_deadline_date")
     if deadline:
@@ -78,4 +101,4 @@ def finding_row(source, label, lead):
     if tasks and isinstance(tasks[0].get("instruction"), str):
         lines.append(tasks[0]["instruction"])
     lines.append(lead["source_url"])
-    return ("finding-" + identity, "Finding", lead["title"], "\n".join(lines))
+    return (finding_key(source, lead["notice_id"]), "Finding", lead["title"], "\n".join(lines))

@@ -7,7 +7,7 @@ import webbrowser
 from queue import Empty, SimpleQueue
 from nexus_exchange import engagement
 from nexus_exchange.engagement_reports import EngagementReports
-from nexus_exchange.activity_feed import ActivityFeed, finding_row
+from nexus_exchange.activity_feed import ActivityFeed, finding_row, with_shortlist
 from nexus_exchange.activity_panel import ActivityPanel
 from nexus_exchange.engagement_files import folder as work_folder, INBOX, OUTPUTS
 from nexus_exchange.accounts_panel import install as install_accounts
@@ -208,13 +208,14 @@ def main(*, data_directory=None, gui_smoke=False):
     feed = ActivityFeed(store.db)
     feed.settle()
     version = None
+    latest_brief = None
 
     def refresh():
         nonlocal version
-        revision = (store.db.execute("PRAGMA data_version").fetchone()[0], store.db.total_changes, next_due)
+        revision = (store.db.execute("PRAGMA data_version").fetchone()[0], store.db.total_changes, next_due, latest_brief and latest_brief["finished"])
         if revision == version:
             return
-        rows = feed.snapshot()
+        rows = with_shortlist(feed.snapshot(), latest_brief)
         if next_due is not None:
             rows.insert(0, ("next-cycle", "Pending", "Next Scout cycle",
                             "Scheduled for " + next_due.astimezone().strftime("%H:%M %Z") + " while the application is open.",
@@ -1537,9 +1538,9 @@ def main(*, data_directory=None, gui_smoke=False):
 
     def summarize(brief):
         found = sum(item["found"] for item in brief["sources"])
-        return (f"{brief['status']} · {found} notices returned · {len(brief['shortlist'])} saved leads shortlisted"
-                + f" · {brief['jobs']['produced']} local files produced"
-                + (f" · {len(brief['notes'])} review notes" if brief["notes"] else ""))
+        jobs = brief["jobs"]
+        return (f"{brief['status']} · Notices {found} · Shortlisted {len(brief['shortlist'])}"
+                f" · Files created {jobs['produced']} · Files held {jobs['held']}")
 
     def open_brief():
         tabs.select(reports)
@@ -1566,7 +1567,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.after(100, poll_cycle)
 
     def poll_cycle():
-        nonlocal future, timer, next_due
+        nonlocal future, timer, next_due, latest_brief
         while True:
             try:
                 stage = updates.get_nowait()
@@ -1581,6 +1582,7 @@ def main(*, data_directory=None, gui_smoke=False):
             brief = future.result()
             next_status = summarize(brief)
             review.display(brief)
+            latest_brief = brief
         except Exception:
             next_status = "Cycle interrupted. Review Reports for the recorded task status."
         future = None
@@ -1664,8 +1666,11 @@ def main(*, data_directory=None, gui_smoke=False):
     try:
         previous = read_brief()
         review.display(previous)
+        latest_brief = previous
+        refresh()
         cycle_status.configure(text=("Last cycle · " + summarize(previous)) if previous else "Ready for the first search.")
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError):
+        latest_brief = None
         review.display(None, error="Select Engage to rebuild the latest brief from the lead archive.")
         cycle_status.configure(text="Select Engage to rebuild the latest brief.")
     refresh_accounts = install_accounts(accounts, directory, account_task, busy, webbrowser.open)
