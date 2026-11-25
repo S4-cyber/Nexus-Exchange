@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from nexus_exchange.database_backup import create_backup,restore_backup,verify_backup,MANIFEST
 from nexus_exchange.runtime_guard import RuntimeGuard
-from nexus_exchange.owner_profile import ProfileStore
+from nexus_exchange.owner_profile import ProfileStore, normalize_profile
 from test_owner_profile import profile
 
 
@@ -51,7 +51,7 @@ class DatabaseBackupTests(unittest.TestCase):
             self.assertTrue(guard.is_set())
             guard.resume()
             with ProfileStore(self.dest/"owner-profile.sqlite3") as store:
-                self.assertEqual(store.load(halted=False),profile())
+                self.assertEqual(store.load(halted=False),normalize_profile(profile()))
 
     def test_confirmation_denied_before_destination(self):
         for value in (None,False,1,"true"):
