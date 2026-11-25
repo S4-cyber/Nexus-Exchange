@@ -1,0 +1,16 @@
+# Native Council review and audit dashboard (review candidate)
+
+E13/E15/E34/E38/E40. Build on runtime head 4b774c390b3c240440f30c233eb4ad628fbe0e98. Its Linux unit CI 45548137421 passed; Windows 45548137356 failed in unit fixture cleanup (WinError 32, test_corrupt_ledger_and_missing_existing_schema_fail_closed). SQLite connection context manager did not close the handle. Fix fixture with contextlib.closing plus transaction context; no suppression of cleanup or production errors. Candidate fix 1af1fb1e2b6974d9c0eb754a3748b1bdadd88fb4. Preserve PR #48 unchanged.
+
+## Design
+- Council workspace is bound to one explicitly selected saved plan; no unsaved form values, arbitrary paths, supplied verdicts or callbacks from agent data. All four operations are routed via the desktop's worker-future exclusion and RuntimeGuard's owner-thread fixed action facade. No new permission boundary or autonomous worker.
+- Separate local inspection (no attempt), explicit registration, explicit single review attempt, historical audit refresh and historical attempt selection. Opening the workspace does not register or reserve. Local inspection is always timestamped and unverified; terminal ledger state and next attempt are visible. History is historical only, not a current decision. Legacy/reserved/interrupted rows do not fabricate snapshots.
+- Preserve plan scope, exact expected net/exposure strings, five local checks, evidence coverage and zero independent verification, review reasons and audit fingerprints. Halt/busy state blocks operations and clears the displayed snapshot/history; exceptions clear output, require explicit refresh. Historical audit remains accessible after profile change from the already-open fixed-plan window.
+- Integrate entry from scenario editor (including from ranked Matrix); no implicit review when opening. GUI smoke uses one explicit synthetic review, then existing desktop interruption/recovery checks preserve its audit. Require fresh Windows source and frozen executable smoke with upload before claiming replacement.
+- Test-first e29fb06c123c64bae161c130cbd506729981b26b; controller integration tests cover scope, explicit dispatch, halt, terminal attempts, profile drift and historical labeling. No live commercial actions or new dependency.
+
+## Reference audit
+Nexus Operative read-only nexus/council.py at 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11: deterministic specialist/veto display concepts, no trading logic copied. agency-agents pinned 8ae6164602c95ca78828b148b9052460ee426885 MIT LICENSE and strategy/coordination/handoff-templates.md inspected; evidence/attempt separation only, no privileged prompts or runtime dependency. Existing adaptation and Exchange #2 / Operative #116 inspected. Context7 CPython 3.13.14 SQLite connection context manager and contextlib.closing reference consulted; standard library Tk/ttk retained.
+
+## Limits
+Local cooperative single-user runtime; synchronous review and recovery can block GUI until bounded work returns. Historical snapshot hashes are not authentication or proof of commercial facts. No independent reviewer, automated Operator, external actions, main merge, paid infrastructure or formal gate acceptance (0/42). Independent code review and performance/security checks remain outstanding.
