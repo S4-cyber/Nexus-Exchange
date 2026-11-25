@@ -23,6 +23,7 @@ from nexus_exchange.sam_search import Query, search as search_sam, SearchError, 
 from nexus_exchange.ted_search import TedQuery, search as search_ted, notice_url as ted_notice_url
 from nexus_exchange.fts_search import FtsQuery, search as search_fts, notice_url as fts_notice_url
 from nexus_exchange.canada_search import CanadaQuery, search as search_canada, notice_url as canada_notice_url
+from nexus_exchange.usaspending_search import SpendingQuery, search as search_spending, award_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -190,8 +191,8 @@ def main(*, data_directory=None, gui_smoke=False):
             result = future.result()
             if type(result) is dict:
                 scenario_report = result
-                if result.get("format") in ("nexus-sam-research-v1","nexus-ted-research-v1","nexus-fts-research-v1","nexus-canada-research-v1"):
-                    output.insert("end",f"Scout discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
+                if result.get("format") in LEAD_FORMATS:
+                    output.insert("end",f"Scout discovery: {result['returned']} records; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
                     show_source_results(result)
                 else:
                     output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
@@ -253,6 +254,7 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-ted-research-v1":("TED",ted_notice_url),
             "nexus-fts-research-v1":("UK Find a Tender",fts_notice_url),
             "nexus-canada-research-v1":("CanadaBuys",canada_notice_url),
+            "nexus-usaspending-research-v1":("USAspending award intelligence",award_url),
         }[source_format]
         window.title("Nexus Exchange | "+label+" research leads")
         window.geometry("1050x700")
@@ -261,6 +263,8 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
         if report.get("truncated"):
             ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
+        if source_format=="nexus-usaspending-research-v1":
+            ttk.Label(window,text="Historical prime awards, NOT open subcontracting offers. Verify actual demand.").pack()
         if source_format=="nexus-canada-research-v1":
             ttk.Label(window,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
         if source_format=="nexus-fts-research-v1":
@@ -273,7 +277,7 @@ def main(*, data_directory=None, gui_smoke=False):
         leads={lead["notice_id"]:lead for lead in report["leads"]}
         for key,lead in leads.items():
             tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
-                "Review candidate" if lead["research_candidate"] else "Blocked"))
+                "Award intelligence" if source_format=="nexus-usaspending-research-v1" else "Review candidate" if lead["research_candidate"] else "Blocked"))
         details=ScrolledText(window,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
         def selected():
@@ -287,6 +291,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 lines=[lead["title"],"Notice ID: "+lead["notice_id"],
                     "Source: "+lead["source_url"],"Blockers: "+", ".join(lead["blockers"]),
                     "", "TO DO — evidence required"]
+                if "award_metadata" in lead:
+                    lines[3:3]=[f"{k}: {v or 'Unknown'}" for k,v in lead["award_metadata"].items()]
                 lines.extend("[ ] "+task["instruction"] for task in lead["todo"])
                 details.insert("end","\n".join(lines))
             details.configure(state="disabled")
@@ -485,6 +491,35 @@ def main(*, data_directory=None, gui_smoke=False):
                 return search_canada(request,approved=True,halt_check=stop.is_set)
             run(work,target="CanadaBuys public tender discovery",scenario=True)
             write_details("Search requested. See main dashboard for results.")
+        def run_spending():
+            source=selected()
+            if source is None or source.id!="usaspending":
+                write_details("Select USAspending to research historical prime contractors.")
+                return
+            if stop.is_set() or future is not None:
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            code=simpledialog.askstring("USAspending contractor research",
+                "Enter a six-digit NAICS code (541511 = custom computer programming).",initialvalue="541511",parent=window)
+            if code is None:
+                return
+            now=datetime.now(timezone.utc)
+            request=SpendingQuery(code,now.date()-timedelta(days=90),now.date())
+            try:
+                request.parameters(now)
+            except ValueError:
+                write_details("Enter a valid six-digit NAICS code.")
+                return
+            if not messagebox.askyesno("Authorize USAspending public search",
+                    "Research prime contract awards signed in the last 90 days? Up to three read-only requests. No account, outreach, bid or spending.",
+                    parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_spending(request,approved=True,halt_check=stop.is_set)
+            run(work,target="USAspending contractor research",scenario=True)
+            write_details("Research requested. See the dashboard for results.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
@@ -494,6 +529,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Search EU TED (keyless)",command=run_ted).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Research USAspending",command=run_spending).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -611,7 +647,7 @@ def main(*, data_directory=None, gui_smoke=False):
         filters.pack(fill="x",padx=12,pady=8)
         source=tk.StringVar(value="All")
         search=tk.StringVar(value="")
-        ttk.Combobox(filters,textvariable=source,values=["All","sam","ted","uk_tender","canada"],
+        ttk.Combobox(filters,textvariable=source,values=["All","sam","ted","uk_tender","canada","usaspending"],
             state="readonly",width=18).pack(side="left",padx=5)
         ttk.Entry(filters,textvariable=search,width=40).pack(side="left",padx=5)
         summary=ttk.Label(window)
@@ -638,6 +674,7 @@ def main(*, data_directory=None, gui_smoke=False):
             row=selected()
             if row is not None:
                 write("\n".join([row["title"],row["source_url"],"Historical only; execution blocked.",
+                    *(f"{k}: {v or 'Unknown'}" for k,v in row.get("award_metadata",{}).items()),
                     "Verification blockers: "+", ".join(row["blockers"]),"","TO DO",
                     *("[ ] "+t["instruction"] for t in row["todo"])]))
         def reload():
@@ -774,8 +811,13 @@ def main(*, data_directory=None, gui_smoke=False):
             title="Synthetic CanadaBuys fixture",earliest_deadline_date="2026-12-01")
         canada_window=show_source_results(dict(format="nexus-canada-research-v1",returned=1,
             requests=0,leads=[canada_sample],truncated=False))
+        spending_sample=dict(sample_lead,notice_id="CONT_AWD_SYNTHETIC_9700_-NONE-_-NONE-",
+            source_url=award_url("CONT_AWD_SYNTHETIC_9700_-NONE-_-NONE-"),title="Synthetic prime award")
+        spending_window=show_source_results(dict(format="nexus-usaspending-research-v1",returned=1,
+            requests=0,leads=[spending_sample],truncated=False))
         root.update_idletasks()
         root.update()
+        spending_window.destroy()
         leads_window.destroy()
         canada_window.destroy()
         fts_window.destroy()

@@ -12,12 +12,14 @@ from .sam_search import notice_url as sam_url
 from .ted_search import notice_url as ted_url
 from .fts_search import notice_url as fts_url
 from .canada_search import notice_url as canada_url
+from .usaspending_search import award_url, metadata as award_metadata, CONTRACTOR_TASKS
 
 SOURCES=MappingProxyType({
     "nexus-sam-research-v1":("sam",sam_url),
     "nexus-ted-research-v1":("ted",ted_url),
     "nexus-fts-research-v1":("uk_tender",fts_url),
     "nexus-canada-research-v1":("canada",canada_url),
+    "nexus-usaspending-research-v1":("usaspending",award_url),
 })
 MAX_ROWS=10000
 MAX_BATCH=75
@@ -96,6 +98,12 @@ def _project(fmt,lead,hashes,truncated):
         research_candidate_at_collection=lead["research_candidate"],
         blockers=list(dict.fromkeys(reasons)),page_sha256=_hashes(hashes),
         collection_truncated=truncated)
+    if source=="usaspending":
+        if lead["research_candidate"] or deadline is not None or payload["earliest_deadline_date"] is not None or "HISTORICAL_AWARD_NOT_SOLICITATION" not in reasons:
+            raise ValueError("award intelligence cannot be tender eligibility")
+        payload["award_metadata"]=award_metadata(lead.get("award_metadata"))
+        if payload["award_metadata"]["recipient"]!=op.title:
+            raise ValueError("award recipient mismatch")
     encoded=_json(payload)
     if len(encoded)>MAX_PAYLOAD:
         raise ValueError("lead payload exceeds limit")
@@ -236,7 +244,7 @@ class LeadStore:
                     reasons.append("AMBIGUOUS_UK_EVENT_IN_ARCHIVE")
             output.append(dict(p,blockers=list(dict.fromkeys(reasons)),research_candidate=False,
                 execution_eligible=False,external_authority=False,cash_exposure=None,
-                todo=[dict(key=k,instruction=t,status="needs independent evidence") for k,t in CHECKS]))
+                todo=[dict(key=k,instruction=t,status="needs independent evidence") for k,t in (CONTRACTOR_TASKS if p["source"]=="usaspending" else CHECKS)]))
         return dict(format="nexus-scout-history-v1",scope="Historical source observations; no current eligibility or authority",
             evaluated_at=now.isoformat(),source_filter=source,matched=len(output),returned=min(len(output),limit),
             truncated=len(output)>limit,leads=output[:limit])
