@@ -1,0 +1,13 @@
+# Native Scout service requirements review (E13/E14/E21/E25/E27/E33/E34/E38; H04/H05/H08)
+
+Verified predecessor: RC2 #89 `8f9a147c11c7dae3a9bfa1dc7331baac17963abc`. Both Python 3.10 and 3.13 logs report 731 passing tests ([unit CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45630193966)); [Windows preview](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45630193991) succeeded, artifact 15029614617. This increment is an unaccepted review candidate.
+
+## Interface and boundaries
+
+The Matrix's new **Review service requirements** button opens a separate read-only form pinned to the exact selected archived observation. The owner explicitly selects one of four implemented local service types and a declared input format; sizes may remain unknown, every requirement flag needs an explicit answer, and a specification is either complete or absent. No requirements, file hashes or permissions are inferred from a title. Two-input declarations preserve both input scopes; unused second-input fields are rejected. Each field is bounded before translation, then the existing RankingWorkspace validates the declaration and current archive/profile/source hold. No new storage or authority is introduced. Changes to form fields invalidate the displayed result; the window closes on observed emergency halt. A displayed review is a timestamped snapshot, not authenticated facts or ongoing eligibility. Independent authorization, actual input bytes, QA and exact saved-plan checks are still needed before any local sample; no sample launch, outbound transmission, payment or commitment is implemented here.
+
+## Verification and integration
+
+Private isolated Python 3.13 test-first attempt failed on the expected missing module; six focused parser tests subsequently passed. Exact source/test blobs match the locally tested files (3696c90347e145f2c5bfbc12f1fadf92ddb011cd and 94a127aed38be4dc9a226e7b1e334763fbca7b2c). Full checkout remains blocked by DNS. The existing Matrix smoke test now opens the new form on the owned held-source fixture, evaluates explicit flags with unknown sizes, requires the hold and no-authority display, and checks invalidation on edit. Full hosted regression and source/frozen GUI tests are required; independent review remains outstanding.
+
+Reuse audit: read-only Nexus Operative bounded journal and pinned MIT agency-agents handoff templates; exact context and separation of evidence from authority retained as design principles, no copied code or added dependency. No paid services or modifications to Operative. Next: explicit scoped handoff to the existing local sample workflow, simulated acceptance/collection and exact-head independent E01–E42 acceptance.
