@@ -240,28 +240,37 @@ class LeadStore:
         if type(limit) is not int or not 1<=limit<=100:
             raise ValueError("invalid output limit")
         # The storage cap also bounds validation and latest-per-identity projection.
-        records=self.db.execute("""SELECT source,lead_key,retrieved_at,payload,payload_sha256
-            FROM scout_observations_v1 ORDER BY retrieved_at DESC,source,lead_key LIMIT ?""",(MAX_ROWS+1,)).fetchall()
-        if len(records)>MAX_ROWS:
-            raise ValueError("archive exceeds configured capacity")
+        # Stream the bounded snapshot instead of retaining all encoded payloads.
+        # Validate every row, including rows outside the requested output filter.
         latest={}
-        for src,key,stamp,encoded,digest in records:
-            p=_restore(encoded,digest)
-            if (p["source"],p["key"],p["retrieved_at"])!=(src,key,stamp):
-                raise ValueError("stored identity mismatch")
-            latest.setdefault((src,key),p)
-        # Detect later known UK events across search sessions, without compiling them.
         uk_latest={}
         uk_ties={}
-        for p in latest.values():
-            if p["ocid"] is not None:
-                stamp=_timestamp(p["release_date"])
-                prior=uk_latest.get(p["ocid"])
-                if prior is None or stamp>prior:
-                    uk_latest[p["ocid"]]=stamp
-                    uk_ties[p["ocid"]]=1
-                elif stamp==prior:
-                    uk_ties[p["ocid"]]+=1
+        records=self.db.execute("""SELECT source,lead_key,retrieved_at,payload,payload_sha256
+            FROM scout_observations_v1 ORDER BY retrieved_at DESC,source,lead_key LIMIT ?""",(MAX_ROWS+1,))
+        try:
+            for count,(src,key,stamp,encoded,digest) in enumerate(records,1):
+                if count>MAX_ROWS:
+                    raise ValueError("archive exceeds configured capacity")
+                p=_restore(encoded,digest)
+                if (p["source"],p["key"],p["retrieved_at"])!=(src,key,stamp):
+                    raise ValueError("stored identity mismatch")
+                identity=(src,key)
+                latest.setdefault(identity,p)
+                # Retrieval time and the publisher's release time are different.
+                # A later retrieval reporting an older release must not erase a
+                # previously observed newer event or ambiguity. Re-observing
+                # the same source/key at the same release time is not a tie.
+                if p["ocid"] is not None:
+                    ocid=p["ocid"]
+                    released=_timestamp(p["release_date"])
+                    prior=uk_latest.get(ocid)
+                    if prior is None or released>prior:
+                        uk_latest[ocid]=released
+                        uk_ties[ocid]={identity}
+                    elif released==prior:
+                        uk_ties[ocid].add(identity)
+        finally:
+            records.close()
         output=[]
         needle=query.casefold()
         for p in latest.values():
@@ -284,7 +293,7 @@ class LeadStore:
             if p["ocid"] is not None:
                 if _timestamp(p["release_date"])<uk_latest[p["ocid"]]:
                     reasons.append("LATER_UK_EVENT_IN_ARCHIVE")
-                elif uk_ties[p["ocid"]]>1:
+                elif len(uk_ties[p["ocid"]])>1:
                     reasons.append("AMBIGUOUS_UK_EVENT_IN_ARCHIVE")
             output.append(dict(p,observation_sha256=_digest(_json(p)),blockers=list(dict.fromkeys(reasons)),research_candidate=False,
                 execution_eligible=False,external_authority=False,cash_exposure=None,

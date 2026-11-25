@@ -134,6 +134,55 @@ class LeadStoreTests(unittest.TestCase):
             rows=store.browse(now=NOW,halted=False)["leads"]
             self.assertTrue(any("LATER_UK_EVENT_IN_ARCHIVE" in r["blockers"] for r in rows))
 
+    def test_uk_lifecycle_does_not_forget_later_event_on_regressed_retrieval(self):
+        older=reports()[2]
+        award=fts_search.search(fts.QUERY,transport=Mock(return_value=(200,fts.page([
+            fts.release(2,ocid=older["leads"][0]["ocid"],date="2026-11-24T10:00:00Z",
+                tag=["award"],tender=None)]))),**OPTS)
+        repeated=copy.deepcopy(award)
+        repeated["leads"][0]["retrieved_at"]=(NOW+timedelta(minutes=1)).isoformat()
+        regressed=copy.deepcopy(award)
+        regressed["leads"][0]["retrieved_at"]=(NOW+timedelta(minutes=2)).isoformat()
+        regressed["leads"][0]["release_date"]="2026-11-24T08:00:00Z"
+        with LeadStore(self.path) as store:
+            for report,stamp in ((older,NOW),(award,NOW),(repeated,NOW+timedelta(minutes=1))):
+                store.record(report,now=stamp,halted=False)
+            rows=store.browse(now=NOW+timedelta(minutes=1),halted=False)["leads"]
+            self.assertFalse(any("AMBIGUOUS_UK_EVENT_IN_ARCHIVE" in row["blockers"] for row in rows))
+            store.record(regressed,now=NOW+timedelta(minutes=2),halted=False)
+            rows=store.browse(now=NOW+timedelta(minutes=2),halted=False)["leads"]
+            self.assertEqual(len(rows),2)
+            self.assertTrue(all("LATER_UK_EVENT_IN_ARCHIVE" in row["blockers"] for row in rows))
+            self.assertTrue(all(row["execution_eligible"] is False for row in rows))
+
+    def test_uk_lifecycle_distinct_release_tie_preserved_across_observations(self):
+        first=reports()[2]
+        second=fts_search.search(fts.QUERY,transport=Mock(return_value=(200,fts.page([
+            fts.release(2,ocid=first["leads"][0]["ocid"])]))),**OPTS)
+        changed=copy.deepcopy(second)
+        changed["leads"][0]["retrieved_at"]=(NOW+timedelta(minutes=1)).isoformat()
+        changed["leads"][0]["release_date"]="2026-11-24T08:00:00Z"
+        with LeadStore(self.path) as store:
+            for report,stamp in ((first,NOW),(second,NOW),(changed,NOW+timedelta(minutes=1))):
+                store.record(report,now=stamp,halted=False)
+            rows=store.browse(now=NOW+timedelta(minutes=1),halted=False)["leads"]
+            by_id={row["notice_id"]:row for row in rows}
+            self.assertIn("AMBIGUOUS_UK_EVENT_IN_ARCHIVE",by_id[first["leads"][0]["notice_id"]]["blockers"])
+            self.assertIn("LATER_UK_EVENT_IN_ARCHIVE",by_id[second["leads"][0]["notice_id"]]["blockers"])
+
+    def test_archive_capacity_and_integrity_checked_before_filtering(self):
+        with LeadStore(self.path) as store:
+            for report in reports()[:2]:
+                store.record(report,now=NOW,halted=False)
+            with patch("nexus_exchange.lead_store.MAX_ROWS",2):
+                self.assertEqual(store.browse(now=NOW,source="sam",halted=False)["returned"],1)
+            with patch("nexus_exchange.lead_store.MAX_ROWS",1):
+                with self.assertRaisesRegex(ValueError,"archive exceeds"):
+                    store.browse(now=NOW,source="sam",halted=False)
+            store.db.execute("UPDATE scout_observations_v1 SET payload='{}' WHERE source='ted'")
+            with self.assertRaisesRegex(ValueError,"integrity mismatch"):
+                store.browse(now=NOW,source="sam",halted=False)
+
     def test_unsafe_authority_future_and_link_rejected(self):
         report=reports()[0]
         with LeadStore(self.path) as store:

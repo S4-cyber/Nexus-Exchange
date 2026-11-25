@@ -515,3 +515,45 @@ acceptance (0/42).
 ## RC3 local intelligence consolidation and free-first coordination — 2026-11-25
 
 E01–E42, H01/H03/H06/H07: preserve the newer RC3 head 1982f28c3aabcac82c40c816fa210464c9cb602a, including merged UI #107, Python 45681195183 and Windows 45681195169 successful. Integrate exact resource/advisory stack #104–#110; #109 (3a23cd7719dbad0814c5d338f45ef200a635c635, Python 45681616604, Windows 45681616516 success) and #110 (825d1f991ac673221da8fea2851b2e74fda13976, Python 45681767340, Windows 45681767251 success). Reconcile desktop by transplanting four unique reviewed recovery/smoke sections, preserving the newer activity UI; preserve original README UI changes and combine resource link. Add AGENTS.md and development protocol for Codex/Codespace/local workflows and legal free-tier use. Both hourly development directives updated independently; no Operative source changes. Separate #102 Scout review remains outstanding. Local full clone DNS failed, so exact integrated CI and independent review remain required. No model execution, external calls, new dependencies, spend or main release acceptance (0/42).
+
+## Scout archive lifecycle continuity — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. Exact RC3 predecessor
+13c7c1903eb76ad993022f64219ac755d3517a44 passed 819 tests on each Python
+3.10 and 3.13 ([45670690819](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690819))
+and full Windows source/frozen/GUI/Genesis/security verification
+([45670690518](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690518),
+artifact 15047864705).
+
+Archive browse now maintains the maximum known UK release time and
+distinct source/key identities at that time across all validated historical
+observations, not just the latest retrieval for each identity. This avoids
+losing an observed later release when a provider subsequently reports an
+older release date for that identity, and avoids false ties from identical
+re-observations. The local archive remains research-only; no cross-source
+identity equivalence, compiled tender state, current eligibility or source
+authenticity is asserted. Exact receipt review remains same-identity only.
+The bounded archive cursor is streamed and closed even on failure; all
+rows are validated before filtering, with the existing maximum-row gate
+preserved. This reduces retained encoded payloads but is not a measured
+performance claim. Three regression methods cover date regression,
+distinct-event ambiguity, cap enforcement and corruption outside filters.
+
+Reference: OCDS 1.1 branch pinned at
+[1e98b792](https://github.com/open-contracting/standard/tree/1e98b792b2d48dfc806d974b08fccc1c50df5740),
+Apache-2.0 LICENSE and schema/release-schema.json inspected: process ID,
+release ID and publication date have distinct meanings. No upstream code
+or schema copied, no packages installed; full dependency/maintenance audit
+would be needed before adopting ocdskit. Rechecked agency-agents pinned
+handoff template and Operative journal blob 59ee08e7734347897b29af33603dffba783ec9ad
+for scoped evidence and bounded persistence; no Operative changes.
+Full local checkout failed GitHub DNS resolution; local red/green and
+independent review not performed. Superpowers unavailable. Atomic review
+candidate requires exact hosted tests and Windows packaging. Formal main
+acceptance remains 0/42. No new services, provider requests, expenditure,
+or commercial execution.
+
+
+## RC3 Scout lifecycle consolidation — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. The separate archive lifecycle #102 exact head 5b9c0ddfc50cd928fe448f3847a8d001ca26ae65 passed 822 tests each on Python 3.10/3.13 (45671905049) and Windows preview 45671904645, artifact 15049454405. The three changed non-roadmap file blobs match their original parent exactly in the consolidated parent 7aee08ea740fb4135d3411e6cf163b67bcd3ce85; transplant their exact verified replacement blobs without overriding the merged UI, resource catalogue, or advisory/current-scope code. Retain the appended Scout roadmap history. Combined parent Python jobs passed 885 tests each (45686084113); Windows 45686084062 was active at preparation. Expected combined regression is 888 tests, not yet verified. Full checkout failed GitHub DNS; no new local/full-suite result or independent review claimed. Keep existing PR #111, advance only after parent Windows checks finish, and run exact integrated CI. No new dependency, provider call, authority, paid service, or Operative modifications. Main accepted gates remain 0/42. Next: owner-thread supervised advisory lifecycle and independent acceptance/security review.
