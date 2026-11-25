@@ -278,12 +278,12 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     workspace=FinanceWorkspace(obligation,action=action,blocked_check=blocked_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Simulated receivables")
     window.geometry(fit_geometry(window,1040,760))
-    ttk.Label(window,text="OPERATOR — Simulated receivables",font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(window,text="One saved plan; hypothetical USD only. Never a real invoice, bank balance, or received revenue.",wraplength=980).pack(pady=4)
-    ttk.Label(window,text="Obligation: "+obligation["obligation_id"],wraplength=980).pack()
+    ttk.Label(content,text="OPERATOR — Simulated receivables",font=("Segoe UI",18)).pack(pady=6)
+    ttk.Label(content,text="One saved plan; hypothetical USD only. Never a real invoice, bank balance, or received revenue.",wraplength=980).pack(pady=4)
+    ttk.Label(content,text="Obligation: "+obligation["obligation_id"],wraplength=980).pack()
     today=datetime.now(timezone.utc).date().isoformat()
     issue=tk.StringVar(master=window,value=today)
     asof=tk.StringVar(master=window,value=today)
@@ -291,18 +291,18 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     amount=tk.StringVar(master=window,value="")
     paid=tk.StringVar(master=window,value=today)
     reserve=tk.StringVar(master=window,value="")
-    form=ttk.Frame(window); form.pack(fill="x",padx=12,pady=5)
+    form=ttk.Frame(content); form.pack(fill="x",padx=12,pady=5)
     for i,(label,var) in enumerate((("Assumed issue date (YYYY-MM-DD)",issue),
         ("As-of model date",asof),("Synthetic reference (SIM-... uppercase)",reference),
         ("Synthetic receipt USD",amount),("Synthetic receipt date",paid),
         ("Hypothetical reserve share (0–10000 bp)",reserve))):
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=3)
         ttk.Entry(form,textvariable=var,width=34).grid(row=i,column=1,sticky="w",padx=8)
-    output=ScrolledText(window,state="disabled",wrap="word")
+    output=ScrolledText(content,state="disabled",wrap="word")
     output.pack(fill="both",expand=True,padx=12,pady=6)
-    status=ttk.Label(window,text="Refresh history or explicitly preview a simulation.",wraplength=980)
+    status=ttk.Label(content,text="Refresh history or explicitly preview a simulation.",wraplength=980)
     status.pack(fill="x",padx=12)
-    bar=ttk.Frame(window); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(pady=7)
     timer=None
 
     def write(text):
@@ -423,7 +423,7 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     receipt_button.pack(side="left",padx=4)
     asof_button=ttk.Button(bar,text="Evaluate as-of date",command=project,state="disabled")
     asof_button.pack(side="left",padx=4)
-    cashflow_button=ttk.Button(window,text="Model cash flow and reserve",command=cashflow,state="disabled")
+    cashflow_button=ttk.Button(content,text="Model cash flow and reserve",command=cashflow,state="disabled")
     cashflow_button.pack(pady=3)
     def projection_changed(*_):
         if workspace.record is not None:

@@ -154,14 +154,14 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     workspace=RankingWorkspace(directory,halt_check=halt_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Scout opportunity Matrix")
     window.geometry(fit_geometry(window,1160,760))
     window.minsize(760,540)
-    ttk.Label(window,text="SCOUT — Ranked opportunity Matrix",font=("Segoe UI",18)).pack(pady=8)
-    ttk.Label(window,text="Historical snapshots and hypothetical USD assumptions only. No verified earnings, availability, or authority.",
+    ttk.Label(content,text="SCOUT — Ranked opportunity Matrix",font=("Segoe UI",18)).pack(pady=8)
+    ttk.Label(content,text="Historical snapshots and hypothetical USD assumptions only. No verified earnings, availability, or authority.",
               wraplength=1050).pack(padx=12,pady=4)
-    filters=ttk.Frame(window)
+    filters=ttk.Frame(content)
     filters.pack(fill="x",padx=12,pady=6)
     source=tk.StringVar(master=window,value="All")
     query=tk.StringVar(master=window,value="")
@@ -175,9 +175,9 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     ttk.Label(filters,text="Show").pack(side="left",padx=4)
     ttk.Combobox(filters,textvariable=limit,values=("25","50","100"),state="readonly",width=5).pack(side="left")
     ttk.Checkbutton(filters,text="Prioritize Operator hints",variable=operator_focus).pack(side="left",padx=5)
-    status=ttk.Label(window,wraplength=1080)
+    status=ttk.Label(content,wraplength=1080)
     status.pack(fill="x",padx=12,pady=4)
-    table=ttk.Frame(window)
+    table=ttk.Frame(content)
     table.pack(fill="both",padx=12,pady=4)
     columns=("source","title","tier","exposure","net","wait")
     tree=ttk.Treeview(table,columns=columns,show="headings",selectmode="browse",height=11)
@@ -194,9 +194,9 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     xscroll.grid(row=1,column=0,sticky="ew")
     table.columnconfigure(0,weight=1)
     table.rowconfigure(0,weight=1)
-    buttons=ttk.Frame(window)
+    buttons=ttk.Frame(content)
     buttons.pack(pady=6)
-    details=ScrolledText(window,height=12,wrap="word",state="disabled")
+    details=ScrolledText(content,height=12,wrap="word",state="disabled")
     details.pack(fill="both",expand=True,padx=12,pady=6)
     report=None
     rows={}

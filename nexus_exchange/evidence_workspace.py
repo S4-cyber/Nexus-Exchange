@@ -138,17 +138,17 @@ def open_evidence_window(parent,*,directory,context,plan_id,halt_check,smoke=Fal
     initial=workspace.refresh()
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Aegis assumption evidence")
     window.geometry(fit_geometry(window,1120,820))
     window.minsize(800,650)
-    ttk.Label(window,text="AEGIS — Saved scenario evidence",font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(window,text="Immutable plan: "+plan_id,wraplength=1020).pack(padx=12)
-    ttk.Label(window,text="Select a known assumption and local file. References are unverified; a byte match does not prove commercial facts.",
+    ttk.Label(content,text="AEGIS — Saved scenario evidence",font=("Segoe UI",18)).pack(pady=6)
+    ttk.Label(content,text="Immutable plan: "+plan_id,wraplength=1020).pack(padx=12)
+    ttk.Label(content,text="Select a known assumption and local file. References are unverified; a byte match does not prove commercial facts.",
         wraplength=1020).pack(pady=5,padx=12)
-    status=ttk.Label(window,wraplength=1050)
+    status=ttk.Label(content,wraplength=1050)
     status.pack(fill="x",padx=12,pady=4)
-    panel=ttk.Frame(window)
+    panel=ttk.Frame(content)
     panel.pack(fill="both",padx=12,pady=4)
     fields=ttk.Treeview(panel,columns=("assumption","value","state","references"),
                         show="headings",selectmode="browse",height=10)
@@ -161,15 +161,15 @@ def open_evidence_window(parent,*,directory,context,plan_id,halt_check,smoke=Fal
     fields.grid(row=0,column=0,sticky="nsew")
     scroll.grid(row=0,column=1,sticky="ns")
     panel.columnconfigure(0,weight=1)
-    refs=ttk.Treeview(window,columns=("id","fingerprint","recorded"),
+    refs=ttk.Treeview(content,columns=("id","fingerprint","recorded"),
         show="headings",selectmode="browse",height=3)
     for key,label,width in (("id","Evidence ID",320),("fingerprint","File fingerprint",520),("recorded","Recorded UTC",240)):
         refs.heading(key,text=label)
         refs.column(key,width=width,anchor="w")
     refs.pack(fill="x",padx=12,pady=4)
-    buttons=ttk.Frame(window)
+    buttons=ttk.Frame(content)
     buttons.pack(pady=6)
-    details=ScrolledText(window,height=12,wrap="word",state="disabled")
+    details=ScrolledText(content,height=12,wrap="word",state="disabled")
     details.pack(fill="both",expand=True,padx=12,pady=6)
     report=None
     rows={}

@@ -167,22 +167,22 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
     workspace=ObligationWorkspace(plan_id,action=action,blocked_check=blocked_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Local deliverable obligations")
     window.geometry(fit_geometry(window,1050,700))
-    ttk.Label(window,text="OPERATOR — Historical deliverable obligations",font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(window,text="Saved plan: "+plan_id,wraplength=1000).pack()
-    ttk.Label(window,text="File fingerprints and declared notes only. No verified acceptance, invoicing or revenue.",wraplength=1000).pack(pady=4)
-    tree=ttk.Treeview(window,columns=("id","created","state"),show="headings",height=7,selectmode="browse")
+    ttk.Label(content,text="OPERATOR — Historical deliverable obligations",font=("Segoe UI",18)).pack(pady=6)
+    ttk.Label(content,text="Saved plan: "+plan_id,wraplength=1000).pack()
+    ttk.Label(content,text="File fingerprints and declared notes only. No verified acceptance, invoicing or revenue.",wraplength=1000).pack(pady=4)
+    tree=ttk.Treeview(content,columns=("id","created","state"),show="headings",height=7,selectmode="browse")
     for col,label,width in (("id","Obligation fingerprint",470),("created","Created UTC",220),("state","Local record state",250)):
         tree.heading(col,text=label)
         tree.column(col,width=width,anchor="w")
     tree.pack(fill="x",padx=12,pady=5)
-    output=ScrolledText(window,state="disabled",wrap="word")
+    output=ScrolledText(content,state="disabled",wrap="word")
     output.pack(fill="both",expand=True,padx=12,pady=5)
-    status=ttk.Label(window,text="Refresh to load local records.",wraplength=1000)
+    status=ttk.Label(content,text="Refresh to load local records.",wraplength=1000)
     status.pack(fill="x",padx=12,pady=4)
-    bar=ttk.Frame(window); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(pady=7)
     kind=tk.StringVar(master=window,value=NOTE_KINDS[0])
     timer=None
     displayed=None

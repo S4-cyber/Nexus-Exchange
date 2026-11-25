@@ -70,6 +70,8 @@ HELPS={
     "overview":"Show the overview of the selected review context.",
     "summary":"Show the short summary of the selected review context.",
     "detail":"Show the more detailed review context.",
+    "review":"Show the local review conclusions and their limits.",
+    "evidence":"Show the supporting evidence references without claiming independent verification.",
     "full":"Show the full local review context.",
     "select file":"Choose a file from your computer; nothing is uploaded.",
     "produce and preview":"Create a local CSV sample in memory and check its exact contents.",
@@ -266,8 +268,93 @@ class StarRail:
         self.paint()
 
 
-class Cockpit:
+def reveal_fraction(start,size,offset,visible,total):
+    """Keep a focused control in view; None means no movement is needed."""
+    if total<=visible or visible<=0 or size<=0:
+        return None
+    if start>=offset and start+size<=offset+visible:
+        return None
+    target=start if start<offset or size>=visible else start+size-visible
+    target=max(0,min(target,total-visible))
+    if abs(target-offset)<1:
+        return None
+    return target/total
+
+
+class WorkspaceViewport:
+    """A reserved two-axis content viewport; never overlays fixed controls."""
     def __init__(self,window):
+        import tkinter as tk
+        from tkinter import ttk
+        self.frame=ttk.Frame(window)
+        self.frame.pack(fill="both",expand=True)
+        self.frame.rowconfigure(0,weight=1)
+        self.frame.columnconfigure(0,weight=1)
+        self.canvas=tk.Canvas(self.frame,background=BLACK,highlightthickness=0,
+                              borderwidth=0,width=1,height=1,takefocus=False)
+        self.canvas.grid(row=0,column=0,sticky="nsew")
+        ybar=ttk.Scrollbar(self.frame,orient="vertical",command=self.canvas.yview)
+        xbar=ttk.Scrollbar(self.frame,orient="horizontal",command=self.canvas.xview)
+        ybar.grid(row=0,column=1,sticky="ns")
+        xbar.grid(row=1,column=0,sticky="ew")
+        self.canvas.configure(yscrollcommand=ybar.set,xscrollcommand=xbar.set)
+        self.content=ttk.Frame(self.canvas)
+        self.item=self.canvas.create_window(0,0,anchor="nw",window=self.content)
+        self.extent=(0,0)
+        self.pending=None
+        self.closed=False
+        self.canvas.bind("<Configure>",self.queue,add="+")
+        self.content.bind("<Configure>",self.queue,add="+")
+        self.frame.bind("<Destroy>",self.destroy,add="+")
+        self.queue()
+
+    def queue(self,_event=None):
+        if not self.closed and self.pending is None:
+            self.pending=self.frame.after_idle(self.flush)
+
+    def flush(self):
+        self.pending=None
+        self.sync()
+
+    def sync(self):
+        if self.closed:
+            return
+        width=max(1,self.canvas.winfo_width(),self.content.winfo_reqwidth())
+        height=max(1,self.canvas.winfo_height(),self.content.winfo_reqheight())
+        if (width,height)!=self.extent:
+            self.extent=(width,height)
+            self.canvas.itemconfigure(self.item,width=width,height=height)
+            self.canvas.configure(scrollregion=(0,0,width,height))
+
+    def contains(self,widget):
+        return widget is not None and str(widget).startswith(str(self.content)+".")
+
+    def reveal(self,widget):
+        if self.closed or not self.contains(widget) or not widget.winfo_ismapped():
+            return
+        self.sync()
+        for axis,start,size,offset,visible,total in (
+            ("x",widget.winfo_rootx()-self.content.winfo_rootx(),widget.winfo_width(),
+             self.canvas.canvasx(0),self.canvas.winfo_width(),self.extent[0]),
+            ("y",widget.winfo_rooty()-self.content.winfo_rooty(),widget.winfo_height(),
+             self.canvas.canvasy(0),self.canvas.winfo_height(),self.extent[1])):
+            fraction=reveal_fraction(start,size,offset,visible,total)
+            if fraction is not None:
+                if axis=="x":
+                    self.canvas.xview_moveto(fraction)
+                else:
+                    self.canvas.yview_moveto(fraction)
+
+    def destroy(self,event):
+        if event.widget==self.frame:
+            self.closed=True
+            if self.pending is not None:
+                self.frame.after_cancel(self.pending)
+                self.pending=None
+
+
+class Cockpit:
+    def __init__(self,window,*,command_deck=False):
         import tkinter as tk
         from tkinter import ttk
         self.window=window
@@ -299,11 +386,17 @@ class Cockpit:
         self.rails[0].canvas.pack(side="top",fill="x")
         self.rails[1].canvas.pack(side="left",fill="y")
         self.rails[2].canvas.pack(side="right",fill="y")
+        # The dashboard's safety deck is outside scrolling content.
+        self.safety=ttk.Frame(window) if command_deck else None
+        if self.safety is not None:
+            self.safety.pack(side="top",fill="x",padx=6,pady=(3,4))
+        self.viewport=WorkspaceViewport(window)
+        self.content=self.viewport.content
         # Every descendant's default bindtags include its own toplevel.
         # No global bind_all and no button command/state changes.
         window.bind("<Enter>",self._enter,add="+")
         window.bind("<Leave>",self._leave,add="+")
-        window.bind("<FocusIn>",self._enter,add="+")
+        window.bind("<FocusIn>",self._focus,add="+")
         window.bind("<FocusOut>",self._leave,add="+")
         window.bind("<Destroy>",self._destroy,add="+")
         self.timer=window.after(65,self._tick)
@@ -315,6 +408,11 @@ class Cockpit:
 
     def _enter(self,event):
         self.show(getattr(event,"widget",None))
+
+    def _focus(self,event):
+        widget=getattr(event,"widget",None)
+        self.show(widget)
+        self.viewport.reveal(widget)
 
     def show(self,widget):
         try:
@@ -356,9 +454,9 @@ class Cockpit:
                 self.timer=None
 
 
-def install_cockpit(window):
+def install_cockpit(window,*,command_deck=False):
     if not hasattr(window,"_nexus_cockpit"):
-        window._nexus_cockpit=Cockpit(window)
+        window._nexus_cockpit=Cockpit(window,command_deck=command_deck)
     return window._nexus_cockpit
 
 
@@ -367,6 +465,8 @@ def smoke_cockpit(root,halt_button):
     import tkinter as tk
     from tkinter import ttk
     chrome=install_cockpit(root)
+    if chrome.safety is None or halt_button.master.master!=chrome.safety or chrome.viewport.contains(halt_button):
+        raise RuntimeError("emergency halt must remain outside the scrolling dashboard")
     original=str(halt_button.cget("state"))
     chrome.show(halt_button)
     if chrome.help.get()!=HELPS["emergency halt"] or str(halt_button.cget("state"))!=original:
@@ -377,9 +477,23 @@ def smoke_cockpit(root,halt_button):
     child.geometry("520x300")
     try:
         sub=install_cockpit(child)
-        button=ttk.Button(child,text="Export new CSV",command=lambda:None)
+        spacer=ttk.Frame(sub.content,width=900,height=500)
+        spacer.pack()
+        button=ttk.Button(sub.content,text="Export new CSV",command=lambda:None)
         button.pack()
         child.update_idletasks()
+        sub.viewport.sync()
+        child.update_idletasks()
+        if sub.viewport.extent[0]<900 or sub.viewport.extent[1]<500:
+            raise RuntimeError("cockpit content extent clipped")
+        if sub.viewport.canvas.winfo_width()>=sub.viewport.extent[0] or sub.viewport.canvas.winfo_height()>=sub.viewport.extent[1]:
+            raise RuntimeError("small viewport smoke did not create scroll overflow")
+        sub.viewport.canvas.xview_moveto(1)
+        sub.viewport.canvas.yview_moveto(1)
+        if sub.viewport.canvas.xview()[0]<=0 or sub.viewport.canvas.yview()[0]<=0:
+            raise RuntimeError("cockpit overflow not reachable")
+        if sub.viewport.contains(sub.footer):
+            raise RuntimeError("help dock must not scroll")
         if sub.motion is not chrome.motion or sub.footer not in child.pack_slaves():
             raise RuntimeError("cockpit child or reserved help dock missing")
         sub.show(button)
@@ -399,7 +513,7 @@ def smoke_cockpit(root,halt_button):
         chrome.motion.set(True)
     finally:
         child.destroy()
-    if not sub.closed or sub.timer is not None:
+    if not sub.closed or sub.timer is not None or not sub.viewport.closed or sub.viewport.pending is not None:
         raise RuntimeError("cockpit timer not cleaned up")
     chrome.active=None
     chrome.help.set(IDLE_HELP)
