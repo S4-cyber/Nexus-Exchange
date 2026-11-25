@@ -220,3 +220,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R04/R05/R06/E20/E21/E33: local owner planning profile with explicit save/clear, source and availability preferences, NAICS/CPV/keyword matching, profile revision, source-backed classification retention and native ranked historical view. Ten new regression methods; exact-head CI and Windows build pending.
 - Every profile is self-declared, not identity, authority, bank balance or verified capability. Historical blockers and award intelligence are preserved. Existing stored records remain readable. Actual evidence-bound durable owner checklist completion, encrypted credential storage, verified entity linkage and executable zero-cash ranking remain pending.
 - Prior USAspending candidate f877bf70176d18f5009496ed7b6f9dde5bad13b3 passed 177 tests (45533021295) and Windows 45533021285, artifact 14986065268. No new dependencies. Main formal acceptance remains 0/42 pending consolidation.
+
+
+## Persistent lead-specific owner To Do candidate
+- R05/E14/E18/E31/E33: durable owner review notes bound to exact archived observation and optional owner profile content revision. Shared task definitions, bounded SQLite state, exact-key lookup, canonical digest, optimistic concurrency, native review window. Eleven new regression methods; CI/build pending. Evidence noted never implies independent verification or action authority.
+- Prior owner capability head 60ecafb158e0e3b42665b9b0527b7253a9fd492f: 187 tests passed on Python 3.10/3.13 (45533543623); Windows 45533543654 artifact 14985559564 passed. Draft PR #31. No new dependencies or paid services. Main accepted gates 0/42.
+- Next: independently verifiable evidence and scoped approval records, cash-exposure and delivery-feasibility evaluation, durable halt/recovery, live source validation and branch consolidation. See docs/PERSISTENT_TODO.md.
