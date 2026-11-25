@@ -168,7 +168,7 @@ def open_evidence_window(parent,*,directory,context,plan_id,halt_check,smoke=Fal
         refs.column(key,width=width,anchor="w")
     refs.pack(fill="x",padx=12,pady=4)
     buttons=ttk.Frame(content)
-    buttons.pack(pady=6)
+    buttons.pack(before=panel, pady=4)
     details=ScrolledText(content,height=12,wrap="word",state="disabled")
     details.pack(fill="both",expand=True,padx=12,pady=6)
     report=None

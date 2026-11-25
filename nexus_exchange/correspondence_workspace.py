@@ -349,14 +349,14 @@ def open_correspondence_window(parent, controller, *, smoke=False):
             except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError,TypeError,KeyError) as exc:
                 clear(); status.configure(text='Local correspondence unavailable ('+type(exc).__name__+'). Select evidence again.')
         return run
-    buttons=ttk.Frame(content); buttons.pack(pady=3)
+    buttons=ttk.Frame(content); buttons.pack(before=form, pady=3)
     for label,callback in (('Choose evidence',choose),('Preview',preview),('Save declaration',save),('Refresh history',refresh)):
         ttk.Button(buttons,text=label,command=guarded(callback)).pack(side='left',padx=3)
-    picker.pack(fill='x',padx=10,pady=3)
-    controls=ttk.Frame(content); controls.pack(pady=3)
+    picker.pack(before=form, fill='x',padx=10,pady=3)
+    controls=ttk.Frame(content); controls.pack(before=form, pady=3)
     ttk.Button(controls,text='Inspect history',command=guarded(inspect)).pack(side='left',padx=3)
     ttk.Button(controls,text='Open local thread',command=guarded(lambda:inspect(True))).pack(side='left',padx=3)
-    event_controls=ttk.Frame(content); event_controls.pack(pady=3)
+    event_controls=ttk.Frame(content); event_controls.pack(before=form, pady=3)
     ttk.Label(event_controls,text='Local event kind').pack(side='left',padx=3)
     ttk.Combobox(event_controls,textvariable=event_kind,state='readonly',width=29,
                  values=tuple(sorted(_KINDS))).pack(side='left',padx=3)

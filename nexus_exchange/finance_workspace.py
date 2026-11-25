@@ -302,7 +302,7 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     output.pack(fill="both",expand=True,padx=12,pady=6)
     status=ttk.Label(content,text="Refresh history or explicitly preview a simulation.",wraplength=980)
     status.pack(fill="x",padx=12)
-    bar=ttk.Frame(content); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(before=form, pady=4)
     timer=None
 
     def write(text):
@@ -424,7 +424,7 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     asof_button=ttk.Button(bar,text="Evaluate as-of date",command=project,state="disabled")
     asof_button.pack(side="left",padx=4)
     cashflow_button=ttk.Button(content,text="Model cash flow and reserve",command=cashflow,state="disabled")
-    cashflow_button.pack(pady=3)
+    cashflow_button.pack(before=form, pady=2)
     def projection_changed(*_):
         if workspace.record is not None:
             write("Model inputs changed. Evaluate as-of date or cash flow explicitly.")

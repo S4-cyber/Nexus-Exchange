@@ -269,7 +269,7 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
                 try: window.after_cancel(timer)
                 except tk.TclError: pass
 
-    buttons=ttk.Frame(content); buttons.pack(pady=5)
+    buttons=ttk.Frame(content); buttons.pack(before=form, pady=4)
     for label,callback in (('Preview draft',prepare),('Save immutable draft',save),('Refresh saved drafts',refresh)):
         ttk.Button(buttons,text=label,command=callback).pack(side='left',padx=4)
     ack_button=ttk.Button(buttons,text='Acknowledge selected locally',command=acknowledge,state='disabled'); ack_button.pack(side='left',padx=4)

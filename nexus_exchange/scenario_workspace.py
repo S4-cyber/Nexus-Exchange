@@ -168,7 +168,7 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
 
     workspace=ScenarioWorkspace(directory,context_for(row),halt_check=halt_check)
     records=workspace.list()
-    from .cockpit import install_cockpit, fit_geometry
+    from .cockpit import install_cockpit, fit_geometry, action_menu
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
     window.title("Nexus Exchange | Scout scenario planning")
@@ -201,7 +201,7 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
     status=ttk.Label(content,wraplength=1020)
     status.pack(fill="x",padx=12)
     buttons=ttk.Frame(content)
-    buttons.pack(pady=5)
+    buttons.pack(before=body, pady=4)
     output=ScrolledText(content,height=9,wrap="word",state="disabled")
     output.pack(fill="both",expand=True,padx=12,pady=6)
 
@@ -322,22 +322,22 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
     def new():
         tree.selection_remove(*tree.selection())
         populate(blank_fields())
-    for label,callback in (("New / clear form",new),("Save immutable plan",save),
-                           ("Load selected",load),("Reassess selected saved plan",evaluate),
-                           ("Assumption evidence",evidence),("Refresh list",refresh)):
-        ttk.Button(buttons,text=label,command=callback).pack(side="left",padx=4)
+    ttk.Button(buttons,text="New / clear form",command=new).pack(side="left",padx=4)
+    ttk.Button(buttons,text="Save immutable plan",command=save).pack(side="left",padx=4)
+    saved_actions = [("Load selected", load), ("Reassess selected saved plan", evaluate),
+                     ("Assumption evidence", evidence), ("Refresh list", refresh)]
     if council_action is not None:
-        ttk.Button(buttons,text="Council review",command=council).pack(side="left",padx=4)
+        saved_actions.append(("Council review", council))
     if operator_action is not None:
-        ttk.Button(buttons,text="Operator RFQ",command=operator).pack(side="left",padx=4)
+        saved_actions.append(("Operator RFQ", operator))
+    action_menu(buttons, "Saved plan actions", saved_actions).pack(side="left",padx=4)
     if csv_action is not None:
-        ttk.Button(content,text="Operator CSV work sample",command=csv_deliverable).pack(pady=3)
-        ttk.Button(content,text="Operator JSON-to-CSV work sample",
-                   command=lambda:csv_deliverable("UTF8_JSON_RECORDS")).pack(pady=3)
-        ttk.Button(content,text="Operator CSV quality report",
-                   command=lambda:csv_deliverable(operation="COLUMN_PROFILE")).pack(pady=3)
-        ttk.Button(content,text="Operator CSV reconciliation",
-                   command=lambda:csv_deliverable(operation="RECONCILE")).pack(pady=3)
+        action_menu(buttons, "CSV tools", (
+            ("CSV work sample", csv_deliverable),
+            ("JSON-to-CSV work sample", lambda: csv_deliverable("UTF8_JSON_RECORDS")),
+            ("Column quality report", lambda: csv_deliverable(operation="COLUMN_PROFILE")),
+            ("Reconcile files", lambda: csv_deliverable(operation="RECONCILE")),
+        )).pack(side="left",padx=4)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
         items=tree.selection()

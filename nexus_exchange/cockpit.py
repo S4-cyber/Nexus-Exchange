@@ -21,6 +21,16 @@ IDLE_HELP="Hover over a control, or press Tab to focus it, for a simple explanat
 HELPS={
     "previous":"Show the previous page of tasks.",
     "next":"Show the next page of tasks.",
+    "run example": "Review one sample opportunity on this computer.",
+    "find opportunities": "Open the Research tab to browse sources and plan searches.",
+    "explore sources": "Explore sources of opportunities and the requirements for each.",
+    "plan a search": "Choose a service and review public search options.",
+    "browse leads": "Open leads already saved on this computer.",
+    "compare leads": "Compare saved opportunities using your planning preferences.",
+    "import opportunities": "Choose a saved opportunity snapshot in JSON format.",
+    "evaluate a scenario": "Choose a saved scenario to estimate its costs and returns.",
+    "export latest report": "Save the latest available report as a local JSON file.",
+    "edit owner profile": "Set your preferred sources, available hours and planning budget.",
     "run offline demonstration":"Run a built-in example using fake data. No outside services are contacted.",
     "import compiled json":"Choose a saved JSON file to review opportunities on your computer.",
     "emergency halt":"Stop new work and ask running work to stop safely. The app stays halted until you resume.",
@@ -123,6 +133,18 @@ HELPS={
     "register exact sample":"Recheck a selected matching CSV and record its Scout review in local obligation history; nothing is sent.",
     "animate stars":"Turn the decorative star movement on or off in all app windows. Work continues unchanged.",
 }
+
+
+def action_menu(parent, label, items):
+    """Group related commands behind a native keyboard-accessible menu."""
+    import tkinter as tk
+    from tkinter import ttk
+    button = ttk.Menubutton(parent, text=label, takefocus=True)
+    menu = tk.Menu(button, tearoff=False)
+    for title, callback in items:
+        menu.add_command(label=title, command=callback)
+    button.configure(menu=menu)
+    return button
 
 
 def help_for(label,widget_class):
@@ -235,7 +257,7 @@ class StarRail:
         self.orientation=orientation
         self.canvas=tk.Canvas(window,background=BLACK,highlightthickness=0,borderwidth=0,
                               width=16 if orientation!="top" else 1,
-                              height=30 if orientation=="top" else 1,takefocus=False)
+                              height=15 if orientation=="top" else 1,takefocus=False)
         self.stars=[]
         rng=random.Random(seed)
         for i in range(count):
@@ -377,24 +399,6 @@ class Cockpit:
         self.timer=None
         self.closed=False
         self.help=tk.StringVar(master=window,value=IDLE_HELP)
-        # Pack these before the original interface; footer is reserved, not an overlay.
-        self.footer=tk.Frame(window,background=BLACK,height=64,
-                            highlightbackground=EDGE,highlightthickness=1)
-        self.footer.pack(side="bottom",fill="x",padx=5,pady=(3,5))
-        self.footer.pack_propagate(False)
-        controls=ttk.Frame(self.footer)
-        controls.pack(side="left",fill="y",padx=10,pady=3)
-        ttk.Label(controls,text="NEXUS // COCKPIT",foreground=GREEN,
-                  font=("Segoe UI",10,"bold")).pack(anchor="w")
-        ttk.Checkbutton(controls,text="Animate stars",variable=self.motion).pack(anchor="w")
-        self.help_box=tk.Frame(self.footer,background=PANEL,highlightbackground=PURPLE,
-                              highlightthickness=1)
-        self.help_box.pack(side="right",fill="both",expand=True,padx=8,pady=4)
-        self.help_label=tk.Label(self.help_box,textvariable=self.help,background=PANEL,foreground=TEXT,
-                                justify="left",anchor="nw",font=FONT,padx=8,pady=4,
-                                wraplength=420)
-        self.help_label.pack(fill="both",expand=True)
-        self.help_label.bind("<Configure>",self._wrap,add="+")
         self.rails=[StarRail(window,"top",42,11),StarRail(window,"left",18,23),StarRail(window,"right",18,37)]
         self.rails[0].canvas.pack(side="top",fill="x")
         self.rails[1].canvas.pack(side="left",fill="y")
@@ -403,8 +407,17 @@ class Cockpit:
         self.safety=ttk.Frame(window) if command_deck else None
         if self.safety is not None:
             self.safety.pack(side="top",fill="x",padx=6,pady=(3,4))
-        self.viewport=WorkspaceViewport(window)
-        self.content=self.viewport.content
+        self.help_label=tk.Label(window,textvariable=self.help,background=PANEL,foreground=MUTED,
+                                 anchor="w",justify="left",font=FONT,padx=8,pady=2,wraplength=640)
+        self.help_label.pack(side="top",fill="x",padx=6,pady=(0,4))
+        self.help_label.bind("<Configure>",self._wrap,add="+")
+        self.viewport=None
+        if command_deck:
+            self.content=ttk.Frame(window)
+            self.content.pack(fill="both",expand=True)
+        else:
+            self.viewport=WorkspaceViewport(window)
+            self.content=self.viewport.content
         # Every descendant's default bindtags include its own toplevel.
         # No global bind_all and no button command/state changes.
         window.bind("<Enter>",self._enter,add="+")
@@ -425,7 +438,8 @@ class Cockpit:
     def _focus(self,event):
         widget=getattr(event,"widget",None)
         self.show(widget)
-        self.viewport.reveal(widget)
+        if self.viewport is not None:
+            self.viewport.reveal(widget)
 
     def show(self,widget):
         try:
@@ -478,7 +492,7 @@ def smoke_cockpit(root,halt_button):
     import tkinter as tk
     from tkinter import ttk
     chrome=install_cockpit(root)
-    if chrome.safety is None or halt_button.master.master!=chrome.safety or chrome.viewport.contains(halt_button):
+    if chrome.safety is None or halt_button.master.master!=chrome.safety or chrome.viewport is not None:
         raise RuntimeError("emergency halt must remain outside the scrolling dashboard")
     original=str(halt_button.cget("state"))
     chrome.show(halt_button)
@@ -505,10 +519,10 @@ def smoke_cockpit(root,halt_button):
         sub.viewport.canvas.yview_moveto(1)
         if sub.viewport.canvas.xview()[0]<=0 or sub.viewport.canvas.yview()[0]<=0:
             raise RuntimeError("cockpit overflow not reachable")
-        if sub.viewport.contains(sub.footer):
+        if sub.viewport.contains(sub.help_label):
             raise RuntimeError("help dock must not scroll")
-        if sub.motion is not chrome.motion or sub.footer not in child.pack_slaves():
-            raise RuntimeError("cockpit child or reserved help dock missing")
+        if sub.motion is not chrome.motion or sub.help_label.pack_info()["side"]!="top":
+            raise RuntimeError("cockpit child or top help strip missing")
         sub.show(button)
         if sub.help.get()!=HELPS["export new csv"]:
             raise RuntimeError("cockpit child help missing")

@@ -323,7 +323,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
             register_sample(selected,artifact,confirmed)
 
     bar = ttk.Frame(content)
-    bar.pack(pady=4)
+    bar.pack(before=panel, pady=4)
     ttk.Button(bar, text="Review declared requirements", command=evaluate).pack(side="left",padx=4)
     sample_button = ttk.Button(bar,text="Preview exact local sample",command=choose_sample,state="disabled")
     sample_button.pack(side="left",padx=4)
