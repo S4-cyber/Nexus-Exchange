@@ -14,7 +14,7 @@ from .council_audit import validate_snapshot
 from .governor import Action, decide
 from .lead_store import _digest, _json
 
-FORMAT="nexus-csv-deliverable-contract-v1"
+FORMAT="nexus-csv-deliverable-contract-v2"
 REPORT="nexus-csv-deliverable-report-v1"
 MAX_INPUT_BYTES=256*1024
 MAX_OUTPUT_BYTES=512*1024
@@ -25,7 +25,7 @@ _FLAGS=("independently_verified","buyer_accepted","contract_awarded",
         "invoice_eligible","revenue_realized","zero_capital_verified",
         "execution_eligible","external_authority","dispatch_enabled")
 _SPEC={"input_sha256","columns","key_column","expected_rows"}
-_CONTRACT={"format","plan_id","context","scenario_sha256","schedule_sha256",
+_CONTRACT={"format","plan_id","context","scenario_sha256","schedule_scope_sha256",
            "specification","contract_sha256",*_FLAGS}
 
 
@@ -61,6 +61,15 @@ def _spec(raw):
                 key_column=key,expected_rows=n)
 
 
+def _schedule_scope(plan_id,context,scenario_sha256):
+    # The archive plan ID is content-addressed over context, financial inputs
+    # and delivery-plan inputs. The Council schedule evaluation digest is
+    # time-dependent; it must never serve as an immutable work-sample identity.
+    return _digest(_json(dict(namespace="saved-plan-schedule-scope-v1",
+        plan_id=_hash(plan_id),context=_context(context),
+        scenario_sha256=_hash(scenario_sha256))))
+
+
 def build_contract(snapshot,specification,*,halted=None):
     """Bind explicit work-sample requirements to one current local saved-plan view."""
     _permit(halted)
@@ -69,7 +78,8 @@ def build_contract(snapshot,specification,*,halted=None):
         raise DeliverableError("CURRENT_SOURCE_REVIEW_REQUIRED")
     spec=_spec(specification)
     payload=dict(format=FORMAT,plan_id=snap["plan_id"],context=dict(snap["context"]),
-                 scenario_sha256=snap["scenario_sha256"],schedule_sha256=snap["schedule_sha256"],
+                 scenario_sha256=snap["scenario_sha256"],
+                 schedule_scope_sha256=_schedule_scope(snap["plan_id"],snap["context"],snap["scenario_sha256"]),
                  specification=spec,**dict.fromkeys(_FLAGS,False))
     return dict(payload,contract_sha256=_digest(_json(payload)))
 
@@ -83,7 +93,7 @@ def _contract(raw):
         raise DeliverableError("DELIVERABLE_AUTHORITY_OR_SCOPE_MISMATCH")
     payload=dict(format=FORMAT,plan_id=_hash(raw["plan_id"]),context=ctx,
                  scenario_sha256=_hash(raw["scenario_sha256"]),
-                 schedule_sha256=_hash(raw["schedule_sha256"]),
+                 schedule_scope_sha256=_schedule_scope(raw["plan_id"],ctx,raw["scenario_sha256"]),
                  specification=_spec(raw["specification"]),**dict.fromkeys(_FLAGS,False))
     expected=dict(payload,contract_sha256=_digest(_json(payload)))
     if _json(raw)!=_json(expected):

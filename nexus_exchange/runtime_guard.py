@@ -224,10 +224,7 @@ class RuntimeGuard:
         contract=build_contract(snapshot,specification,halted=self.is_set())
         result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
         current=self._csv_snapshot(plan_id)
-        if (current["context"]!=snapshot["context"] or
-                current["scenario_sha256"]!=snapshot["scenario_sha256"] or
-                current["schedule_sha256"]!=snapshot["schedule_sha256"] or
-                current["source_hold"] is not None):
+        if build_contract(current,specification,halted=self.is_set())!=contract:
             raise ValueError("deliverable scenario scope changed")
         if self.is_set():
             raise PermissionError("deliverable withheld after halt")
@@ -247,7 +244,9 @@ class RuntimeGuard:
         self._csv_ready(confirmed)
         fields={"preview":{"source_path","columns","key_column","expected_rows"},
                 "export":{"source_path","columns","key_column","expected_rows",
-                          "destination_path","expected_contract","expected_report","expected_artifact"}}
+                          "destination_path","expected_contract","expected_report","expected_artifact"},
+                "register":{"source_path","columns","key_column","expected_rows",
+                            "artifact_path","expected_contract","expected_report","expected_artifact"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported CSV action or inputs")
         from .digital_deliverable import build_contract
@@ -257,7 +256,7 @@ class RuntimeGuard:
         self._operator_active=True
         try:
             snapshot=self._csv_snapshot(plan_id)
-            if action=="export":
+            if action in ("export","register"):
                 for key in ("expected_contract","expected_report","expected_artifact"):
                     _hash(inputs[key])
             # Validate the declared schema and current source before file I/O.
@@ -272,12 +271,66 @@ class RuntimeGuard:
             pins=preview_pins(result)
             if any(pins[key]!=inputs[key] for key in pins):
                 raise ValueError("CSV preview changed; preview again before export")
+            if action=="register":
+                from .deliverable_obligations import ObligationStore, artifact_reference
+                from .evidence import verify_reference
+                match=verify_reference(inputs["artifact_path"],artifact_reference(result),
+                                       halted=self.is_set(),halt_check=self.is_set)
+                if match["byte_match"] is not True:
+                    raise ValueError("selected artifact does not match reviewed deliverable")
+                current=self._csv_snapshot(plan_id)
+                if build_contract(current,spec,halted=self.is_set())!=result["contract"]:
+                    raise ValueError("deliverable scenario scope changed")
+                path=self._directory/"operator-obligations.sqlite3"
+                with ObligationStore(path,existing_only=os.path.lexists(path)) as store:
+                    return store.register(result,now=self._clock(),confirmed=True,
+                                          halted=self.is_set(),halt_check=self.is_set)
             publish_new_csv(inputs["destination_path"],result["artifact"],
                             halted=self.is_set(),halt_check=self.is_set)
             if self.is_set():
                 raise PermissionError("halt after publication; inspect selected destination")
             return dict(pins,exported=True,report=result["report"],
                         buyer_accepted=False,external_authority=False)
+        finally:
+            self._operator_active=False
+
+    def csv_obligation_action(self,action,plan_id,*,confirmed=None,**inputs):
+        """Historical obligation review and evidence notes, not current buyer acceptance."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Operator unavailable while halted or faulted")
+        fields={"history":{"obligation_id"},"list":{"limit"},
+                "note":{"obligation_id","expected_head","kind","evidence_path"}}
+        if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
+            raise ValueError("unsupported obligation action or inputs")
+        from .deliverable_obligations import ObligationStore, NOTE_KINDS
+        from .checklist_store import _hash
+        _hash(plan_id)
+        self._operator_active=True
+        try:
+            path=self._directory/"operator-obligations.sqlite3"
+            if action=="list" and not os.path.lexists(path):
+                return ObligationStore.empty_list(plan_id,inputs["limit"])
+            if not os.path.lexists(path):
+                raise ValueError("obligation history unavailable")
+            with ObligationStore(path,existing_only=True) as store:
+                kwargs=dict(now=self._clock(),halted=self.is_set(),halt_check=self.is_set)
+                if action=="list":
+                    return store.list_plan(plan_id,limit=inputs["limit"],**kwargs)
+                record=store.history(plan_id,inputs["obligation_id"],**kwargs)
+                if action=="history":
+                    return record
+                if confirmed is not True:
+                    raise PermissionError("explicit historical evidence note confirmation required")
+                _hash(inputs["expected_head"])
+                if (inputs["expected_head"]!=record["head_sha256"] or
+                        type(inputs["kind"]) is not str or inputs["kind"] not in NOTE_KINDS):
+                    raise ValueError("obligation head or note kind mismatch")
+                from .evidence import fingerprint
+                reference=fingerprint(inputs["evidence_path"],halted=self.is_set(),halt_check=self.is_set)
+                return store.note(plan_id,inputs["obligation_id"],kind=inputs["kind"],
+                    expected_head=inputs["expected_head"],reference=reference,
+                    now=self._clock(),confirmed=True,halted=self.is_set(),halt_check=self.is_set)
         finally:
             self._operator_active=False
 
