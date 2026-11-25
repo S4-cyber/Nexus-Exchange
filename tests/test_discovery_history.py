@@ -53,6 +53,63 @@ class SearchHistoryTests(unittest.TestCase):
             self.assertFalse(hint["automatic_skip"])
             self.assertIn("may still confirm",hint_text(hint))
 
+    def test_exact_refs_and_missing_archive_denied(self):
+        with LeadStore(self.path) as store:
+            self.record(store)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            self.assertTrue(row["local_archive_consistent"])
+            self.assertEqual(len(row["observation_refs"]),1)
+            self.assertEqual(row["observations_sha256"],_digest(_json(row["observation_refs"])))
+            store.db.execute("DELETE FROM scout_observations_v1")
+            with self.assertRaisesRegex(ValueError,"missing from archive"):
+                store.search_history(now=NOW,halted=False)
+
+    def test_resealed_reference_digest_mismatch_denied(self):
+        with LeadStore(self.path) as store:
+            self.record(store)
+            raw,=store.db.execute("SELECT payload FROM scout_search_receipts_v1").fetchone()
+            value=json.loads(raw)
+            value["observation_refs"][0][3]="f"*64
+            value["observations_sha256"]=_digest(_json(value["observation_refs"]))
+            encoded=_json(value)
+            store.db.execute("UPDATE scout_search_receipts_v1 SET payload=?,payload_sha256=?",
+                             (encoded,_digest(encoded)))
+            with self.assertRaisesRegex(ValueError,"archive digest mismatch"):
+                store.search_history(now=NOW,halted=False)
+
+    def test_legacy_receipt_is_readable_but_not_verified(self):
+        with LeadStore(self.path) as store:
+            self.record(store)
+            raw,=store.db.execute("SELECT payload FROM scout_search_receipts_v1").fetchone()
+            value=json.loads(raw)
+            value["format"]="nexus-scout-search-receipt-v1"
+            value.pop("observation_refs")
+            encoded=_json(value)
+            store.db.execute("UPDATE scout_search_receipts_v1 SET payload=?,payload_sha256=?",
+                             (encoded,_digest(encoded)))
+            history=store.search_history(now=NOW,halted=False)
+            self.assertFalse(history["rows"][0]["local_archive_consistent"])
+            self.assertFalse(recent_hint(self.row,history,now=NOW)["local_archive_consistent"])
+
+    def test_reference_time_and_count_fail_closed(self):
+        from nexus_exchange.discovery_history import _validate
+        with LeadStore(self.path) as store:
+            self.record(store)
+            raw,=store.db.execute("SELECT payload FROM scout_search_receipts_v1").fetchone()
+        original=json.loads(raw)
+        for mutation in ("count","time","duplicate"):
+            value=copy.deepcopy(original)
+            if mutation=="count":
+                value["observation_refs"]=[]
+            elif mutation=="time":
+                value["observation_refs"][0][2]=(NOW+timedelta(seconds=1)).isoformat(timespec="microseconds")
+            else:
+                value["observation_refs"]*=2
+                value["returned"]=2
+            value["observations_sha256"]=_digest(_json(value["observation_refs"]))
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):
+                _validate(value)
+
     def test_wrong_query_or_source_rolls_back_archive_and_receipt(self):
         report=copy.deepcopy(self.report)
         report["query"]["title"]="unreviewed query"

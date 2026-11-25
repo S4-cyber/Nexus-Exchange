@@ -8,10 +8,11 @@ from datetime import timedelta
 import json
 import re
 
-from .lead_store import _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES
+from .lead_store import _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES, _restore
 from .scout import _timestamp
 
-FORMAT="nexus-scout-search-receipt-v1"
+LEGACY_FORMAT="nexus-scout-search-receipt-v1"
+FORMAT="nexus-scout-search-receipt-v2"
 MAX_RECEIPTS=2000
 MAX_PAYLOAD=32768
 RECENT=timedelta(minutes=15)
@@ -82,7 +83,11 @@ def _scope_dates(scope):
 
 
 def _validate(payload):
-    if type(payload) is not dict or set(payload)!=_FIELDS or payload["format"]!=FORMAT:
+    if type(payload) is not dict:
+        raise ValueError("Invalid search receipt schema.")
+    version=payload.get("format")
+    if not ((version==LEGACY_FORMAT and set(payload)==_FIELDS) or
+            (version==FORMAT and set(payload)==_FIELDS|{"observation_refs"})):
         raise ValueError("Invalid search receipt schema.")
     _hash(payload["task_id"],32)
     for key in ("plan_sha256","option_id","profile_revision","catalog_sha256",
@@ -123,6 +128,23 @@ def _validate(payload):
     hashes=_hashes(payload["page_sha256"])
     if payload["inserted"]>payload["returned"] or len(hashes)>payload["requests"]:
         raise ValueError("Inconsistent search receipt counts.")
+    if version==FORMAT:
+        refs=payload["observation_refs"]
+        if type(refs) is not list or len(refs)!=payload["returned"]:
+            raise ValueError("Invalid search observation references.")
+        identities=set()
+        for ref in refs:
+            if type(ref) is not list or len(ref)!=4 or ref[0]!=source:
+                raise ValueError("Invalid search observation reference.")
+            _hash(ref[1])
+            _hash(ref[3])
+            if not start<=_stamp(ref[2])<=end:
+                raise ValueError("Observation reference outside search interval.")
+            if ref[1] in identities:
+                raise ValueError("Duplicate search observation reference.")
+            identities.add(ref[1])
+        if refs!=sorted(refs) or _digest(_json(refs))!=payload["observations_sha256"]:
+            raise ValueError("Search observation set digest mismatch.")
     return payload
 
 
@@ -146,9 +168,7 @@ def make_receipt(discovery,report,records,inserted,*,now):
         raise ValueError("Discovery report local CPV differs from selected search.")
     if len(records)!=report["returned"]:
         raise ValueError("Discovery archive count mismatch.")
-    refs=sorted((source,key,stamp,digest) for source,key,stamp,_encoded,digest in records)
-    if any(_timestamp(stamp)<start for _,_,stamp,_ in refs):
-        raise ValueError("Observation predates the recorded discovery task.")
+    refs=sorted([source,key,stamp,digest] for source,key,stamp,_encoded,digest in records)
     scope=_scope(row)
     return _validate(dict(format=FORMAT,task_id=discovery["task_id"],
         plan_sha256=plan["plan_sha256"],option_id=row["option_id"],
@@ -157,7 +177,8 @@ def make_receipt(discovery,report,records,inserted,*,now):
         completed_at=end.isoformat(timespec="microseconds"),scope=scope,filter_sha256=_filter(scope),
         requests=report.get("requests"),returned=report["returned"],inserted=inserted,
         truncated=report["truncated"],page_sha256=report["page_sha256"],
-        observations_sha256=_digest(_json(refs)),**dict.fromkeys(_FLAGS,False)))
+        observations_sha256=_digest(_json(refs)),observation_refs=refs,
+        **dict.fromkeys(_FLAGS,False)))
 
 
 def insert_receipt(db,discovery,report,records,inserted,*,now):
@@ -172,6 +193,26 @@ def insert_receipt(db,discovery,report,records,inserted,*,now):
                (payload["task_id"],payload["completed_at"],encoded,_digest(encoded)))
 
 
+def _verify_archive(db,payload,cache):
+    """Check only the bounded displayed receipts; never infer provider authenticity."""
+    if payload["format"]==LEGACY_FORMAT:
+        return False
+    for source,key,stamp,digest in payload["observation_refs"]:
+        identity=(source,key,stamp)
+        if identity not in cache:
+            row=db.execute("""SELECT payload,payload_sha256 FROM scout_observations_v1
+                WHERE source=? AND lead_key=? AND retrieved_at=?""",identity).fetchone()
+            if row is None:
+                raise ValueError("Search receipt observation missing from archive.")
+            restored=_restore(*row)
+            if (restored["source"],restored["key"],restored["retrieved_at"])!=identity:
+                raise ValueError("Search receipt observation identity mismatch.")
+            cache[identity]=row[1]
+        if cache[identity]!=digest:
+            raise ValueError("Search receipt archive digest mismatch.")
+    return True
+
+
 def read_history(db,*,now,limit=100,halted=None):
     _permit(halted)
     now=_now(now)
@@ -183,6 +224,7 @@ def read_history(db,*,now,limit=100,halted=None):
     if len(raw)>MAX_RECEIPTS:
         raise ValueError("Search history exceeds bound.")
     rows=[]
+    cache={}
     for task,stamp,encoded,digest in raw:
         if type(encoded) is not str or len(encoded)>MAX_PAYLOAD or _digest(encoded)!=digest:
             raise ValueError("Search receipt digest mismatch.")
@@ -191,6 +233,7 @@ def read_history(db,*,now,limit=100,halted=None):
             raise ValueError("Search receipt identity mismatch.")
         if len(rows)<limit:
             rows.append(dict(value,receipt_sha256=digest,
+                             local_archive_consistent=_verify_archive(db,value,cache),
                              historical_only=True,future_dated=_stamp(stamp)>now))
     return dict(format="nexus-scout-search-history-v1",rows=rows,
         returned=len(rows),total=len(raw),truncated=len(rows)<len(raw),
@@ -222,6 +265,7 @@ def recent_hint(option,history,*,now):
         return dict(match=match,completed_at=row["completed_at"],returned=row["returned"],
                     inserted=row["inserted"],truncated=row["truncated"],
                     receipt_sha256=row["receipt_sha256"],freshness_verified=False,
+                    local_archive_consistent=row.get("local_archive_consistent") is True,
                     automatic_skip=False)
     return None
 
@@ -232,4 +276,6 @@ def hint_text(hint):
     return ("Recent repeat check: "+hint["match"]+" | completed "+hint["completed_at"]
             +" | "+str(hint["returned"])+" returned, "+str(hint["inserted"])+" new observations"
             +(" | collection truncated" if hint["truncated"] else "")
+            +(" | local archive references consistent" if hint.get("local_archive_consistent") is True
+              else " | local archive references not verified")
             +"\nThis is historical research, not current source availability. You may still confirm a fresh search.")
