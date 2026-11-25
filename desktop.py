@@ -6,6 +6,9 @@ import sqlite3
 import webbrowser
 from queue import Empty, SimpleQueue
 from nexus_exchange import engagement
+from nexus_exchange.engagement_reports import EngagementReports
+from nexus_exchange.activity_feed import ActivityFeed, finding_row, with_shortlist
+from nexus_exchange.activity_panel import ActivityPanel
 from nexus_exchange.engagement_files import folder as work_folder, INBOX, OUTPUTS
 from nexus_exchange.accounts_panel import install as install_accounts
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +27,6 @@ from nexus_exchange.ranking_workspace import open_ranking_window
 from nexus_exchange.scout_discovery import SOURCE_LABELS, open_discovery_window, load_profile, resolve_query, execute_discovery
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
-from nexus_exchange.dashboard_events import project, search_history
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
@@ -118,7 +120,7 @@ def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
-    from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit, action_menu
+    from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit, action_menu, WorkspaceViewport
     root = tk.Tk()
     root.title("Nexus Exchange | Scout preview")
     root.geometry(fit_geometry(root,1120,820))
@@ -144,12 +146,16 @@ def main(*, data_directory=None, gui_smoke=False):
     future = None
     engaged = False
     timer = None
+    next_due = None
+    activity_tick = None
     updates = SimpleQueue()
     scenario_report = None
     latest_results_window = None
     def busy():
         return future is not None or stop.browser_process_pending()
     def close():
+        if activity_tick is not None:
+            root.after_cancel(activity_tick)
         try:
             stop.set()
         except Exception:
@@ -180,132 +186,80 @@ def main(*, data_directory=None, gui_smoke=False):
         return row
 
     heading(home, "Scout overview")
-    ttk.Label(home, text="Engage searches public sources, checks saved leads and prepares your review brief every hour while this window is open.",
+    ttk.Label(home, text="Engage runs Scout every hour while this window is open.",
               wraplength=440, justify="left").pack(anchor="w", pady=(0, 7))
     home_actions = action_row(home)
     cycle_status = ttk.Label(home, wraplength=490, justify="left")
     cycle_status.pack(anchor="w", pady=(0, 6))
-    activity = ttk.Frame(home)
-    activity.pack(fill="x")
-    tasks = ttk.Frame(activity)
-    slots = []
-    for i in range(10):
-        cell = ttk.Label(tasks, anchor="w")
-        cell.grid(row=i//2, column=i%2, sticky="ew", padx=5)
-        tasks.columnconfigure(i%2, weight=1)
-        slots.append(cell)
-    result_panel = ttk.Frame(home)
-    heading(result_panel, "Latest result")
-    output = ScrolledText(result_panel, width=1, height=5, wrap="word", padx=10, pady=8)
+    home_live = ActivityPanel(home)
+    def open_work_folder(name):
+        try:
+            if not webbrowser.open(work_folder(directory, name).as_uri()):
+                raise OSError()
+        except (OSError, ValueError):
+            messagebox.showinfo(name, f"Work folder: {directory / name}", parent=root)
+
+    review = EngagementReports(reports, open_work_folder)
+    report_actions = review.actions
+    result_panel = ttk.Frame(review.tabs)
+    output = ScrolledText(result_panel, width=1, height=4, wrap="word", padx=8, pady=4)
     output.pack(fill="both", expand=True)
-    recent = ttk.LabelFrame(home, text="Recent activity", padding=10)
-    recent.pack(fill="x", pady=8)
-    recent_text = ttk.Label(recent, justify="left", wraplength=430)
-    recent_text.pack(anchor="w")
     output.configure(state="disabled")
-
-    report_actions = action_row(reports)
-    filters = ttk.Frame(reports)
-    filters.pack(fill="x")
-    ttk.Label(filters, text="Search task history").pack(side="left")
-    history_query = tk.StringVar()
-    history_search = ttk.Entry(filters, textvariable=history_query)
-    history_search.pack(side="left", fill="x", expand=True, padx=6)
-    status = ttk.Label(reports)
-    status.pack(anchor="w", pady=4)
-    table = ttk.Frame(reports)
-    table.pack(fill="both", expand=True)
-    table.rowconfigure(0, weight=1)
-    table.columnconfigure(0, weight=1)
-    history = ttk.Treeview(table, columns=("time","target","state","task_id"), show="headings", height=6)
-    for key,label,width in (("time","UTC timestamp",170),("target","Target",200),
-                            ("state","Status",95),("task_id","Task ID",220)):
-        history.heading(key,text=label)
-        history.column(key,width=width,minwidth=70,anchor="w")
-    history.grid(row=0,column=0,sticky="nsew")
-    ybar = ttk.Scrollbar(table, orient="vertical", command=history.yview)
-    ybar.grid(row=0,column=1,sticky="ns")
-    xbar = ttk.Scrollbar(table, orient="horizontal", command=history.xview)
-    xbar.grid(row=1,column=0,sticky="ew")
-    history.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
-    page = 1
-    journal = ()
-    def display_history(*_):
-        visible, matches = search_history(journal, history_query.get())
-        history.delete(*history.get_children())
-        for event in visible:
-            history.insert("", "end", values=(event.timestamp, event.target, event.state, event.task_id))
-        match_count.configure(text=f"{len(visible)} shown / {matches} matching")
-
-    match_count = ttk.Label(filters)
-    match_count.pack(side="right")
-    ttk.Button(filters, text="Clear", command=lambda: history_query.set("")).pack(side="right", padx=4)
-    history_query.trace_add("write", display_history)
+    feed = ActivityFeed(store.db)
+    feed.settle()
+    version = None
+    latest_brief = None
 
     def refresh():
-        nonlocal page, journal
-        events = store.read()
-        first = project(events)
-        page = min(page,first["pages"])
-        view = project(events,page)
-        if view["tasks"]:
-            tasks.pack(fill="x")
-        else:
-            tasks.pack_forget()
-        for i, slot in enumerate(slots):
-            if i < len(view["tasks"]):
-                task = view["tasks"][i]
-                slot.configure(text=f"{task.target} · {task.state}")
-                slot.grid()
-            else:
-                slot.grid_remove()
-        if view["pages"] > 1:
-            navigation.pack(before=tasks, anchor="w")
-        else:
-            navigation.pack_forget()
-        page_label.configure(text=f"Page {page} / {view['pages']}")
-        journal = view["history"]
-        last_events = [f"{event.target} · {event.state}" for event in reversed(journal[-3:])]
-        recent_text.configure(text="\n".join(last_events) or "Your activity will appear here after your first task.")
-        display_history()
-        status.configure(text=f"Successful tasks: {view['successful_tasks']} | Recorded events: {len(view['history'])}")
-    navigation = ttk.Frame(activity)
-    def move(delta):
-        nonlocal page
-        page = max(1,min(page+delta,project(store.read())["pages"]))
-        refresh()
-    ttk.Button(navigation,text="Previous",command=lambda:move(-1)).pack(side="left")
-    page_label = ttk.Label(navigation)
-    page_label.pack(side="left",padx=8)
-    ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
-    refresh()
-
-    def reopen_results():
-        nonlocal latest_results_window
-        if stop.is_set() or scenario_report is None or scenario_report.get("format") not in LEAD_FORMATS:
+        nonlocal version
+        revision = (store.db.execute("PRAGMA data_version").fetchone()[0], store.db.total_changes, next_due, latest_brief and latest_brief["finished"])
+        if revision == version:
             return
-        if latest_results_window is not None and latest_results_window.winfo_exists():
-            latest_results_window.deiconify()
-            latest_results_window.lift()
-        else:
-            latest_results_window = show_source_results(scenario_report)
+        rows = with_shortlist(feed.snapshot(), latest_brief)
+        if next_due is not None:
+            rows.insert(0, ("next-cycle", "Pending", "Next Scout cycle",
+                            "Scheduled for " + next_due.astimezone().strftime("%H:%M %Z") + " while the application is open.",
+                            (next_due - timedelta(hours=1)).isoformat()))
+        home_live.display(rows)
+        review.activity.display(rows)
+        version = revision
 
-    reopen_button = ttk.Button(result_panel, text="View search results", command=reopen_results)
+    def tick():
+        nonlocal activity_tick
+        try:
+            refresh()
+        finally:
+            activity_tick = root.after(300, tick)
+    tick()
+
+    def select_result():
+        if str(result_panel) not in review.tabs.tabs():
+            review.tabs.add(result_panel, text="Task result")
+        tabs.select(reports)
+        review.tabs.select(result_panel)
+
+    def clear_embedded():
+        nonlocal latest_results_window
+        if latest_results_window is not None and latest_results_window.winfo_exists():
+            latest_results_window.destroy()
+        latest_results_window = None
+        output.pack(fill="both", expand=True)
 
     def show_result_panel():
-        nonlocal latest_results_window
-        latest_results_window = None
-        reopen_button.pack_forget()
-        recent.pack_forget()
-        result_panel.pack(fill="both", expand=True)
-        tabs.select(home)
+        clear_embedded()
+        select_result()
 
     def worker(work=None, target="Offline screening", scenario=False,discovery=None):
         local = EventStore(directory / "events.sqlite3")
         try:
             if scenario:
                 with LeadStore(directory / "scout-leads.sqlite3") as leads:
-                    return run_logged(local, stop, work=work, target=target, lead_store=leads,discovery=discovery)
+                    result = run_logged(local, stop, work=work, target=target, lead_store=leads,discovery=discovery)
+                    if isinstance(result, dict) and result.get("format") in LEAD_FORMATS and not stop.is_set():
+                        source = LEAD_FORMATS[result["format"]][0]
+                        ActivityFeed(local.db).put("manual", [finding_row(source, SOURCE_LABELS[source], r)
+                                                for r in result["leads"]], datetime.now(timezone.utc))
+                    return result
             with OpportunityArchive(directory / "archive.sqlite3") as archive:
                 return run_logged(local, stop, archive, work=work, target=target)
         finally:
@@ -329,7 +283,7 @@ def main(*, data_directory=None, gui_smoke=False):
         future = executor.submit(worker, work, target, scenario,discovery)
         poll()
     def poll():
-        nonlocal future, scenario_report
+        nonlocal future, scenario_report, latest_results_window
         refresh()
         if not future.done():
             root.after(100,poll)
@@ -344,13 +298,7 @@ def main(*, data_directory=None, gui_smoke=False):
             if type(result) is dict:
                 scenario_report = result
                 if result.get("format") in LEAD_FORMATS:
-                    guidance = ("Select a notice and choose Review checklist to see its saved steps."
-                                if result["returned"] else
-                                "Try another service or source in Research → Plan a search.")
-                    output.insert("end", f"Notices returned: {result['returned']}\n"
-                                  f"Source requests: {result['requests']}\n\n{guidance}")
-                    reopen_results()
-                    reopen_button.pack(before=output, anchor="w", pady=(0, 4))
+                    latest_results_window = show_source_results(scenario_report, embed=True)
                 else:
                     output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
                 exporter.configure(state="normal")
@@ -370,16 +318,22 @@ def main(*, data_directory=None, gui_smoke=False):
                 for button in diagnostic_buttons:
                     button.configure(state="normal")
     def show_halted(message):
-        nonlocal scenario_report, latest_results_window
+        nonlocal scenario_report, engaged, timer, next_due
+        engaged = False
+        next_due = None
+        if timer is not None:
+            root.after_cancel(timer)
+            timer = None
+        engage_button.configure(text="Engage", state="normal")
+        cycle_status.configure(text="Paused. Select Engage to start a new cycle.")
         scenario_report=None
-        latest_results_window = None
-        reopen_button.pack_forget()
+        clear_embedded()
         exporter.configure(state="disabled")
         output.configure(state="normal")
         output.delete("1.0","end")
         output.configure(state="disabled")
-        result_panel.pack_forget()
-        recent.pack(fill="x", pady=8)
+        if str(result_panel) in review.tabs.tabs():
+            review.tabs.forget(result_panel)
         launch.configure(state="disabled")
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
@@ -387,13 +341,6 @@ def main(*, data_directory=None, gui_smoke=False):
             button.configure(state="disabled")
         halt_status.configure(text=message)
     def halt():
-        nonlocal engaged, timer
-        engaged = False
-        if timer is not None:
-            root.after_cancel(timer)
-            timer = None
-        engage_button.configure(text="Engage", state="normal")
-        cycle_status.configure(text="Paused. Select Engage to start a new cycle.")
         message="HALTED — new tasks blocked"
         try:
             stop.set()
@@ -436,8 +383,12 @@ def main(*, data_directory=None, gui_smoke=False):
         finally:
             if stop.is_set():
                 show_halted("HALTED — Operator blocked; review runtime before explicit resume.")
+    diagnostic_activity = None
+    def mark_activity(key, title, state, detail):
+        feed.put(key, [(key, state, title, detail)], datetime.now(timezone.utc))
+
     def browser_diagnostic(fixture_id):
-        nonlocal scenario_report
+        nonlocal scenario_report, diagnostic_activity
         if council_blocked():
             return False
         show_result_panel()
@@ -460,10 +411,14 @@ def main(*, data_directory=None, gui_smoke=False):
             return False
         for button in (launch,importer,simulator,*diagnostic_buttons):
             button.configure(state="disabled")
+        diagnostic_activity = uuid4().hex
+        mark_activity(diagnostic_activity, "Local Scout diagnostic", "Engaged", "Running the selected offline fixture.")
         halt_status.configure(text="Scout diagnostic running — Emergency halt available.")
         root.after(25,browser_poll)
         return True
     def browser_poll():
+        nonlocal diagnostic_activity
+        failed = False
         try:
             report=stop.poll_browser_process()
             if report is None:
@@ -476,11 +431,16 @@ def main(*, data_directory=None, gui_smoke=False):
                               +json.dumps(report,ensure_ascii=True,indent=2))
                 output.configure(state="disabled")
         except Exception:
+            failed = not stop.is_set()
             if not stop.is_set():
                 try:
                     stop.set()
                 except Exception:
                     pass
+        if diagnostic_activity:
+            state = "Needs attention" if failed else "Stopped" if stop.is_set() else "Completed"
+            mark_activity(diagnostic_activity, "Local Scout diagnostic", state, "Offline fixture process finished.")
+            diagnostic_activity = None
         if stop.is_set():
             show_halted("HALTED — Scout diagnostic drained; explicit offline resume required.")
         else:
@@ -537,9 +497,16 @@ def main(*, data_directory=None, gui_smoke=False):
                 export_report(path,scenario_report)
             except OSError as exc:
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
-    def show_source_results(report):
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
+    def show_source_results(report, *, embed=False):
+        if embed:
+            output.pack_forget()
+            window = ttk.Frame(result_panel)
+            window.pack(fill="both", expand=True)
+            content = ttk.Frame(window)
+            content.pack(fill="both", expand=True)
+        else:
+            window = tk.Toplevel(root)
+            content = install_cockpit(window).content
         source_format=report.get("format","nexus-sam-research-v1")
         label,link_for={
             "nexus-sam-research-v1":("SAM",notice_url),
@@ -549,8 +516,9 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-canada-research-v1":("CanadaBuys",canada_notice_url),
             "nexus-usaspending-research-v1":("USAspending award intelligence",award_url),
         }[source_format]
-        window.title("Nexus Exchange | "+label+" research leads")
-        window.geometry(fit_geometry(window,1050,700))
+        if not embed:
+            window.title("Nexus Exchange | "+label+" research leads")
+            window.geometry(fit_geometry(window,1050,700))
         count = sum(lead["research_candidate"] for lead in report["leads"])
         ttk.Label(content,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
         ttk.Label(content,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
@@ -562,11 +530,18 @@ def main(*, data_directory=None, gui_smoke=False):
             ttk.Label(content,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
         if source_format in ("nexus-fts-research-v1","nexus-cf-research-v1"):
             ttk.Label(content,text="Historical releases only. The complete procurement lifecycle is not compiled.").pack()
-        tree=ttk.Treeview(content,columns=("title","deadline","state"),show="headings",height=8)
+        tree_area = ttk.Frame(content)
+        tree_area.pack(fill="both", expand=True, padx=6, pady=3)
+        tree=ttk.Treeview(tree_area,columns=("title","deadline","state"),show="headings",height=4)
+        ybar = ttk.Scrollbar(tree_area, orient="vertical", command=tree.yview)
+        xbar = ttk.Scrollbar(tree_area, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        xbar.pack(side="bottom", fill="x")
+        ybar.pack(side="right", fill="y")
         for col,label,width in (("title","Opportunity",510),("deadline","Deadline / reported date",200),("state","Research status",170)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
-        tree.pack(fill="x",padx=12,pady=8)
+        tree.pack(fill="both",expand=True)
         leads = report["leads"]
         for index, lead in enumerate(leads):
             tree.insert("","end",iid=str(index),values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
@@ -620,7 +595,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 with LeadStore(archive_path) as archive:
                     row = archive.resolve_result(report, index, now=datetime.now(timezone.utc),
                                                  profile=profile, halted=stop.is_set())
-                checklist_window(row, window)
+                checklist_window(row, window, previous=content if embed else None)
             except PermissionError:
                 message.configure(text="Select Resume offline in the main window, then reopen the checklist.")
             except ResultChangedError:
@@ -629,13 +604,13 @@ def main(*, data_directory=None, gui_smoke=False):
                 message.configure(text="The checklist could not be opened. Check the saved notice in Research → Browse leads.")
 
         actions = ttk.Frame(content)
-        actions.pack(before=tree, anchor="w", padx=12, pady=4)
+        actions.pack(before=tree_area, anchor="w", padx=12, pady=4)
         review_button = ttk.Button(actions, text="Review checklist", command=review_checklist)
         review_button.pack(side="left")
         notice_button = ttk.Button(actions, text="Open selected official notice", command=open_notice)
         notice_button.pack(side="left", padx=5)
         message = ttk.Label(content, wraplength=800, justify="left")
-        message.pack(before=tree, anchor="w", padx=12)
+        message.pack(before=tree_area, anchor="w", padx=12)
         tree.bind("<<TreeviewSelect>>",display)
         if leads:
             tree.selection_set("0")
@@ -1232,7 +1207,7 @@ def main(*, data_directory=None, gui_smoke=False):
         clear_button.pack(side="left", padx=4)
         load()
         return window
-    def checklist_window(row,parent,*,smoke=False):
+    def checklist_window(row,parent,*,smoke=False,previous=None):
         initial=context_for(row)
         def current_context():
             if stop.is_set():
@@ -1246,10 +1221,20 @@ def main(*, data_directory=None, gui_smoke=False):
                 raise ValueError("Observation or profile changed. Refresh Scout history.")
             return initial
         current_context()
-        window = tk.Toplevel(parent)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Persistent To Do")
-        window.geometry(fit_geometry(window,1000,720))
+        if previous is None:
+            window = tk.Toplevel(parent)
+            content = install_cockpit(window).content
+            window.title("Nexus Exchange | Persistent To Do")
+            window.geometry(fit_geometry(window, 1000, 720))
+        else:
+            previous.pack_forget()
+            window = ttk.Frame(parent, name="checklist")
+            window.pack(fill="both", expand=True)
+            def return_to_results():
+                window.destroy()
+                previous.pack(fill="both", expand=True)
+            ttk.Button(window, text="Back to notices", command=return_to_results).pack(anchor="w")
+            content = WorkspaceViewport(window).content
         ttk.Label(content,text="TO DO — Owner review notes",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(content,text=row["title"],wraplength=940).pack(padx=12)
         ttk.Label(content,text="Evidence noted means an owner assertion, NOT verification or authorization.",
@@ -1527,86 +1512,99 @@ def main(*, data_directory=None, gui_smoke=False):
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
+    archive_page = None
     def browse_archive():
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Historical opportunities")
-        window.geometry(fit_geometry(window,850,600))
-        ttk.Label(content,text="Historical observations — newest 100, re-screened on refresh; not live offers").pack(pady=8)
-        search = ttk.Entry(content)
-        search.pack(fill="x",padx=12,pady=4)
-        view = ScrolledText(content,wrap="word")
-        view.pack(fill="both",expand=True,padx=12,pady=8)
-        report = None
-        def reload():
-            nonlocal report
-            try:
-                if stop.is_set():
-                    raise PermissionError("HALTED")
-                report = archive_report(directory / "archive.sqlite3",
-                    now=datetime.now(timezone.utc),query=search.get())
-                value = json.dumps(report,ensure_ascii=True,indent=2)
-            except Exception as exc:
-                report = None
-                value = "Archive unavailable: " + type(exc).__name__
+        nonlocal archive_page
+        if archive_page is not None and archive_page.winfo_exists():
+            tabs.select(reports)
+            review.tabs.select(archive_page)
+            return archive_page
+        window = archive_page = ttk.Frame(review.tabs, padding=(5, 3))
+        review.tabs.add(window, text="Archive")
+        tabs.select(reports)
+        review.tabs.select(window)
+        filters = ttk.Frame(window)
+        filters.pack(fill="x")
+        ttk.Label(filters, text="Search archive").pack(side="left")
+        query = tk.StringVar()
+        ttk.Entry(filters, textvariable=query, width=15).pack(side="left", fill="x", expand=True, padx=4)
+        view = ScrolledText(window, wrap="word", width=1, height=4)
+        view.pack(fill="both", expand=True, pady=4)
+        snapshot = None
+        displayed = None
+        def render(*_):
+            nonlocal displayed
+            displayed = None
+            if snapshot is None:
+                value = "Archive unavailable. Resume research and refresh the archive."
+            else:
+                needle = query.get().casefold().strip()
+                rows = [r for r in snapshot["rows"] if any(needle in str(r[k]).casefold()
+                        for k in ("title", "source", "key", "external_id"))]
+                displayed = dict(snapshot, rows=rows)
+                lines = [f"{len(rows)} matches in the latest {len(snapshot['rows'])} historical observations."]
+                for r in rows:
+                    lines.extend(("", r["title"], r["source"] + " · " + r["external_id"],
+                                  "Reported deadline: " + (r["deadline"] or "Unknown"), r["source_url"]))
+                value = "\n".join(lines)
             view.configure(state="normal")
-            view.delete("1.0","end")
-            view.insert("end",value)
+            view.delete("1.0", "end")
+            view.insert("end", value)
             view.configure(state="disabled")
+        def reload():
+            nonlocal snapshot
+            try:
+                snapshot = None if stop.is_set() else archive_report(directory / "archive.sqlite3", now=datetime.now(timezone.utc))
+            except (OSError, ValueError, sqlite3.Error):
+                snapshot = None
+            render()
         def export():
-            if report is None or stop.is_set():
+            if displayed is None or stop.is_set():
                 return
-            path = filedialog.asksaveasfilename(parent=window,defaultextension=".json",
-                filetypes=[("JSON","*.json")],initialfile="nexus-exchange-archive.json")
-            if path and not stop.is_set() and report is not None:
+            path = filedialog.asksaveasfilename(parent=root, defaultextension=".json",
+                      filetypes=[("JSON","*.json")], initialfile="nexus-history.json")
+            if path and not stop.is_set():
                 try:
-                    export_report(path, report)
+                    export_report(path, displayed)
                 except OSError as exc:
-                    messagebox.showerror("Export failed",type(exc).__name__,parent=window)
-        buttons = ttk.Frame(content)
-        buttons.pack(before=view, anchor="w", padx=12, pady=4)
-        ttk.Button(buttons,text="Search / refresh",command=reload).pack(side="left")
-        ttk.Button(buttons,text="Export displayed JSON",command=export).pack(side="left")
+                    messagebox.showerror("Export failed", type(exc).__name__, parent=root)
+        ttk.Button(filters, text="Refresh", command=reload).pack(side="left")
+        ttk.Button(filters, text="Export JSON", command=export).pack(side="left", padx=3)
+        query.trace_add("write", render)
         reload()
         return window
+
     def read_brief():
         try:
             with (directory / engagement.BRIEF).open(encoding="utf-8") as handle:
-                return json.loads(handle.read(262144))
+                return json.loads(handle.read(1024 * 1024))
         except FileNotFoundError:
             return None
 
     def summarize(brief):
         found = sum(item["found"] for item in brief["sources"])
-        return (f"{brief['status']} · {found} notices returned · {len(brief['shortlist'])} saved leads shortlisted"
-                + f" · {brief['jobs']['produced']} local files produced"
-                + ("\n" + " ".join(brief["notes"]) if brief["notes"] else ""))
+        jobs = brief["jobs"]
+        return (f"{brief['status']} · Notices {found} · Shortlisted {len(brief['shortlist'])}"
+                f" · Files created {jobs['produced']} · Files held {jobs['held']}")
 
     def open_brief():
-        try:
-            brief = read_brief()
-            text = engagement.brief_text(brief) if brief else "Engage Scout on Home to prepare your first brief."
-        except (OSError, ValueError, TypeError, KeyError):
-            text = "The saved brief could not be read. Engage Scout to rebuild it from your lead archive."
-        window = tk.Toplevel(root)
-        window.title("Latest Scout brief")
-        window.geometry(fit_geometry(root, 760, 540))
-        body = ScrolledText(window, wrap="word", padx=14, pady=10)
-        body.pack(fill="both", expand=True)
-        body.insert("1.0", text)
-        body.configure(state="disabled")
+        tabs.select(reports)
+        review.tabs.select(review.summary)
 
     def start_cycle():
-        nonlocal future, timer
+        nonlocal future, timer, next_due
         timer = None
         if not engaged or stop.is_set():
             return
         if busy():
             timer = root.after(1000, start_cycle)
             return
+        next_due = None
         kwargs = {}
         if gui_smoke:
             def fixture_search(source, *args):
+                if not release_search.wait(10):
+                    raise RuntimeError("Timed out waiting for the live GUI fixture")
                 fmt = {"uk_tender": "nexus-fts-research-v1", "canada": "nexus-canada-research-v1"}[source]
                 return dict(format=fmt, returned=0, leads=[], truncated=False, page_sha256=["0"*64])
             kwargs["default_search"] = fixture_search
@@ -1614,7 +1612,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.after(100, poll_cycle)
 
     def poll_cycle():
-        nonlocal future, timer
+        nonlocal future, timer, next_due, latest_brief
         while True:
             try:
                 stage = updates.get_nowait()
@@ -1628,15 +1626,19 @@ def main(*, data_directory=None, gui_smoke=False):
         try:
             brief = future.result()
             next_status = summarize(brief)
+            review.display(brief)
+            latest_brief = brief
         except Exception:
             next_status = "Cycle interrupted. Review Reports for the recorded task status."
         future = None
         refresh()
         if engaged and not stop.is_set():
-            next_time = (datetime.now().astimezone() + timedelta(hours=1)).strftime("%H:%M")
+            next_due = datetime.now(timezone.utc) + timedelta(hours=1)
+            next_time = next_due.astimezone().strftime("%H:%M")
             cycle_status.configure(text=next_status + f"\nNext search at {next_time} local time.")
             refresh_accounts()
             timer = root.after(3600000, start_cycle)
+            refresh()
 
     def engage():
         nonlocal engaged
@@ -1665,6 +1667,8 @@ def main(*, data_directory=None, gui_smoke=False):
             return False
         if engaged:
             halt_status.configure(text="Scout is engaged · Account setup in progress.")
+        account_id = uuid4().hex
+        mark_activity(account_id, "Account connection", "Engaged", "Waiting for the provider or local account setup.")
         future = executor.submit(work, stop.is_set)
         def finish():
             nonlocal future
@@ -1673,9 +1677,13 @@ def main(*, data_directory=None, gui_smoke=False):
                 return
             try:
                 message = future.result()
+                state = "Completed"
             except Exception:
+                state = "Needs attention"
                 message = "Connection incomplete. Check provider access in Accounts and reconnect if needed."
             future = None
+            mark_activity(account_id, "Account connection", "Stopped" if stop.is_set() else state,
+                          "See Accounts for the connection status.")
             done("Account setup stopped." if stop.is_set() else message)
             if engaged:
                 halt_status.configure(text="Scout is engaged · Emergency halt stops this session.")
@@ -1701,18 +1709,15 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(home_actions, text="View latest brief", command=open_brief).pack(side="left", padx=5)
     try:
         previous = read_brief()
+        review.display(previous)
+        latest_brief = previous
+        refresh()
         cycle_status.configure(text=("Last cycle · " + summarize(previous)) if previous else "Ready for the first search.")
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError):
+        latest_brief = None
+        review.display(None, error="Select Engage to rebuild the latest brief from the lead archive.")
         cycle_status.configure(text="Select Engage to rebuild the latest brief.")
-    ttk.Button(report_actions, text="Scout brief", command=open_brief).pack(side="left", padx=3)
     refresh_accounts = install_accounts(accounts, directory, account_task, busy, webbrowser.open)
-    def open_work_folder(name):
-        try:
-            if not webbrowser.open(work_folder(directory, name).as_uri()):
-                raise OSError()
-        except (OSError, ValueError):
-            messagebox.showinfo(name, f"Work folder: {directory / name}", parent=root)
-
     heading(research, "Find opportunities")
     find_actions = action_row(research)
     ttk.Button(find_actions, text="Explore sources", command=revenue_workspace).pack(side="left")
@@ -1735,20 +1740,17 @@ def main(*, data_directory=None, gui_smoke=False):
     heading(settings, "Advanced preferences")
     resume_button.pack(anchor="w", pady=(0,4))
     ttk.Button(settings, text="Search settings", command=owner_profile_window).pack(anchor="w")
-    work_actions = action_row(settings)
-    ttk.Button(work_actions, text="Open work inbox", command=lambda: open_work_folder(INBOX)).pack(side="left")
-    ttk.Button(work_actions, text="Open completed files", command=lambda: open_work_folder(OUTPUTS)).pack(side="left", padx=4)
     heading(settings, "Appearance")
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
     ttk.Button(settings, text="Recover interrupted Council attempts", command=recover_council).pack(anchor="w")
 
     heading(help_page, "Getting started")
-    for line in ("1. Choose Engage on Home. Scout starts immediately and repeats hourly while the application stays open.",
-                 "2. Read the latest brief and source coverage on Home. Accounts and advanced search settings are optional.",
+    for line in ("1. Choose Engage on Home. Search or filter the live list and select any task or finding for details.",
+                 "2. Reports shows the same live activity, the latest cycle brief and individual file results.",
                  "3. Emergency halt stops scheduling. After closing and reopening the application, choose Engage to start again."):
         ttk.Label(help_page, text=line, wraplength=440, justify="left").pack(anchor="w", pady=2)
-    ttk.Label(help_page, text="Local file jobs: place CSVs in Settings → Open work inbox. Each cycle writes a checked column-quality report to Completed files. Use UTF-8, up to 2,000 rows and 16 unique column names starting with a letter. Formulas and oversized files are held.", wraplength=490, justify="left").pack(anchor="w", pady=4)
+    ttk.Label(help_page, text="In Reports → Work files, open the inbox to add CSVs or flat JSON records with text values. Scout checks CSV columns and converts JSON to CSV. Select a file to see its result or what needs attention.", wraplength=490, justify="left").pack(anchor="w", pady=4)
     heading(help_page, "Check the local research tools")
     diagnostics = action_row(help_page)
     launch = ttk.Button(diagnostics, text="Run example", command=run)
@@ -1785,7 +1787,24 @@ def main(*, data_directory=None, gui_smoke=False):
             if native.load("sam") != {"key": "synthetic-gui-check"}:
                 raise RuntimeError("Packaged Windows credential protection round trip failed")
             native.forget("sam")
+        work_folder(directory, INBOX).joinpath("demo.json").write_text('[{"name":"Scout"}]', encoding="utf-8")
+        work_folder(directory, INBOX).joinpath("fix.csv").write_text("id\n=formula\n", encoding="utf-8")
+        from threading import Event
+        release_search = Event()
         engage_button.invoke()
+        deadline = monotonic() + 8
+        try:
+            while monotonic() < deadline:
+                root.update()
+                if any(row[1:3] == ("Engaged", "UK Find a Tender") for row in home_live.visible.values()):
+                    break
+                sleep(0.01)
+            if (not home_live.visible or not any(row[1] == "Engaged" for row in home_live.visible.values())
+                    or not any(row[1:3] == ("Pending", "CanadaBuys") for row in review.activity.visible.values())
+                    or future is None or future.done()):
+                raise RuntimeError("Both live views must show work before the source returns")
+        finally:
+            release_search.set()
         deadline = monotonic() + 20
         while future is not None and monotonic() < deadline:
             root.update()
@@ -1793,6 +1812,15 @@ def main(*, data_directory=None, gui_smoke=False):
         brief = read_brief()
         if future is not None or not engaged or not brief or len(brief["sources"]) != 2 or timer is None:
             raise RuntimeError("One-click first-run engagement did not compile and schedule the next search")
+        open_brief()
+        if tabs.select() != str(reports) or review.tabs.select() != str(review.summary):
+            raise RuntimeError("Home did not open the full-window report")
+        review.tabs.select(review.files)
+        root.update_idletasks()
+        if (not review.listing.winfo_ismapped() or len(review.items) != 2
+                or "fix.csv" not in review.detail.cget("text") or brief["jobs"]["produced"] != 1):
+            raise RuntimeError("Work files did not show the completed and held inbox jobs")
+        tabs.select(home)
         halt_button.invoke()
         if timer is not None or engaged or not stop.is_set():
             raise RuntimeError("Emergency halt did not cancel recurring engagement")
@@ -1809,15 +1837,19 @@ def main(*, data_directory=None, gui_smoke=False):
         if not result_panel.winfo_ismapped() or not output.get("1.0", "end").strip():
             raise RuntimeError("Home did not show the example result")
         tabs.select(reports)
-        history_query.set("OFFLINE SCREENING")
-        if len(history.get_children()) != 3:
-            raise RuntimeError("Dashboard history search missed fixture events")
-        history_query.set("no such event")
-        if history.get_children():
-            raise RuntimeError("Dashboard history search retained unrelated events")
-        history_query.set("")
-        if len(history.get_children()) != 6:
-            raise RuntimeError("Dashboard history search failed to clear")
+        review.tabs.select(review.live_page)
+        refresh()
+        review.activity.query.set("OFFLINE SCREENING")
+        if len(review.activity.visible) != 1 or next(iter(review.activity.visible.values()))[1] != "Completed":
+            raise RuntimeError("Live report did not show the completed manual task")
+        home_live.query.set("fix.csv")
+        if len(home_live.visible) != 1 or next(iter(home_live.visible.values()))[1] != "Needs attention":
+            raise RuntimeError("Home live search did not retain a held file")
+        review.activity.query.set("no such event")
+        if review.activity.visible or not home_live.visible:
+            raise RuntimeError("Live activity filters leaked across tabs")
+        home_live.query.set("")
+        review.activity.query.set("")
         halt()
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
             raise RuntimeError("desktop emergency halt failed")
@@ -1861,6 +1893,8 @@ def main(*, data_directory=None, gui_smoke=False):
             raise RuntimeError("Scout diagnostic halt suppression failed")
         resume()
         window = browse_archive()
+        if window.winfo_toplevel() != root or review.tabs.select() != str(window):
+            raise RuntimeError("Opportunity archive must open inside Reports")
         leads_window = browse_leads()
         profile_window = owner_profile_window()
         pathway_window = revenue_workspace()
@@ -1914,20 +1948,22 @@ def main(*, data_directory=None, gui_smoke=False):
                 raise RuntimeError("Synthetic result did not reach Home")
             root.update()
             sleep(0.01)
-        if latest_results_window is None or not reopen_button.winfo_manager():
+        if latest_results_window is None or latest_results_window.winfo_toplevel() != root:
             raise RuntimeError("Home did not retain the completed search results")
-        latest_results_window.destroy()
+        tabs.select(home)
         recorded = store.read()
-        reopen_button.invoke()
+        select_result()
         results_window = latest_results_window
         if not results_window.winfo_exists() or store.read() != recorded or busy():
             raise RuntimeError("Reopening search results must reuse the completed report")
         control(results_window, ttk.Button, "Review checklist").invoke()
-        reopened = next(child for child in results_window.winfo_children() if isinstance(child, tk.Toplevel))
+        reopened = results_window.nametowidget("checklist")
+        if reopened.winfo_toplevel() != root:
+            raise RuntimeError("Checklist opened outside the main window")
         review_tasks = next(widget for widget in descendants(reopened) if isinstance(widget, ttk.Treeview))
         if not any(review_tasks.set(item, "state") == "Evidence noted" for item in review_tasks.get_children()):
             raise RuntimeError("Search result failed to reopen its saved checklist notes")
-        reopened.destroy()
+        control(reopened, ttk.Button, "Back to notices").invoke()
         empty_window = show_source_results(dict(saved_report, returned=0, leads=[]))
         if not control(empty_window, ttk.Button, "Review checklist").instate(["disabled"]):
             raise RuntimeError("Empty search result enabled checklist review")

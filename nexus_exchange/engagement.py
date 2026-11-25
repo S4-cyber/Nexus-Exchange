@@ -9,6 +9,7 @@ from . import canada_search, fts_search, sam_search
 from .account_providers import balances, planning_limit, renew_document
 from .account_vault import AccountVault
 from .event_store import EventStore
+from .activity_feed import ActivityFeed, finding_row
 from .engagement_files import run_files
 from .lead_store import LeadStore
 from .operator_capabilities import assess_lead, CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
@@ -64,7 +65,7 @@ def compile_brief(path, profile, bank, now, stopped):
         with RankingStore(path) as store:
             ranks = store.rank_review(profile=effective, now=now, halted=False,
                                       operator_focus=True, limit=15)
-        return [dict(title=r["title"], source=r["source"], url=r["source_url"],
+        return [dict(title=r["title"], source=r["source"], notice_id=r["notice_id"], url=r["source_url"],
                      review=r["review_tier"], next_step=r["operator_capability"]["review_tasks"][0])
                 for r in ranks["rows"] if r["source"] in profile["sources"]]
     with LeadStore(path) as store:
@@ -73,7 +74,7 @@ def compile_brief(path, profile, bank, now, stopped):
     for lead in leads:
         ensure_active(stopped)
         fit = assess_lead(lead, source_hold=None, halted=False)
-        rows.append(dict(title=lead["title"], source=lead["source"], url=lead["source_url"],
+        rows.append(dict(title=lead["title"], source=lead["source"], notice_id=lead["notice_id"], url=lead["source_url"],
                          review=fit["state"], next_step=fit["review_tasks"][0]))
     order = ("IMPLEMENTED_TITLE_HINT_ONLY", "NO_IMPLEMENTED_TITLE_HINT", "SOURCE_HELD")
     rows.sort(key=lambda r: order.index(r["review"]))
@@ -85,6 +86,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
     ensure_active(stopped)
     event = EventStore(directory / "events.sqlite3")
     task = uuid4().hex
+    activity = ActivityFeed(event.db)
+    def stages(rows):
+        activity.put(task, [(task + "/" + key, state, title, detail) for key, state, title, detail in rows], clock())
+    def stage(key, state, title, detail=""):
+        stages([(key, state, title, detail)])
     def journal(state):
         event.append(dict(task_id=task, target="Autonomous Scout cycle", state=state,
                           timestamp=clock().isoformat()))
@@ -95,6 +101,10 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
             profile = load_profile(directory, halt_check=stopped)
         except NoSavedProfile:
             profile = None
+        sources = profile["sources"] if profile else ["uk_tender", "canada", "sam"]
+        stages([(s, "Pending", SOURCE_LABELS[s], "Queued for discovery.") for s in sources if profile or s != "sam"] +
+               [("brief", "Pending", "Compile review shortlist", ""),
+                ("files", "Pending", "Process local work files", "")])
         vault = AccountVault(directory)
         notes, outcomes = [], []
         try:
@@ -102,17 +112,22 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
             if grant and grant["expires"] <= clock().timestamp() + 120:
                 ensure_active(stopped)
                 if grant.get("refresh"):
+                    stage("document", "Engaged", "Renew DocuSign consent")
                     progress("Renewing DocuSign consent")
                     renewed = renew_document(grant)
                     ensure_active(stopped)
                     vault.save("docusign", renewed)
+                    stage("document", "Completed", "Renew DocuSign consent")
                 else:
+                    stage("document", "Needs attention", "DocuSign consent", "Reconnect in Accounts.")
                     notes.append("DocuSign consent expired. Reconnect in Accounts when needed.")
         except (OSError, ValueError, KeyError, TypeError):
             ensure_active(stopped)
+            stage("document", "Needs attention", "DocuSign consent", "Review the connection in Accounts.")
             notes.append("DocuSign connection needs attention in Accounts.")
         bank = None
         if profile and profile["mode"] == "catalyst":
+            stage("budget", "Engaged", "Check planning budget")
             progress("Checking the planning budget")
             try:
                 bank = read_bank(vault, stopped, clock())
@@ -120,7 +135,9 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                 notes.append("Bank balance unavailable. Review the connection in Accounts.")
             if planning_limit(profile, bank, clock().timestamp()) == 0:
                 notes.append("Using a $0 planning limit. Check Accounts and your budget in Settings.")
-        sources = profile["sources"] if profile else ["uk_tender", "canada", "sam"]
+                stage("budget", "Needs attention", "Check planning budget", "Review Accounts and Settings.")
+            else:
+                stage("budget", "Completed", "Check planning budget")
         stamp = clock()
         period = int(stamp.timestamp() // 3600)
         capability, term = SERVICES[period % len(SERVICES)]
@@ -136,6 +153,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                     notes.append("Reconnect your SAM.gov key in Accounts.")
                 if not key:
                     if profile:
+                        stage(source, "Skipped", label, "Add a SAM.gov key in Accounts to enable this source.")
                         notes.append("Add a SAM.gov key in Accounts to enable this source.")
                     continue
             now = clock()
@@ -144,9 +162,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                 plan = build_plan(profile, capability, now=now, halted=False)
                 choices = [r for r in plan["options"] if r["source"] == source and r["state"] == READY]
                 if not choices:
+                    stage(source, "Skipped", label, "Current search preferences exclude this search.")
                     notes.append(label + " skipped under current search preferences.")
                     continue
                 selection = choices[(period // len(SERVICES)) % len(choices)]["option_id"]
+            stage(source, "Engaged", label, "Searching the public source.")
             progress("Searching " + label)
             try:
                 if profile:
@@ -161,6 +181,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                           "Check source access or account credentials" if "ACCESS_DENIED" in code else
                           "Could not reach the provider" if "TRANSPORT" in code else
                           "Provider response could not be used")
+                stage(source, "Needs attention", label, detail)
                 outcomes.append(dict(source=source, status="Unavailable", detail=detail, found=0, saved=0))
                 continue
             ensure_active(stopped)
@@ -168,17 +189,28 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                             task_id=uuid4().hex) if profile else None)
             with LeadStore(path) as store:
                 saved = store.record(report, now=clock(), halted=False, halt_check=stopped, discovery=receipt)
+            activity.put(task, [finding_row(source, label, lead) for lead in report["leads"]], clock())
+            stage(source, "Completed", label, f"{report['returned']} notices returned · {saved} observations saved.")
             outcomes.append(dict(source=source, status="Searched", found=report["returned"], saved=saved))
         ensure_active(stopped)
         progress("Checking source holds and compiling the review brief")
+        stage("brief", "Engaged", "Compile review shortlist")
         rows = compile_brief(path, profile, bank, clock(), stopped)
-        progress("Producing and checking local CSV quality reports")
+        progress("Processing and checking local work files")
         ensure_active(stopped)
-        jobs = run_files(directory, stopped)
+        stage("brief", "Completed", "Compile review shortlist", f"{len(rows)} leads shortlisted for review.")
+        stage("files", "Engaged", "Process local work files")
+        jobs = run_files(directory, stopped, report=stages)
+        file_note = jobs.get("issue") or ("Inbox exceeds 128 entries." if jobs["full"] else
+                    f"{jobs['produced']} produced · {jobs['existing']} already complete · {jobs['held']} need attention.")
+        stage("files", "Needs attention" if jobs.get("issue") or jobs["held"] or jobs["full"] else "Completed",
+              "Process local work files", file_note)
+        if jobs.get("issue"):
+            notes.append(jobs["issue"])
         if jobs["full"]:
             notes.append("Move completed files out of Scout Inbox to reduce it to 128 entries.")
         if jobs["held"]:
-            notes.append(f"{jobs['held']} local files need review. See Help for supported CSV inputs.")
+            notes.append("Review held inputs in Reports → Work files.")
         succeeded = sum(s["status"] == "Searched" for s in outcomes)
         status = ("No sources enabled" if not outcomes else "Sources unavailable" if not succeeded
                   else "Partial coverage" if succeeded < len(outcomes) else "Completed")
@@ -192,9 +224,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
             os.replace(temp, target)
         finally:
             temp.unlink(missing_ok=True)
+        activity.settle(task)
         journal("failed" if outcomes and not succeeded else "succeeded")
         return brief
     except Exception:
+        activity.settle(task, failed=not stopped())
         journal("cancelled" if stopped() else "failed")
         raise
     finally:
@@ -208,7 +242,7 @@ def brief_text(brief):
                 if item["status"] == "Searched" else item.get("detail", "unavailable this cycle"))
         lines.append(SOURCE_LABELS[item["source"]] + " — " + text)
     jobs = brief["jobs"]
-    lines.append(f"Local CSV jobs: {jobs['produced']} produced, {jobs['existing']} already complete, {jobs['held']} need review.")
+    lines.append(f"Local work files: {jobs['produced']} produced, {jobs['existing']} already complete, {jobs['held']} need review.")
     lines.extend(brief["notes"])
     lines.append(f"Review shortlist from saved leads: {len(brief['shortlist'])}")
     for row in brief["shortlist"]:
