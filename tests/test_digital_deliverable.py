@@ -1,0 +1,184 @@
+import copy
+from hashlib import sha256
+import tempfile
+import unittest
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock,patch
+from datetime import timedelta
+
+from nexus_exchange import sam_search
+from nexus_exchange.checklist_store import context_for
+from nexus_exchange.digital_deliverable import (
+    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES,
+)
+from nexus_exchange.lead_store import _digest,_json
+from nexus_exchange.owner_profile import ProfileStore
+from nexus_exchange.scenario_store import ScenarioStore
+from nexus_exchange.runtime_guard import RuntimeGuard
+from test_cash_feasibility import scenario
+from test_schedule_feasibility import plan
+from test_owner_profile import profile
+from test_lead_store import NOW
+import test_sam_search as sam
+
+RAW=b'name,id,category\n"Beta, Inc",002,Research\nAlpha,001,Design\n'
+EXPECTED=b'"id","name","category"\r\n"001","Alpha","Design"\r\n"002","Beta, Inc","Research"\r\n'
+
+
+def spec(raw=RAW,**changes):
+    return dict(dict(input_sha256=sha256(raw).hexdigest(),columns=["id","name","category"],
+                     key_column="id",expected_rows=2),**changes)
+
+
+class DigitalDeliverableTests(unittest.TestCase):
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory=Path(temp.name)
+        self.now=NOW
+        self.declared=profile()
+        self.report=sam_search.search(sam.QUERY,sam.KEY,
+            transport=Mock(return_value=(200,sam.page([sam.notice(1)]))),
+            approved=True,halt_check=lambda:False,clock=lambda:NOW)
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(self.declared,halted=False)
+        with ScenarioStore(self.directory/"scout-leads.sqlite3") as store:
+            store.record(self.report,now=NOW,halted=False)
+            lead=store.browse(now=NOW,source="sam",profile=self.declared,halted=False)["leads"][0]
+            self.key=store.save(context_for(lead),scenario(),plan(),profile=self.declared,now=NOW,halted=False)
+        self.guard=RuntimeGuard(self.directory,clock=lambda:self.now)
+        self.addCleanup(self.guard.close)
+        self.guard.resume()
+
+    def contract(self,raw=RAW,**changes):
+        snap=self.guard.council_action("inspect",self.key)
+        return build_contract(snap,spec(raw,**changes),halted=False)
+
+    def call(self,raw=RAW,**changes):
+        return self.guard.produce_csv_deliverable(self.key,raw=raw,
+            specification=spec(raw,**changes),confirmed=True)
+
+    def test_real_saved_plan_produces_exact_artifact_and_qa(self):
+        result=self.call()
+        self.assertEqual(result["artifact"],EXPECTED)
+        self.assertEqual(result["contract"]["plan_id"],self.key)
+        self.assertEqual(result["report"]["rows"],2)
+        self.assertTrue(result["report"]["local_criteria_passed"])
+        self.assertEqual(result["report"]["artifact_sha256"],sha256(EXPECTED).hexdigest())
+        self.assertEqual(result["report"],verify_csv(result["contract"],RAW,EXPECTED,halted=False))
+        for flag in ("buyer_accepted","contract_awarded","invoice_eligible","revenue_realized",
+                     "execution_eligible","external_authority","zero_capital_verified"):
+            self.assertIs(result["report"][flag],False)
+        self.assertEqual(self.call(),result)
+        self.assertFalse((self.directory/"operator.sqlite3").exists())
+
+    def test_changed_input_or_artifact_rejected(self):
+        contract=self.contract()
+        with self.assertRaisesRegex(DeliverableError,"FINGERPRINT"):
+            produce_csv(contract,RAW.replace(b"Alpha",b"Gamma"),halted=False)
+        for artifact in (EXPECTED.replace(b"Alpha",b"Gamma"),EXPECTED.replace(b'"001"',b'"003"'),
+                         EXPECTED.replace(b"\r\n",b"\n"),
+                         b'"id","name","category"\r\n"002","Beta, Inc","Research"\r\n"001","Alpha","Design"\r\n'):
+            with self.subTest(artifact=artifact),self.assertRaises(DeliverableError):
+                verify_csv(contract,RAW,artifact,halted=False)
+
+    def test_reject_formulas_controls_duplicate_keys_and_width(self):
+        for raw in (RAW.replace(b"Alpha",b"=1+1"),RAW.replace(b"Alpha",b"  @SUM(1)"),
+                    RAW.replace(b"Alpha","＋1".encode()),RAW.replace(b"Alpha",b"\x00x"),
+                    RAW.replace(b"001",b"002"),RAW.replace(b"001",b""),
+                    RAW.replace(b"001",b" 001"),RAW.replace(b"Alpha,001,Design",b"Alpha,001"),
+                    RAW.replace(b"Alpha",b'"unclosed')):
+            with self.subTest(raw=raw),self.assertRaises(DeliverableError):
+                self.call(raw)
+
+    def test_unknown_header_row_count_and_bounds(self):
+        for raw,changes in ((RAW.replace(b"name,id,category",b"name,id,extra"),{}),
+                            (RAW,dict(expected_rows=1)),(RAW,dict(expected_rows=True)),
+                            (RAW,dict(columns=["id","id","category"])),
+                            (RAW,dict(key_column="unknown")),
+                            (b"x"*(MAX_INPUT_BYTES+1),{})):
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                self.call(raw,**changes)
+
+    def test_scope_and_authority_tampering(self):
+        contract=self.contract()
+        for changed in (dict(contract,external_authority=True),
+                        dict(contract,contract_sha256="0"*64),
+                        dict(contract,plan_id="0"*64)):
+            with self.assertRaises(DeliverableError):
+                produce_csv(changed,RAW,halted=False)
+        # Self-consistent hash still cannot turn a flag into authority.
+        forged=dict(contract,buyer_accepted=True)
+        forged["contract_sha256"]=_digest(_json({k:v for k,v in forged.items() if k!="contract_sha256"}))
+        with self.assertRaises(DeliverableError):
+            produce_csv(forged,RAW,halted=False)
+
+    def test_halt_unknown_and_mid_processing(self):
+        contract=self.contract()
+        for halted in (None,True,0):
+            with self.assertRaises(PermissionError):
+                produce_csv(contract,RAW,halted=halted)
+        calls=0
+        def stop():
+            nonlocal calls
+            calls+=1
+            return calls>=4
+        with self.assertRaises(PermissionError):
+            produce_csv(contract,RAW,halted=False,halt_check=stop)
+
+    def test_runtime_owner_confirmation_and_active_task(self):
+        for confirmed in (None,False,1,"true"):
+            with self.assertRaises(PermissionError):
+                self.guard.produce_csv_deliverable(self.key,raw=RAW,specification=spec(),confirmed=confirmed)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with self.assertRaises(PermissionError):
+                pool.submit(self.call).result(timeout=5)
+        event=dict(task_id="worker",target="Synthetic",timestamp=self.now.isoformat())
+        self.guard.events.append(dict(event,state="queued"))
+        try:
+            with self.assertRaises(PermissionError):
+                self.call()
+        finally:
+            self.guard.events.append(dict(event,state="cancelled"))
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.call()
+
+    def test_profile_and_superseded_observation_reject(self):
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(profile(hours_per_week=30),halted=False)
+        with self.assertRaises(ValueError):
+            self.call()
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(self.declared,halted=False)
+        self.now+=timedelta(minutes=1)
+        updated=copy.deepcopy(self.report)
+        updated["leads"][0]["retrieved_at"]=self.now.isoformat()
+        with ScenarioStore(self.directory/"scout-leads.sqlite3") as store:
+            store.record(updated,now=self.now,halted=False)
+        with self.assertRaises(ValueError):
+            self.call()
+
+    def test_source_hold_prevents_contract(self):
+        self.now+=timedelta(days=2)
+        with self.assertRaises(ValueError):
+            self.call()
+
+    def test_reentry_and_halt_after_production(self):
+        def interrupted(*args,**kwargs):
+            result=produce_csv(*args,**kwargs)
+            with self.assertRaises(PermissionError):
+                self.guard.resume()
+            with self.assertRaises(PermissionError):
+                self.guard.close()
+            self.guard.set()
+            return result
+        with patch("nexus_exchange.digital_deliverable.produce_csv",side_effect=interrupted):
+            with self.assertRaises(PermissionError):
+                self.call()
+        self.assertTrue(self.guard.is_set())
+        self.assertFalse(self.guard._operator_active)
+
+if __name__=="__main__":
+    unittest.main()

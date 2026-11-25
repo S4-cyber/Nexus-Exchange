@@ -203,6 +203,38 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def produce_csv_deliverable(self,plan_id,*,raw,specification,confirmed=None):
+        """One explicit local, bounded work sample for an exact saved plan."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Operator unavailable while halted or faulted")
+        if confirmed is not True:
+            raise PermissionError("explicit local deliverable confirmation required")
+        from .digital_deliverable import build_contract, produce_csv
+        self._operator_active=True
+        try:
+            if self._council_pending():
+                self.set()
+                raise PermissionError("outstanding Council reservation requires halted recovery")
+            snapshot=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                     clock=self._clock).inspect(plan_id)
+            contract=build_contract(snapshot,specification,halted=self.is_set())
+            result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
+            # Re-resolve the local plan before exposing bytes; no saved report,
+            # no invoice, no acceptance or commercial dispatch.
+            current=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                    clock=self._clock).inspect(plan_id)
+            if (current["context"]!=snapshot["context"] or
+                    current["scenario_sha256"]!=snapshot["scenario_sha256"] or
+                    current["schedule_sha256"]!=snapshot["schedule_sha256"] or
+                    current["source_hold"] is not None):
+                raise ValueError("deliverable scenario scope changed")
+            if self.is_set():
+                raise PermissionError("deliverable withheld after halt")
+            return result
+        finally:
+            self._operator_active=False
+
     def browser_fixture(self,fixture_id,*,confirmed=None):
         """Fixed, explicit local diagnostics; no caller URL, plan, clock or callback."""
         self._require_idle()
