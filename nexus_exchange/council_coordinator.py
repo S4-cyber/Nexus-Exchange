@@ -7,6 +7,7 @@ through this interface. One explicit invocation consumes at most one attempt.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 
 from .agent_handoff import parse_handoff
 from .council_attempts import CouncilAttemptStore, _contract, _hash
@@ -59,14 +60,15 @@ def build_task(scope_sha256,policy_sha256,specs):
     return task
 
 
-def _validate_report(report,handoff,plan):
+def _validate_report(report,handoff,plan,snapshot):
     # The evaluator is trusted local code. This is an additional boundary
     # check, not an API for accepting external reports or asserted outcomes.
-    if type(report) is not dict:
-        raise ValueError("invalid Council report")
     required_false=("external_authority","execution_eligible",
         "commercial_facts_verified","release_eligible","independent_reviewer_authenticated",
         "durable_retry_enforced")
+    required={"format","task_id","attempt","handoff_sha256","status","criteria",*required_false}
+    if type(report) is not dict or set(report)!=required:
+        raise ValueError("invalid Council report schema")
     if (report.get("format")!="nexus-council-criterion-review-v1"
             or report.get("task_id")!=handoff.task_id
             or type(report.get("attempt")) is not int or report["attempt"]!=handoff.attempt
@@ -84,6 +86,10 @@ def _validate_report(report,handoff,plan):
             raise ValueError("Council criterion identity mismatch")
         reason=row["reason"]
         observed=row["observed_sha256"]
+        data=snapshot.get(spec.criterion)
+        actual=None if data is None else hashlib.sha256(data).hexdigest()
+        if observed!=actual:
+            raise ValueError("reported digest differs from actual artifact snapshot")
         if reason=="MISSING_ARTIFACT":
             if observed is not None:
                 raise ValueError("missing artifact cannot have a digest")
@@ -158,7 +164,7 @@ class CouncilCoordinator:
         report=review_criteria(handoff,plan,snapshot,halted=False,
                                halt_check=self.halt_check)
         self._permit()
-        _validate_report(report,handoff,plan)
+        _validate_report(report,handoff,plan,snapshot)
         digest=_digest(_json(report))
         now=self._time()
         self._permit()
