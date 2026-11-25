@@ -191,3 +191,34 @@ class NativeCorrespondenceTests(unittest.TestCase):
         self.action.side_effect=halt
         with self.assertRaises(PermissionError):
             self.controller.preview_followup(self.record)
+
+    def test_followup_export_is_exact_and_registration_separate(self):
+        thread=self._reply_thread()
+        self.action.return_value=thread
+        preview=self.controller.preview_followup(self.record)
+        with TemporaryDirectory() as temp:
+            path=Path(temp).resolve()/'followup.txt'
+            event=self.controller.export_followup(self.record,path,preview,confirmed=True)
+            self.assertEqual(event['head'],preview['head'])
+            self.assertEqual(event['kind'],'LOCAL_FOLLOWUP_DRAFT')
+            self.assertEqual(event['evidence'],fingerprint(path,halted=False))
+            self.assertIn(preview['reply_event_sha256'],path.read_text(encoding='utf-8'))
+            self.assertTrue(all(call.args[0]=='thread_history' for call in self.action.call_args_list))
+            with self.assertRaises(FileExistsError):
+                self.controller.export_followup(self.record,path,preview,confirmed=True)
+
+    def test_followup_export_requires_confirmation_and_current_preview(self):
+        thread=self._reply_thread()
+        self.action.return_value=thread
+        preview=self.controller.preview_followup(self.record)
+        with TemporaryDirectory() as temp:
+            path=Path(temp).resolve()/'followup.txt'
+            with self.assertRaises(PermissionError):
+                self.controller.export_followup(self.record,path,preview,confirmed=1)
+            with self.assertRaises(ValueError):
+                self.controller.export_followup(self.record,path,dict(preview,body='altered'),confirmed=True)
+            self.assertFalse(path.exists())
+            self.blocked=True
+            with self.assertRaises(PermissionError):
+                self.controller.export_followup(self.record,path,preview,confirmed=True)
+            self.assertFalse(path.exists())

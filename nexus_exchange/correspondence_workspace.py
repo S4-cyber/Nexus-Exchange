@@ -5,6 +5,7 @@ from .operator_recipients import _scope, _for_draft, _FLAGS_EXTRA, render_corres
 from .correspondence_thread import validate_thread, MAX_EVENTS, _KINDS
 from .evidence import fingerprint, parse_reference
 from .operator_workspace import parse_supplier
+from .followup_export import write_reviewed_text
 
 
 class CorrespondenceWorkspace:
@@ -161,6 +162,25 @@ class CorrespondenceWorkspace:
                     historical_only=True,**dict.fromkeys(_FLAGS_EXTRA,False))
 
 
+    def export_followup(self, record, path, expected, *, confirmed=None):
+        """Export exact reviewed bytes; return a separate local event preview."""
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError('explicit local export confirmation required')
+        current=self.preview_followup(record)
+        if type(expected) is not dict or current!=expected:
+            raise ValueError('follow-up changed; preview again')
+        payload=current['body']+'\n\n'+ '\n'.join(
+            key+': '+current[key] for key in ('draft_id','recipient_id','thread_id','head',
+                                              'reply_event_sha256','evidence_reference'))+'\n'
+        reference=write_reviewed_text(path,payload,permit=self.workspace._permit)
+        event=self.preview_event(record,'LOCAL_FOLLOWUP_DRAFT',path)
+        if (event['head']!=current['head'] or event['thread_id']!=current['thread_id'] or
+                event['evidence']!=reference):
+            raise ValueError('export not registered; history or bytes changed')
+        return event
+
+
 def open_correspondence_window(parent, controller, *, smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
@@ -181,7 +201,7 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         ttk.Label(form,text=label).grid(row=row,column=0,sticky='w')
         ttk.Entry(form,textvariable=fields[key]).grid(row=row,column=1,sticky='ew',padx=5,pady=2)
     form.columnconfigure(1,weight=1)
-    path=None; prepared=None; pending_event=None; records={}; timer=None; closed=False
+    path=None; prepared=None; pending_event=None; pending_followup=None; records={}; timer=None; closed=False
     status=ttk.Label(content,text='Choose evidence and preview before saving.',wraplength=850)
     status.pack(fill='x',padx=10,pady=3)
     selected=tk.StringVar(master=window)
@@ -191,8 +211,8 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         output.configure(state='normal'); output.delete('1.0','end')
         output.insert('end',value); output.configure(state='disabled')
     def invalidate(*_):
-        nonlocal prepared,pending_event
-        prepared=None; pending_event=None; write('')
+        nonlocal prepared,pending_event,pending_followup
+        prepared=None; pending_event=None; pending_followup=None; write('')
     def clear():
         nonlocal path
         path=None; invalidate(); records.clear(); selected.set(''); picker.configure(values=())
@@ -250,15 +270,43 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         write('\n'.join(lines))
         return thread
     def followup():
+        nonlocal pending_followup
         invalidate()
         key=selected.get()
         if key not in records: raise ValueError('select exact saved recipient')
         result=controller.preview_followup(records[key])
+        pending_followup=(key,result)
         write(result['body']+'\n\nThread: '+result['thread_id']+'\nReviewed head: '+result['head']
               +'\nSimulated reply event: '+result['reply_event_sha256']
               +'\nEvidence: '+result['evidence_reference'])
         status.configure(text='Historical local preview only; no saved draft, message or authority.')
         return result
+    def export_followup(file=None,auto=False):
+        nonlocal pending_event
+        if pending_followup is None:
+            raise ValueError('preview local follow-up first')
+        original=pending_followup
+        key,expected=original
+        controller.workspace._permit()
+        if file is None:
+            file=filedialog.asksaveasfilename(parent=window,title='Export new local text draft',
+                defaultextension='.txt',filetypes=(('Text draft','*.txt'),))
+        controller.workspace._permit()
+        if not file: return None
+        if not (smoke and auto) and not messagebox.askyesno('Export local draft only',
+                'Create a new local text file containing the reviewed draft? No transmission.\n'
+                +expected['head'],parent=window):
+            return None
+        if pending_followup!=original or selected.get()!=key or key not in records:
+            raise ValueError('follow-up preview changed')
+        event=controller.export_followup(records[key],file,expected,confirmed=True)
+        event_kind.set('LOCAL_FOLLOWUP_DRAFT')
+        invalidate()
+        pending_event=(key,file,event)
+        write('EXPORTED LOCAL DRAFT — NOT REGISTERED OR SENT\n'
+              +'Thread: '+event['thread_id']+'\nHead: '+event['head']+'\nEvidence: '+event['evidence'])
+        status.configure(text='File created. Review and record local event separately. Never send.')
+        return event
     event_kind=tk.StringVar(master=window,value='SIMULATED_REPLY')
     def prepare_event(file=None):
         nonlocal pending_event
@@ -315,6 +363,7 @@ def open_correspondence_window(parent, controller, *, smoke=False):
     ttk.Button(event_controls,text='Choose and preview event',command=guarded(prepare_event)).pack(side='left',padx=3)
     ttk.Button(event_controls,text='Record local event',command=guarded(commit_event)).pack(side='left',padx=3)
     ttk.Button(controls,text='Preview local follow-up',command=guarded(followup)).pack(side='left',padx=3)
+    ttk.Button(controls,text='Export local follow-up',command=guarded(export_followup)).pack(side='left',padx=3)
     event_kind.trace_add('write',invalidate)
     output.pack(fill='both',expand=True,padx=10,pady=4)
     for var in fields.values(): var.trace_add('write',invalidate)
@@ -366,4 +415,15 @@ def open_correspondence_window(parent, controller, *, smoke=False):
                     or 'LOCAL FOLLOW-UP DRAFT' not in output.get('1.0','end')
                     or inspect()!=updated):
                 raise RuntimeError('correspondence GUI follow-up preview failed')
+            draft_preview=followup()
+            exported=Path(temp).resolve()/'owned-followup.txt'
+            export_event=export_followup(str(exported),auto=True)
+            if (export_event['head']!=draft_preview['head'] or
+                    export_event['evidence']!=fingerprint(exported,halted=False)):
+                raise RuntimeError('correspondence GUI follow-up export failed')
+            registered=commit_event(auto=True)
+            if (len(registered['events'])!=2 or
+                    registered['events'][-1]['kind']!='LOCAL_FOLLOWUP_DRAFT' or
+                    registered['events'][-1]['evidence_reference']!=export_event['evidence']):
+                raise RuntimeError('correspondence GUI follow-up registration failed')
     return window
