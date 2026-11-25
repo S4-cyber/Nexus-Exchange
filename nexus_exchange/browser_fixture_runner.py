@@ -49,8 +49,9 @@ def _load_asset(url):
 
 class _FixtureSession:
     """Single-use internal transport, not an authorization or browser boundary."""
-    def __init__(self, plan, *, halted=None, clock=monotonic_ns):
+    def __init__(self, plan, *, halted=None, clock=monotonic_ns, halt_check=None):
         self.plan = validate_plan(plan, halted=halted)
+        self._halt_check = halt_check
         self._clock = clock
         self._start = clock()
         if type(self._start) is not int or self._start < 0:
@@ -70,6 +71,8 @@ class _FixtureSession:
             self._fail("SESSION_CLOSED")
         try:
             _permit(halted)
+            if self._halt_check is not None:
+                _permit(self._halt_check())
         except PermissionError:
             self._fail("HALTED_OR_UNKNOWN")
         now = self._clock()
@@ -173,8 +176,8 @@ class _FixtureLinks(HTMLParser):
         raise ValueError("FIXTURE_MARKUP_DENIED")
 
 
-def _run_fixture(plan, *, halted=None, clock=monotonic_ns):
-    session = _FixtureSession(plan, halted=halted, clock=clock)
+def _run_fixture(plan, *, halted=None, clock=monotonic_ns, halt_check=None):
+    session = _FixtureSession(plan, halted=halted, clock=clock, halt_check=halt_check)
     document = session.read(session.plan["target"], method="GET",
                             resource="document", halted=halted)
     parser = _FixtureLinks()
