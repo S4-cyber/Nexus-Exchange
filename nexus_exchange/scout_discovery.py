@@ -226,7 +226,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     from tkinter.scrolledtext import ScrolledText
     from .cockpit import install_cockpit, fit_geometry
     from .lead_store import LeadStore
-    from .discovery_history import recent_hint, hint_text
+    from .discovery_history import recent_hint, hint_text, review_receipt, receipt_review_text
     from .discovery_performance import analyze,empty_history,priority_label,option_performance_text,performance_text
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
@@ -345,9 +345,9 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
             lines=["COMPLETED CAPABILITY SEARCHES — historical only",
                    "Showing "+str(history["returned"])+" of "+str(history["total"])+
                    "; failed and unarchived searches are not represented."]
-            for item in history["rows"]:
+            for number,item in enumerate(history["rows"],1):
                 scope=item["scope"]
-                lines.extend(["",item["completed_at"]+" | "+scope["source"]+" | "+
+                lines.extend(["",str(number)+". "+item["completed_at"]+" | "+scope["source"]+" | "+
                               (scope["filter_value"] or scope["filter_kind"]),
                               str(item["requests"])+" requests | "+str(item["returned"])+
                               " returned | "+str(item["inserted"])+" newly archived observations"+
@@ -357,6 +357,41 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
             write("\n".join(lines))
         except (ValueError,PermissionError,OSError,sqlite3.Error):
             write("Search history unavailable. Review local storage and halt state.")
+
+
+    def show_receipt():
+        try:
+            if blocked_check() is not False or halt_check() is not False:
+                raise PermissionError("Local research unavailable.")
+            archive=Path(directory)/"scout-leads.sqlite3"
+            if not archive.is_file():
+                write("No completed capability-search receipts yet.")
+                return
+            with LeadStore(archive) as store:
+                history=store.search_history(now=datetime.now(timezone.utc),halted=halt_check())
+            if not history["rows"]:
+                write("No completed capability-search receipts yet.")
+                return
+            lines=["SELECT A SEARCH RECEIPT — exact historical observations"]
+            for number,item in enumerate(history["rows"],1):
+                lines.append(str(number)+". "+item["completed_at"]+" | "+item["scope"]["source"]+
+                             " | "+str(item["returned"])+" observations")
+            write("\n".join(lines))
+            index=simpledialog.askinteger("Review receipt","Enter the numbered receipt from the displayed list.",
+                                          minvalue=1,maxvalue=len(history["rows"]),parent=window)
+            if index is None:
+                return
+            if blocked_check() is not False or halt_check() is not False or not archive.is_file():
+                raise PermissionError("Local research unavailable.")
+            item=history["rows"][index-1]
+            with LeadStore(archive) as store:
+                report=review_receipt(store.db,item["task_id"],item["receipt_sha256"],
+                                      now=datetime.now(timezone.utc),halted=halt_check())
+            if blocked_check() is not False or halt_check() is not False:
+                raise PermissionError("Local research unavailable.")
+            write(receipt_review_text(report))
+        except (ValueError,PermissionError,OSError,sqlite3.Error):
+            write("Receipt review unavailable. The selection may be legacy, changed, future-dated, or inconsistent.")
 
     def show_performance():
         if performance is None or halt_check() is not False or blocked_check() is not False:
@@ -368,6 +403,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     search_button=ttk.Button(controls,text="Search selected plan",command=search_selected,state="disabled")
     search_button.pack(side="left",padx=4)
     ttk.Button(controls,text="Search history",command=show_history).pack(side="left",padx=4)
+    ttk.Button(controls,text="Review receipt",command=show_receipt).pack(side="left",padx=4)
     ttk.Button(controls,text="Search performance",command=show_performance).pack(side="left",padx=4)
     tree.bind("<<TreeviewSelect>>",display,add="+")
     chooser.bind("<<ComboboxSelected>>",lambda _event:refresh(),add="+")

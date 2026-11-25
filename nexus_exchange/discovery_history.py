@@ -4,11 +4,11 @@ Stored atomically with the corresponding archive observations. No API key,
 raw provider report, personal profile, source text or automatic replay.
 Local hashes establish consistency, not authenticated search evidence.
 """
-from datetime import timedelta
+from datetime import date, timedelta
 import json
 import re
 
-from .lead_store import _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES, _restore
+from .lead_store import _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES, _restore, MAX_AGE
 from .scout import _timestamp
 
 LEGACY_FORMAT="nexus-scout-search-receipt-v1"
@@ -238,6 +238,101 @@ def read_history(db,*,now,limit=100,halted=None):
     return dict(format="nexus-scout-search-history-v1",rows=rows,
         returned=len(rows),total=len(raw),truncated=len(rows)<len(raw),
         evaluated_at=now.isoformat(timespec="microseconds"),external_authority=False)
+
+
+
+def review_receipt(db,task_id,expected_sha256,*,now,halted=None):
+    """Inspect exact referenced observations and same-identity archive drift.
+
+    All reads share one SQLite snapshot. The selected receipt must still
+    match its displayed digest. This does not authenticate the provider or
+    establish that a source is open, current, or eligible for execution.
+    """
+    _permit(halted)
+    now=_now(now)
+    _hash(task_id,32)
+    _hash(expected_sha256)
+    if db.in_transaction:
+        raise ValueError("Receipt review requires an idle archive connection.")
+    db.execute("BEGIN")
+    try:
+        row=db.execute("""SELECT completed_at,payload,payload_sha256
+            FROM scout_search_receipts_v1 WHERE task_id=?""",(task_id,)).fetchone()
+        if row is None:
+            raise ValueError("Selected search receipt not found.")
+        stamp,encoded,digest=row
+        if (type(encoded) is not str or len(encoded)>MAX_PAYLOAD
+                or digest!=expected_sha256 or _digest(encoded)!=digest):
+            raise ValueError("Selected search receipt changed.")
+        value=_validate(json.loads(encoded))
+        if (_json(value)!=encoded or (value["task_id"],value["completed_at"])!=(task_id,stamp)
+                or _stamp(stamp)>now or value["format"]!=FORMAT):
+            raise ValueError("Exact nonfuture v2 search receipt required.")
+        _verify_archive(db,value,{})
+        observations=[]
+        for source,key,retrieved,ref_digest in value["observation_refs"]:
+            exact=db.execute("""SELECT payload,payload_sha256 FROM scout_observations_v1
+                WHERE source=? AND lead_key=? AND retrieved_at=?""",
+                (source,key,retrieved)).fetchone()
+            p=_restore(*exact)
+            latest=db.execute("""SELECT retrieved_at,payload,payload_sha256
+                FROM scout_observations_v1 WHERE source=? AND lead_key=?
+                ORDER BY retrieved_at DESC LIMIT 1""",(source,key)).fetchone()
+            latest_stamp,latest_payload,latest_digest=latest
+            newest=_restore(latest_payload,latest_digest)
+            if ((newest["source"],newest["key"],newest["retrieved_at"])!=(source,key,latest_stamp)
+                    or _stamp(latest_stamp)<_stamp(retrieved)):
+                raise ValueError("Latest archive observation identity mismatch.")
+            if _stamp(latest_stamp)>now:
+                state="FUTURE_OBSERVATION_KNOWN"
+            elif latest_stamp!=retrieved:
+                state="LATER_OBSERVATION_KNOWN"
+            else:
+                state="SAME_OBSERVATION"
+            reasons=list(p["blockers"])+["HISTORICAL_OBSERVATION_REVALIDATION_REQUIRED"]
+            if now-_stamp(retrieved)>MAX_AGE:
+                reasons.append("OBSERVATION_STALE")
+            if state!="SAME_OBSERVATION":
+                reasons.append(state)
+            if p["deadline"] is not None and _timestamp(p["deadline"])<=now:
+                reasons.append("REPORTED_DEADLINE_PASSED")
+            elif (p["deadline"] is None and p["earliest_deadline_date"] is not None
+                  and date.fromisoformat(p["earliest_deadline_date"])<=now.date()):
+                reasons.append("REPORTED_DEADLINE_DATE_PASSED_OR_TODAY")
+            observations.append(dict(source=source,key=key,notice_id=p["notice_id"],
+                title=p["title"],source_url=p["source_url"],retrieved_at=retrieved,
+                observation_sha256=ref_digest,latest_retrieved_at=latest_stamp,
+                latest_observation_sha256=latest_digest,latest_state=state,
+                blockers=list(dict.fromkeys(reasons)),historical_only=True,
+                execution_eligible=False,external_authority=False))
+        return dict(format="nexus-scout-receipt-review-v1",task_id=task_id,
+            receipt_sha256=digest,completed_at=stamp,observations=observations,
+            evaluated_at=now.isoformat(timespec="microseconds"),truncated=value["truncated"],
+            historical_only=True,local_archive_consistent=True,
+            provider_freshness_verified=False,independently_verified=False,
+            execution_eligible=False,external_authority=False)
+    finally:
+        db.rollback()
+
+
+def receipt_review_text(report):
+    lines=["SCOUT — EXACT HISTORICAL SEARCH OBSERVATIONS",
+           "Receipt: "+report["receipt_sha256"],"Completed UTC: "+report["completed_at"],
+           "Reviewed UTC: "+report["evaluated_at"],
+           "Local archive consistency only; source authenticity, freshness and eligibility are unverified.",
+           "Later observations are compared only for the same source/key, not cross-release or cross-source identities.",
+           "Collection was truncated." if report["truncated"] else "Collection was not marked truncated."]
+    if not report["observations"]:
+        lines.append("No observations recorded for this receipt; not proof of no available opportunity.")
+    for index,item in enumerate(report["observations"],1):
+        lines.extend(["",str(index)+". "+item["title"],
+            item["source"]+" / "+item["notice_id"],item["source_url"],
+            "Observed UTC: "+item["retrieved_at"],"Observation: "+item["observation_sha256"],
+            "Latest same-identity UTC: "+item["latest_retrieved_at"]+" | "+item["latest_state"],
+            "Latest same-identity digest: "+item["latest_observation_sha256"],
+            "Review holds: "+", ".join(item["blockers"])])
+    lines.extend(["","No automatic refresh, qualification, outreach or commitment."])
+    return "\n".join(lines)
 
 
 def recent_hint(option,history,*,now):
