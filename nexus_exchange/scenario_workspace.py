@@ -9,6 +9,7 @@ from .cash_feasibility import COSTS, _money, _bounded
 from .checklist_store import _context, context_for
 from .owner_profile import ProfileStore, profile_revision
 from .scenario_store import ScenarioStore
+from .evidence_workspace import open_evidence_window
 from .schedule_feasibility import _optional_timestamp, _quantity
 
 FINANCE_FIELDS=(
@@ -275,12 +276,22 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
         except (ValueError,PermissionError,OSError,sqlite3.Error) as exc:
             error(exc)
             return None
+    def evidence(smoke_test=False):
+        try:
+            key=selection()
+            # Resolve saved context; unsaved form edits are never evidence inputs.
+            workspace.load(key)
+            return open_evidence_window(window,directory=directory,context=workspace.context,
+                plan_id=key,halt_check=halt_check,smoke=smoke_test)
+        except (ValueError,PermissionError,OSError,sqlite3.Error) as exc:
+            error(exc)
+            return None
     def new():
         tree.selection_remove(*tree.selection())
         populate(blank_fields())
     for label,callback in (("New / clear form",new),("Save immutable plan",save),
                            ("Load selected",load),("Reassess selected saved plan",evaluate),
-                           ("Refresh list",refresh)):
+                           ("Assumption evidence",evidence),("Refresh list",refresh)):
         ttk.Button(buttons,text=label,command=callback).pack(side="left",padx=4)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
@@ -314,4 +325,8 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
         window.update()
         if "UNVERIFIED" not in output.get("1.0","end"):
             raise RuntimeError("scenario GUI result missing research boundary")
+        evidence_window=evidence(smoke_test=True)
+        if evidence_window is None:
+            raise RuntimeError("scenario GUI could not open saved-plan evidence")
+        evidence_window.destroy()
     return window
