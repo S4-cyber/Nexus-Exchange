@@ -25,12 +25,21 @@ def run_logged(store, stop=None):
         store.append(dict(task_id=task,target="Offline screening",state=state,
             timestamp=datetime.now(timezone.utc).isoformat()))
     record("queued")
+    if stop is not None and stop.is_set():
+        record("cancelled")
+        return ()
     record("running")
     try:
         result = demo(halted=stop.is_set() if stop is not None else False)
         if stop is not None and stop.is_set():
             record("cancelled")
             return ()
+    except PermissionError:
+        if stop is not None and stop.is_set():
+            record("cancelled")
+            return ()
+        record("failed")
+        raise
     except Exception:
         record("failed")
         raise
