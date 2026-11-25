@@ -18,13 +18,16 @@ _PATTERN=re.compile(r"sha256:([0-9a-f]{64});bytes:([1-9][0-9]{0,8})")
 class EvidenceError(ValueError):
     """Sanitized local evidence error; no path or file content."""
 
+class HaltedEvidence(PermissionError):
+    """Internal distinction between Governor denial and filesystem denial."""
+
 def _permit(halted,halt_check):
     if halt_check is not None and not callable(halt_check):
-        raise PermissionError("HALT_STATE_UNKNOWN")
+        raise HaltedEvidence("HALT_STATE_UNKNOWN")
     live=halt_check() if halt_check is not None else False
     decision=decide(Action.RESEARCH_LOCAL,halted=False if halted is False and live is False else None)
     if not decision.allowed:
-        raise PermissionError(decision.reason)
+        raise HaltedEvidence(decision.reason)
 
 def parse_reference(value):
     if type(value) is not str:
@@ -39,6 +42,19 @@ def parse_reference(value):
 
 def _identity(info):
     return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+def _same_file(path_info,handle_info):
+    # Windows path and handle stat APIs can expose different timestamp precision.
+    # Compare stable identity and size across APIs, and compare timestamps
+    # separately using the SAME API before and after the read.
+    if path_info.st_size!=handle_info.st_size:
+        return False
+    if path_info.st_ino and handle_info.st_ino:
+        if (path_info.st_dev,path_info.st_ino)!=(handle_info.st_dev,handle_info.st_ino):
+            return False
+    elif os.name!="nt":
+        return False
+    return True
 
 def fingerprint(path,*,halted=None,halt_check=None):
     """Return a canonical hash/size reference; never retain the file or its name."""
@@ -57,7 +73,7 @@ def fingerprint(path,*,halted=None,halt_check=None):
         fd=os.open(selected,flags)
         try:
             before=os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or _identity(before)!=_identity(initial):
+            if not stat.S_ISREG(before.st_mode) or not _same_file(initial,before):
                 raise EvidenceError("EVIDENCE_FILE_CHANGED")
             digest=hashlib.sha256()
             size=0
@@ -72,13 +88,14 @@ def fingerprint(path,*,halted=None,halt_check=None):
                 digest.update(block)
             after=os.fstat(fd)
             final=selected.lstat()
-            if size!=before.st_size or _identity(before)!=_identity(after) or _identity(before)!=_identity(final):
+            if (size!=before.st_size or _identity(before)!=_identity(after) or
+                    _identity(initial)!=_identity(final) or not _same_file(final,after)):
                 raise EvidenceError("EVIDENCE_FILE_CHANGED")
         finally:
             os.close(fd)
     except EvidenceError:
         raise
-    except PermissionError:
+    except HaltedEvidence:
         raise
     except (OSError,TypeError,ValueError,OverflowError):
         raise EvidenceError("EVIDENCE_FILE_UNAVAILABLE") from None
