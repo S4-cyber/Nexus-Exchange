@@ -11,6 +11,7 @@ import re
 import sqlite3
 
 from .agent_handoff import AgentHandoff, MAX_ATTEMPTS, parse_handoff
+from .council_audit import MAX_AUDIT_BYTES, build_audit, validate_audit
 from .governor import Action, decide
 from .lead_store import _digest, _json, _now
 from .schedule_feasibility import _iso
@@ -72,7 +73,7 @@ def _decode(task_id,encoded,digest):
         raise ValueError("Council journal integrity mismatch")
     record=json.loads(encoded)
     if (type(record) is not dict or set(record)!=_RECORD
-            or type(record["version"]) is not int or record["version"]!=1
+            or type(record["version"]) is not int or record["version"] not in (1,2)
             or _task(record["task_id"])!=task_id):
         raise ValueError("invalid Council task record")
     _hash(record["contract_sha256"])
@@ -80,8 +81,9 @@ def _decode(task_id,encoded,digest):
     entries=record["attempts"]
     if type(entries) is not list or len(entries)>MAX_ATTEMPTS:
         raise ValueError("invalid Council attempt history")
+    entry_fields=_ENTRY if record["version"]==1 else _ENTRY|{"audit_sha256"}
     for n,entry in enumerate(entries,1):
-        if (type(entry) is not dict or set(entry)!=_ENTRY
+        if (type(entry) is not dict or set(entry)!=entry_fields
                 or type(entry["attempt"]) is not int or entry["attempt"]!=n
                 or _hash(entry["reservation_id"])!=_reservation(record,n,entry["reserved_at"])):
             raise ValueError("invalid Council reservation identity")
@@ -89,6 +91,11 @@ def _decode(task_id,encoded,digest):
         if reserved<previous:
             raise ValueError("Council clock moved backward")
         outcome=entry["outcome"]
+        audit=entry.get("audit_sha256")
+        if audit is not None:
+            _hash(audit)
+            if outcome is None or entry["report_sha256"] is None:
+                raise ValueError("audit requires completed review")
         if outcome is None:
             if n!=len(entries) or entry["completed_at"] is not None or entry["report_sha256"] is not None:
                 raise ValueError("invalid outstanding Council attempt")
@@ -140,8 +147,13 @@ class CouncilAttemptStore:
         try:
             self.db.execute("PRAGMA trusted_schema=OFF")
             self.db.execute("PRAGMA synchronous=FULL")
+            self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("""CREATE TABLE IF NOT EXISTS council_attempts_v1(
                 task_id TEXT PRIMARY KEY,payload TEXT NOT NULL,digest TEXT NOT NULL)""")
+            self.db.execute("""CREATE TABLE IF NOT EXISTS council_review_audit_v1(
+                task_id TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+                payload TEXT NOT NULL,digest TEXT NOT NULL,
+                PRIMARY KEY(task_id,attempt),FOREIGN KEY(task_id) REFERENCES council_attempts_v1(task_id))""")
         except BaseException:
             self.db.close()
             raise
@@ -153,9 +165,9 @@ class CouncilAttemptStore:
         self.db.close()
 
     @contextmanager
-    def _transaction(self,halted):
+    def _transaction(self,halted,*,write=True):
         _permit(halted)
-        self.db.execute("BEGIN IMMEDIATE")
+        self.db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield
             self.db.execute("COMMIT")
@@ -167,7 +179,30 @@ class CouncilAttemptStore:
     def _read(self,task_id):
         row=self.db.execute("SELECT payload,digest FROM council_attempts_v1 WHERE task_id=?",
                             (_task(task_id),)).fetchone()
-        return None if row is None else _decode(task_id,*row)
+        if row is None:
+            return None
+        record=_decode(task_id,*row)
+        self._read_audits(record)
+        return record
+
+    def _read_audits(self,record):
+        expected={entry["attempt"]:entry for entry in record["attempts"]
+                  if entry.get("audit_sha256") is not None}
+        rows=self.db.execute("""SELECT attempt,payload,digest FROM council_review_audit_v1
+            WHERE task_id=? ORDER BY attempt LIMIT ?""",(record["task_id"],MAX_ATTEMPTS+1)).fetchall()
+        if len(rows)!=len(expected):
+            raise ValueError("missing or orphaned Council audit")
+        result={}
+        for attempt,payload,digest in rows:
+            if (type(attempt) is not int or attempt not in expected or attempt in result
+                    or type(payload) is not str or len(payload)>MAX_AUDIT_BYTES
+                    or digest!=expected[attempt]["audit_sha256"] or _digest(payload)!=digest):
+                raise ValueError("Council audit integrity mismatch")
+            audit=json.loads(payload)
+            if _json(audit)!=payload:
+                raise ValueError("noncanonical Council audit record")
+            result[attempt]=validate_audit(audit,record,expected[attempt])
+        return result
 
     def _require(self,task_id):
         record=self._read(task_id)
@@ -196,8 +231,26 @@ class CouncilAttemptStore:
             raise ValueError("Council clock moved backward")
 
     def status(self,task_id,*,halted=None):
-        _permit(halted)
-        return _state(self._require(task_id))
+        with self._transaction(halted,write=False):
+            return _state(self._require(task_id))
+
+    def audit_history(self,task_id,*,halted=None):
+        """Historical records only; never revalidate a current commercial decision."""
+        with self._transaction(halted,write=False):
+            record=self._require(task_id)
+            audits=self._read_audits(record)
+            result=_state(record)
+            attempts=[]
+            for entry in record["attempts"]:
+                audit=audits.get(entry["attempt"])
+                label=("RECORDED" if audit is not None else
+                       "RESERVED_NO_REPORT" if entry["outcome"] is None else
+                       "INTERRUPTED_NO_REPORT" if entry["report_sha256"] is None else
+                       "LEGACY_DIGEST_ONLY")
+                attempts.append(dict(entry,audit_sha256=entry.get("audit_sha256"),
+                                     audit_state=label,audit=audit))
+            return dict(result,format="nexus-council-audit-history-v1",
+                        attempts=attempts,historical_only=True,current_decision=False)
 
     def register(self,handoff,*,now,halted=None):
         _permit(halted)
@@ -232,13 +285,17 @@ class CouncilAttemptStore:
                 raise PermissionError("attempt unavailable or out of sequence")
             stamp=_iso(now)
             token=_reservation(record,h.attempt,stamp)
-            record["attempts"].append(dict(attempt=h.attempt,reservation_id=token,
-                reserved_at=stamp,outcome=None,completed_at=None,report_sha256=None))
+            entry=dict(attempt=h.attempt,reservation_id=token,
+                reserved_at=stamp,outcome=None,completed_at=None,report_sha256=None)
+            if record["version"]==2:
+                entry["audit_sha256"]=None
+            record["attempts"].append(entry)
             self._write(record)
         return dict(task_id=h.task_id,attempt=h.attempt,reservation_id=token)
 
-    def complete(self,ticket,outcome,report_sha256,*,now,halted=None):
-        """Record a trusted coordinator result; never accept agent-supplied verdicts."""
+    def complete(self,ticket,outcome,report_sha256,*,now,halted=None,
+                 audit_snapshot=None,review_report=None):
+        """Complete and optionally atomically retain a validated scenario review audit."""
         _permit(halted)
         now=_now(now)
         if type(ticket) is not dict or set(ticket)!=_TICKET:
@@ -250,6 +307,9 @@ class CouncilAttemptStore:
                 or type(outcome) is not str or outcome not in _REVIEW):
             raise ValueError("invalid Council completion")
         _hash(report_sha256)
+        if (audit_snapshot is None)!=(review_report is None):
+            raise ValueError("complete Council audit material required")
+        audited=audit_snapshot is not None
         if attempt==MAX_ATTEMPTS and outcome not in _TERMINAL:
             outcome="ESCALATE"
         with self._transaction(halted):
@@ -260,10 +320,28 @@ class CouncilAttemptStore:
                 raise ValueError("stale or mismatched Council reservation")
             entry=entries[-1]
             if entry["outcome"] is not None:
-                if entry["outcome"]!=outcome or entry["report_sha256"]!=report_sha256:
+                if (entry["outcome"]!=outcome or entry["report_sha256"]!=report_sha256
+                        or audited!=(entry.get("audit_sha256") is not None)):
                     raise ValueError("conflicting Council completion")
+                if audited:
+                    audit=build_audit(record,entry,audit_snapshot,review_report)
+                    if _digest(_json(audit))!=entry["audit_sha256"]:
+                        raise ValueError("conflicting historical audit replay")
                 return _state(record)
+            if record["version"]==2 and not audited:
+                raise ValueError("audited Council task cannot downgrade completion")
             entry.update(outcome=outcome,completed_at=_iso(now),report_sha256=report_sha256)
+            if audited:
+                audit=build_audit(record,entry,audit_snapshot,review_report)
+                payload=_json(audit)
+                digest=_digest(payload)
+                if record["version"]==1:
+                    record["version"]=2
+                    for prior in entries:
+                        prior["audit_sha256"]=None
+                entry["audit_sha256"]=digest
+                self.db.execute("INSERT INTO council_review_audit_v1 VALUES (?,?,?,?)",
+                                (task,attempt,payload,digest))
             self._write(record)
             return _state(record)
 
