@@ -1,0 +1,1 @@
+E18 partial: local SQLite journal with ordered replay and atomic validation/append. Full-history validation is O(n) per append; not suitable for high throughput without indexed state/checkpoints. No authentication, tenant isolation, tamper resistance, retention or idempotent retry yet. Two tests authored; CI pending. No gate accepted.
