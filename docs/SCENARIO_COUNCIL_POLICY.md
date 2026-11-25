@@ -19,3 +19,9 @@ E13/E14/E15/E22/E31/E38. Extend the verified guarded coordinator at 42a7e1dff727
 
 ## Boundaries
 The five checks are local research/model checks, not independent reviewer authentication or issuer/fact verification. The expected digests identify locally validated immutable plan inputs, not independently sourced commercial evidence. Reference coverage is only a count; files are not re-read or authenticated. A positive local review allows further nonprivileged review only. No authority to contact parties, submit bids, sign, pay or accept commitments. Main formal acceptance 0/42. Next: runtime-bound recovery and native Council review, independently sourced evidence and consolidated release review.
+
+## Observed verification
+- Test-first e437b8ff59cbd07ef913aaae43afc589f663697c, run 45546286953: expected missing-module error. Implementation fdff88969448a1bff84b854927c49c93a3fc0379: 363/363 tests on Python 3.10 and 3.13 (45546379087, jobs 138976888243 and 138976888573). Twelve new fixture tests.
+- Expanded regression revision b72e0035781e86327a742ef0a0296749ae58df0b adds snapshot fingerprint stability, post-commit profile drift suppression and declared classification veto tests; exact-head verification tracked separately. Fifteen new tests total.
+- Context7 CPython 3.13.14 sqlite3 explicit transaction control docs reviewed, compatible with Python 3.10; no additional dependency adopted. Prior verified Aegis desktop build 20d177090d35c5fabb969fa580012c164ac78cff (45543746266, artifact 14990835831) does not contain Council integration.
+- Draft PR #46. No merge or formal gate acceptance. The review report digest is persisted in the ledger, while the full dynamic snapshot and its fingerprint are returned only. This is not a durable full-snapshot audit trail; adding one requires a versioned storage design and atomic binding to the ledger.
