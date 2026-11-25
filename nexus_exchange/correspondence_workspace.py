@@ -2,7 +2,8 @@
 import sqlite3
 from .operator_drafts import _shape, _stored_stamp
 from .operator_recipients import _scope, _for_draft, _FLAGS_EXTRA, render_correspondence
-from .correspondence_thread import validate_thread
+from .correspondence_thread import validate_thread, MAX_EVENTS, _KINDS
+from .evidence import fingerprint, parse_reference
 from .operator_workspace import parse_supplier
 
 
@@ -83,6 +84,48 @@ class CorrespondenceWorkspace:
         return validate_thread(self.draft,candidate,result,halted=False)
 
 
+    def preview_event(self, record, kind, path):
+        """Read only an explicitly selected local file; pin the current history."""
+        self.workspace._permit()
+        if type(kind) is not str or kind not in _KINDS:
+            raise ValueError('unsupported local event kind')
+        current=self.thread(record)
+        if current is None or len(current['events'])>=MAX_EVENTS:
+            raise ValueError('open thread with available capacity required')
+        reference=fingerprint(path,halted=False,halt_check=self.workspace.blocked_check)
+        self.workspace._permit()
+        if any(e['evidence_reference']==reference for e in current['events']):
+            raise ValueError('duplicate thread evidence')
+        return dict(thread_id=current['thread_id'],head=current['head_sha256'],
+                    kind=kind,evidence=reference)
+
+    def save_event(self, record, path, expected, *, confirmed=None):
+        """Commit an exact locally reviewed event via the runtime CAS."""
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError('explicit local event confirmation required')
+        _shape(expected,{'thread_id','head','kind','evidence'})
+        if type(expected['kind']) is not str or expected['kind'] not in _KINDS:
+            raise ValueError('unsupported local event kind')
+        parse_reference(expected['evidence'])
+        candidate=self._record(record)['candidate']
+        prior=self.thread(record)
+        if (prior is None or prior['thread_id']!=expected['thread_id'] or
+                prior['head_sha256']!=expected['head'] or len(prior['events'])>=MAX_EVENTS or
+                any(e['evidence_reference']==expected['evidence'] for e in prior['events'])):
+            raise ValueError('thread changed or unavailable; inspect again')
+        result=validate_thread(self.draft,candidate,self._call('thread_append',
+            recipient_id=candidate['recipient_id'],supplier=self.supplier,
+            kind=expected['kind'],evidence_path=path,expected_head=expected['head'],
+            expected_evidence=expected['evidence'],confirmed=True),halted=False)
+        events=result['events']
+        if (result['thread_id']!=prior['thread_id'] or len(events)!=len(prior['events'])+1 or
+                events[:-1]!=prior['events'] or events[-1]['kind']!=expected['kind'] or
+                events[-1]['evidence_reference']!=expected['evidence']):
+            raise ValueError('saved event differs from reviewed event')
+        return result
+
+
 def open_correspondence_window(parent, controller, *, smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
@@ -103,7 +146,7 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         ttk.Label(form,text=label).grid(row=row,column=0,sticky='w')
         ttk.Entry(form,textvariable=fields[key]).grid(row=row,column=1,sticky='ew',padx=5,pady=2)
     form.columnconfigure(1,weight=1)
-    path=None; prepared=None; records={}; timer=None; closed=False
+    path=None; prepared=None; pending_event=None; records={}; timer=None; closed=False
     status=ttk.Label(content,text='Choose evidence and preview before saving.',wraplength=850)
     status.pack(fill='x',padx=10,pady=3)
     selected=tk.StringVar(master=window)
@@ -113,8 +156,8 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         output.configure(state='normal'); output.delete('1.0','end')
         output.insert('end',value); output.configure(state='disabled')
     def invalidate(*_):
-        nonlocal prepared
-        prepared=None; write('')
+        nonlocal prepared,pending_event
+        prepared=None; pending_event=None; write('')
     def clear():
         nonlocal path
         path=None; invalidate(); records.clear(); selected.set(''); picker.configure(values=())
@@ -152,6 +195,7 @@ def open_correspondence_window(parent, controller, *, smoke=False):
         refresh(expected['recipient_id'])
         return result
     def inspect(create=False,auto=False):
+        invalidate()
         key=selected.get()
         if key not in records: raise ValueError('select exact saved recipient')
         record=records[key]
@@ -170,6 +214,42 @@ def open_correspondence_window(parent, controller, *, smoke=False):
                 lines.append(f"{event['sequence']} | {event['kind']} | {event['recorded_at']} | {event['evidence_reference']}")
         write('\n'.join(lines))
         return thread
+    event_kind=tk.StringVar(master=window,value='SIMULATED_REPLY')
+    def prepare_event(file=None):
+        nonlocal pending_event
+        invalidate()
+        key=selected.get()
+        kind=event_kind.get()
+        if key not in records: raise ValueError('select exact saved recipient')
+        controller.workspace._permit()
+        if file is None:
+            file=filedialog.askopenfilename(parent=window,title='Select local event evidence')
+        controller.workspace._permit()
+        if not file: return None
+        if selected.get()!=key or event_kind.get()!=kind or key not in records:
+            raise ValueError('event selection changed')
+        expected=controller.preview_event(records[key],kind,file)
+        pending_event=(key,file,expected)
+        write('LOCAL EVENT PREVIEW — NOT AUTHENTICATED OR SENT\n'
+              +'Recipient: '+key+'\nThread: '+expected['thread_id']+'\nHead: '+expected['head']
+              +'\nKind: '+kind+'\nEvidence: '+expected['evidence'])
+        status.configure(text='Review exact event and fingerprint before recording locally.')
+        return expected
+    def commit_event(auto=False):
+        if pending_event is None: raise ValueError('preview local event first')
+        original=pending_event
+        key,file,expected=original
+        if not (smoke and auto) and not messagebox.askyesno('Record local event only',
+                'Record '+expected['kind']+' against this exact history? No delivery or authentication.\n'
+                +expected['head']+'\n'+expected['evidence'],parent=window):
+            return None
+        if (pending_event!=original or selected.get()!=key or key not in records or
+                event_kind.get()!=expected['kind']):
+            raise ValueError('event preview changed')
+        result=controller.save_event(records[key],file,expected,confirmed=True)
+        if inspect()!=result: raise ValueError('saved thread readback changed')
+        status.configure(text='Local event recorded; no message sent or reply authenticated.')
+        return result
     def guarded(callback):
         def run():
             try: return callback()
@@ -183,6 +263,13 @@ def open_correspondence_window(parent, controller, *, smoke=False):
     controls=ttk.Frame(content); controls.pack(pady=3)
     ttk.Button(controls,text='Inspect history',command=guarded(inspect)).pack(side='left',padx=3)
     ttk.Button(controls,text='Open local thread',command=guarded(lambda:inspect(True))).pack(side='left',padx=3)
+    event_controls=ttk.Frame(content); event_controls.pack(pady=3)
+    ttk.Label(event_controls,text='Local event kind').pack(side='left',padx=3)
+    ttk.Combobox(event_controls,textvariable=event_kind,state='readonly',width=29,
+                 values=tuple(sorted(_KINDS))).pack(side='left',padx=3)
+    ttk.Button(event_controls,text='Choose and preview event',command=guarded(prepare_event)).pack(side='left',padx=3)
+    ttk.Button(event_controls,text='Record local event',command=guarded(commit_event)).pack(side='left',padx=3)
+    event_kind.trace_add('write',invalidate)
     output.pack(fill='both',expand=True,padx=10,pady=4)
     for var in fields.values(): var.trace_add('write',invalidate)
     picker.bind('<<ComboboxSelected>>',lambda event:invalidate())
@@ -220,4 +307,11 @@ def open_correspondence_window(parent, controller, *, smoke=False):
                 raise RuntimeError('correspondence GUI thread history failed')
             if 'HISTORICAL LOCAL THREAD' not in output.get('1.0','end'):
                 raise RuntimeError('correspondence GUI display failed')
+            reply=Path(temp)/'owned-simulated-reply.txt'
+            reply.write_bytes(b'Synthetic simulated reply; not an external message')
+            expected=prepare_event(str(reply))
+            updated=commit_event(auto=True)
+            if (len(updated['events'])!=1 or updated['events'][0]['evidence_reference']!=expected['evidence']
+                    or inspect()!=updated or 'SIMULATED_REPLY' not in output.get('1.0','end')):
+                raise RuntimeError('correspondence GUI event readback failed')
     return window
