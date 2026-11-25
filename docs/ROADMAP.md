@@ -90,3 +90,76 @@ Status: M0 repository and roadmap present; all implementation gates below pendin
 
 ## Shared engineering directive
 Use relevant installed plugins where access and task fit are confirmed: Superpowers for planning/TDD/review, GitHub for source and CI, Linear for milestones, Supabase for isolated database work, Vercel for previews, Figma for design, PostHog for observability, TinyFish for permitted browser research/testing, Gmail/Drive/Calendar/Contacts/DocuSign for sandbox or authorized commercial integration. Do not force irrelevant calls, copy secrets, expose private data in public repositories, incur unapproved costs, or mistake installed plugins for runtime credentials. Maximize useful work within available time, context and tool limits; batch independent reads, parallelize isolated tasks when supported, and avoid redundant scans. Prioritize implementation and verification over status-only commits. Each report must identify completed gate IDs, changed files, exact commit/PR, observed tests, remaining blockers, next gate and verified gate count out of 42. Keep Nexus Operative independent and read-only as a reuse source during Exchange work.
+
+## Sprint 01 — candidate evidence (review branch)
+- E01: repository inventory and Operative reference pinned in docs/SCOUT_FOUNDATION.md.
+- E02: preliminary audit; licensing and full security review remain pending. No code copied.
+- E03, E05–E09: Scout implementation and offline fixtures tested locally (six tests); require matching remote blobs and integration review before recording on main.
+- E04: workflow added; hosted execution not yet observed.
+- Verified main implementation gates: 0/42 until integration. Candidate locally supported gates: E01, E03, E05–E09 (7/42).
+- Next: CI evidence, review source identity and malformed inputs, then authorized read-only procurement adapter E10–E12.
+
+
+## Sprint 02 — Governor offline policy (review branch, 2026-11-24)
+
+- Prior Scout head 874595bbf0d6d6c1be357a641c9b8570e9b51f0d: [CI run 45506712076](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45506712076), Python 3.10 and 3.13 unit steps successful.
+- Separate handoff head 64b1790b1f01c5a69eaf4e65518393bdb0be0e64: [CI run 45507767681](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45507767681), both Python jobs successful. E15 remains a candidate; independent evidence verification and integration are outstanding.
+- E16 candidate: new pure policy permits only explicitly enumerated local research, evaluation, draft creation and simulation when halt state is exactly False. Unknown action/state and all external actions deny; no approvals, live connectors, custody or inventory paths. E17 only partially covered: snapshot halt precedence and offline restart tested; trusted persisted halt state, authenticated restart and dispatch enforcement remain unimplemented.
+- Local Python 3.13: six new unit tests passed after initial missing-module failure; exact local and remote source/test blob IDs verified (119a2cc295d6d6fb0333684fa830683836f332dd, 6da477ba5a523a54c055a5df27f6fc35839aa16f). Combined hosted CI for this branch remains pending at documentation time.
+- Reuse: inspected pinned Operative risk_gate.py (6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11) for default-deny concepts. No source copied and no trading code imported; E02 remains pending.
+- Review-only stack on Scout PR #1; no merge, no external actions, no new cloud resources. Vercel returned no teams; Supabase no projects. Main verified gate count remains 0/42 pending integration; Scout branch has eight evidence-supported candidates E01, E03–E09, and this increment adds E16 as a local candidate only. Next: review source identity/URL redaction, finish authorized procurement adapter E10–E12, then wire Governor at a trusted boundary before enabling any external tool.
+
+## 2026-11-24 — desktop and local archive review evidence
+- Formal accepted gates: 0/42 on main; draft-branch evidence is not release acceptance. E03/E04: reproducible unittest and PR CI evidenced by run 45522722177 (Python 3.10/3.13 passed); E05–E09, E16, E17 and E34 have supporting offline tests on the stacked review branches, awaiting integration and acceptance. E17 still requires restart-safe halt and interactive controls testing.
+- E40 partial: Windows artifact 14979949622, run 45522718647, for b66d9ec; portable preview only. Installer, signing, recovery drill, graphical smoke tests and release promotion pending.
+- E18/E31: PR #15 introduces bounded historical opportunity observations, idempotent writes and atomic conflict rollback; re-screen on read at explicit time. Test-first commit 486a1f7; implementation f25bbd2; timestamp correction 9c69e2f. Do not use historical observations as an active tender index, or treat historical eligibility as permission. Separate concurrent PR #14 work adds a review result journal; reconcile shared storage boundaries before integrating, not two competing stores for the same function. CI and migration/access isolation (E19) pending.
+- Reuse audit: inspected Nexus Operative nexus/journal.py blob 59ee08e7734347897b29af33603dffba783ec9ad at review/v0.340.381-cross-session-coverage; adopted bounded rows, explicit transactions and payload minimization as architectural ideas, not source copying. No trading logic or credentials.
+- OCDS Merge pinned a75d1f6d5d2dc413c4ca6c83646af41d9e839e9c: inspected LICENSE, pyproject.toml, ocdsmerge/merge.py. BSD-3-Clause, 0.8.0, requires Python >=3.11, jsonref/requests. Defer adoption because current CI includes Python 3.10, transitive audit incomplete and default schema resolution may involve remote resources. No dependency installed.
+- Next: reconcile review and observation stores, verify CI and GUI, add process-level recovery, durable halt and approved offline imports. Source compilation and opportunity lifecycle must precede live source collection.
+
+
+## Desktop archive integration candidate
+- E18/E31: PR #15 head db0c7028e4fd8422ccf55ff087b9e3ea963999cf passed PR CI run 45522958078. Adopt its bounded observation archive as the desktop's canonical storage candidate; do not wire the parallel ReviewStore or persist an eligibility decision as ongoing authority. The two review branches diverged; reconcile on integration, no data migration or deletion performed.
+- E33/E34: desktop task worker writes historical observations before marking success. A separate archive window searches the newest 100 observations, re-screens at explicit current time, and exports the displayed report as JSON. Synthetic data only; source data is not verified. Historical observations are not an active opportunity index. Halt is cooperative and can occur during an already-started local archive transaction; no external actions.
+- E38–E40: three new integration regression tests, source/frozen GUI construction smoke tests, Windows x64 artifact workflow for review/desktop-opportunity-browser. Hosted results pending at this entry. Installer/signing, recovery, sustained concurrency and actual user-machine GUI tests remain pending.
+- Main accepted gates remain 0/42. Next: review and consolidate PR stack, durable halt/recovery, authorized offline file import, source-specific collection adapter, then counterparty qualification.
+
+
+## Offline procurement import candidate
+- E05–E09/E12/E18: user-selected UTF-8 JSON manifest, bounded to 2 MiB and 100 compiled snapshots, strict duplicate-member and numeric handling, explicit asserted source URL and retrieval timestamp. Reject incremental releases, unknown schemas, future retrieval, and invalid or inactive tenders. All-or-nothing batch validation, no HTTP requests or external actions. Source assertions are not independently verified.
+- E33/E34: desktop Import compiled JSON control invokes the existing Governor, pipeline, task journal and opportunity archive. Halt disables new imports; already-started local work remains cooperatively cancellable.
+- E38–E40: seven new import regression tests; Windows packaging includes this branch, source/frozen GUI smoke checks. Hosted results pending at entry time.
+- Reuse decision: follow OCDS record/compiled release distinction (https://standard.open-contracting.org/latest/en/schema/records_reference/ and https://standard.open-contracting.org/latest/en/schema/merging/). No new dependency or upstream code copying. Full OCDS schema validation, upstream compiler integration, source authentication, raw file digest persistence and provider-specific collection remain pending.
+- Formal main acceptance remains 0/42. Next: reconcile draft stack, durable halt/recovery, buyer/supplier qualification and an authorized read-only procurement adapter.
+
+
+## Atlas qualification candidate
+- E20/E21: normalized source-asserted buyer/supplier profiles; scheme-scoped identity; explicit classification and region; deterministic candidate matching with reason codes for roles, same identity, capacity, currency, geography, stale/future observations and Council opportunity screening. Governor denies evaluation when halted or unknown.
+- E38: ten new regression test methods for offline matching, schema rejection, bounded batches, provenance, exact financial constraints and halt precedence. CI pending at entry time.
+- Reuse: OCDS v1.1.5 organization identifiers, party roles and classification schema inform the design. No upstream code copied or new dependency installed; see docs/ATLAS.md.
+- E22 remains pending: declared capacity and tender amount are not quotes, revenue or economic forecasts. E20/E21 remain partial until verified organization/source linkage, profile persistence and user interface are implemented.
+- Prior E40 evidence: import-enabled Windows build 45523381631 completed successfully, including GUI smoke checks and artifact 14980484368. Formal main acceptance remains 0/42; integration stack not merged.
+- Next: integrate Atlas with archive and explicit user requirements, persistent halt/recovery, then source adapters and evidence-based economics.
+
+
+## Fee-only scenario economics candidate
+- Prior Atlas head 030919eff3b46d3d6980d97f9f3473181c3a3d7c passed PR CI run 45523816491 (67-test code suite previously observed passing on 45523776844).
+- E22: explicit fee, upfront and completion cost, conditional collection probability, completion probability and modeled exposure limit. Decimal arithmetic; no tender budget treated as revenue; Atlas reasons are preserved; Governor blocks simulation when halted/unknown. Nonpositive expected net or excessive modeled loss blocks review eligibility. No financial commitment or authority.
+- E38: ten new regression test methods, including low ambient precision, failed matching, zero completion, input validation and halt precedence. Test-first commit 7b448b8; implementation 37edfe0. CI for the implementation pending at documentation time.
+- Reuse: existing Atlas, Governor and Scout, Python Decimal context. No third-party dependency or code copy; no additional spending. See docs/ECONOMICS.md for formulas, assumptions and limitations.
+- E22 remains partial: assumption evidence, legal liability modeling, UI integration, scenario persistence and actual quote verification pending. E20/E21 remain partial pending source verification and desktop integration. Main accepted gates remain 0/42; all implementation branches are review candidates.
+- Next: local scenario input bound to archived observations, integrate Atlas/economics into Windows preview; consolidate branch stack; durable halt and recovery; permitted source collection.
+
+
+## Desktop deal simulator candidate
+- E20–E22/E33–E34: imported scenario resolves an exact latest historical observation among newest 100 rows for the selected release-scoped key; Atlas and fee-only economics evaluate at explicit current time. Report includes raw input SHA-256, normalized source assertion, profiles, terms, exact-decimal results and reasons. No live transaction authority.
+- E18/E31: existing task journal records completion/cancellation/failure; report export is explicit JSON; full automatic scenario persistence and cross-release supersession still pending.
+- E38–E40: seven additional scenario/integration test methods; Windows packaging branch enabled with existing source and frozen GUI smoke checks. Results pending at entry. Prior economics head 215d44c1c579ee6006c6a20c19bfb200e4359148 passed CI run 45527912902.
+- Reuses existing Governor, archive, strict import helpers, Atlas, economics and desktop journal. No new runtime dependencies or external actions.
+- Main formal accepted gates remain 0/42; consolidate review stack and verify full integrated build before release. Next: review and consolidate, persistent halt/restart recovery, source-specific collection and independently verified counterparty/quote evidence.
+
+
+## Integrated offline baseline review
+- Consolidate the tested desktop simulator (d4e56a114862736e658eb11640917cae71cb7413) and independent handoff/research/protocol branches into a single main-targeting integration candidate. Preserve bounded archive, exclude parallel review-result store, consolidate CI and update README. See docs/INTEGRATION_BASELINE.md.
+- Prior desktop simulator Windows run 45528842172 completed successfully, artifact 14983957296. New combined test suite expected 91; exact-head CI pending.
+- E15: hardened non-privileged handoff scaffold, independent evidence verifier and actual delegation remain pending. E03/E04/E38/E40: consolidated verification required. Formal main accepted gates remain 0/42 until review and promotion.
