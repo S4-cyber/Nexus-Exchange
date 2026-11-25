@@ -7,6 +7,7 @@ import sqlite3
 from .checklist_store import _context, context_for
 from .owner_profile import ProfileStore, PROFILE_SOURCES, profile_revision
 from .review_ranking import RankingStore
+from .operator_capabilities import detail_text
 from .scenario_workspace import open_scenario_window
 
 TIERS={
@@ -49,12 +50,12 @@ class RankingWorkspace:
             raise ValueError("Owner profile changed. Refresh ranking.")
         self._permit()
 
-    def refresh(self,*,source=None,query="",limit=25,scan_limit=100):
+    def refresh(self,*,source=None,query="",limit=25,scan_limit=100,operator_focus=False):
         profile=self._profile()
         self._permit()
         with RankingStore(self.directory/"scout-leads.sqlite3") as store:
             report=store.rank_review(profile=profile,now=self.clock(),source=source,
-                query=query,limit=limit,scan_limit=scan_limit,halted=False)
+                query=query,limit=limit,scan_limit=scan_limit,operator_focus=operator_focus,halted=False)
         self._confirm(profile)
         return report
 
@@ -106,7 +107,9 @@ def report_summary(report):
     return (f'{report["pathway"].capitalize()} | {report["returned"]} shown / '
             f'{report["evaluated"]} evaluated / {report["matched"]} matched | '
             f'UTC {report["evaluated_at"]} | Not a global ranking'
-            +(" | "+", ".join(suffix) if suffix else ""))
+            +(" | "+", ".join(suffix) if suffix else "")
+            +f' | {report["implemented_hint_count"]} implemented title hints in scan'
+            +(" | Operator focus within tier" if report["operator_focus"] else ""))
 
 
 def row_values(row):
@@ -136,6 +139,7 @@ def row_details(row,report):
         "Declared budget: "+fit(row["modeled_budget_fit"]),
         "Modeled schedule: "+fit(row["modeled_schedule_fit"]),
         "Reasons: "+", ".join(row["reasons"]),
+        "",detail_text(row["operator_capability"]),
         "Refresh before relying on this snapshot. Verify original terms and evidence independently.",
     ])
 
@@ -160,6 +164,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     source=tk.StringVar(master=window,value="All")
     query=tk.StringVar(master=window,value="")
     limit=tk.StringVar(master=window,value="25")
+    operator_focus=tk.BooleanVar(master=window,value=False)
     ttk.Label(filters,text="Source").pack(side="left",padx=4)
     ttk.Combobox(filters,textvariable=source,values=("All",)+PROFILE_SOURCES,
         state="readonly",width=16).pack(side="left",padx=4)
@@ -167,6 +172,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     ttk.Entry(filters,textvariable=query,width=32).pack(side="left",padx=4)
     ttk.Label(filters,text="Show").pack(side="left",padx=4)
     ttk.Combobox(filters,textvariable=limit,values=("25","50","100"),state="readonly",width=5).pack(side="left")
+    ttk.Checkbutton(filters,text="Prioritize Operator hints",variable=operator_focus).pack(side="left",padx=5)
     status=ttk.Label(window,wraplength=1080)
     status.pack(fill="x",padx=12,pady=4)
     table=ttk.Frame(window)
@@ -215,7 +221,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
         clear("Evaluating local historical observations...")
         try:
             result=workspace.refresh(source=None if source.get()=="All" else source.get(),
-                query=query.get(),limit=int(limit.get()))
+                query=query.get(),limit=int(limit.get()),operator_focus=operator_focus.get())
             for index,row in enumerate(result["rows"]):
                 key=str(index)
                 rows[key]=row
@@ -289,7 +295,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
         ttk.Button(buttons,text="Review selected To Do",command=lambda:navigate("tasks")).pack(side="left",padx=5)
     tree.bind("<<TreeviewSelect>>",display)
     window.bind("<Destroy>",destroyed,add="+")
-    for var in (source,query,limit):
+    for var in (source,query,limit,operator_focus):
         var.trace_add("write",filters_changed)
     initial=refresh()
     guard_display()
@@ -301,6 +307,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
             raise RuntimeError("ranking GUI did not load saved financial scenario")
         if first["review_tier"]!="SOURCE_REVIEW_REQUIRED" or first["external_authority"]:
             raise RuntimeError("ranking GUI lost source hold")
+        if "Operator capability:" not in details.get("1.0","end"):
+            raise RuntimeError("ranking GUI missing implemented capability projection")
         if "UNVERIFIED" not in details.get("1.0","end"):
             raise RuntimeError("ranking GUI missing research boundary")
         child=navigate("plan")
@@ -316,4 +324,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
         query.set("")
         if refresh() is None:
             raise RuntimeError("ranking GUI refresh failed")
+        operator_focus.set(True)
+        focused=refresh()
+        if focused is None or focused["operator_focus"] is not True:
+            raise RuntimeError("ranking GUI Operator focus failed")
     return window

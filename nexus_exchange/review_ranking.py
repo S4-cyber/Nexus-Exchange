@@ -12,6 +12,7 @@ from .owner_profile import normalize_profile, BLOCKED_REASONS
 from .scenario_store import ScenarioStore
 from .schedule_feasibility import assess_schedule, _iso
 from .scout import _timestamp
+from .operator_capabilities import assess_lead, catalog as capability_catalog
 
 MAX_SCAN=100
 TIERS=(
@@ -54,7 +55,7 @@ def _sort_key(row):
 
 
 class RankingStore(ScenarioStore):
-    def rank_review(self,*,profile,now,source=None,query="",limit=25,scan_limit=100,halted=None):
+    def rank_review(self,*,profile,now,source=None,query="",limit=25,scan_limit=100,operator_focus=False,halted=None):
         """Rank a bounded window selected by existing profile/history ordering.
 
         All returned rows are for research only. A truncated scan never claims
@@ -65,6 +66,8 @@ class RankingStore(ScenarioStore):
         _permit(halted)
         now=_now(now)
         profile=normalize_profile(profile)
+        if type(operator_focus) is not bool:
+            raise ValueError("explicit boolean operator focus required")
         if (type(scan_limit) is not int or not 1<=scan_limit<=MAX_SCAN
                 or type(limit) is not int or not 1<=limit<=scan_limit):
             raise ValueError("invalid ranking bounds")
@@ -75,7 +78,13 @@ class RankingStore(ScenarioStore):
             rows=[]
             for lead in history["leads"]:
                 rows.append(self._rank_row(lead,profile,now,halted))
-            rows.sort(key=_sort_key)
+            # Optional hint-first ordering only within existing review tier.
+            # Source holds and adverse financial tiers retain precedence.
+            if operator_focus:
+                rows.sort(key=lambda row:(_sort_key(row)[0],
+                    row["operator_capability"]["review_priority"],*_sort_key(row)[1:]))
+            else:
+                rows.sort(key=_sort_key)
             self.db.execute("COMMIT")
         except BaseException:
             if self.db.in_transaction:
@@ -85,7 +94,10 @@ class RankingStore(ScenarioStore):
             profile_revision=history["profile_revision"],pathway=profile["mode"],
             matched=history["matched"],evaluated=len(rows),returned=min(len(rows),limit),
             scan_truncated=history["truncated"],output_truncated=len(rows)>limit,
-            global_ranking=False,rows=rows[:limit],independently_verified=False,
+            global_ranking=False,operator_focus=operator_focus,
+            capability_catalog_sha256=capability_catalog(halted=halted)["catalog_sha256"],
+            implemented_hint_count=sum(row["operator_capability"]["state"]=="IMPLEMENTED_TITLE_HINT_ONLY" for row in rows),
+            rows=rows[:limit],independently_verified=False,
             execution_eligible=False,external_authority=False)
 
     def _rank_row(self,lead,profile,now,halted):
@@ -137,5 +149,6 @@ class RankingStore(ScenarioStore):
             scenario_sha256=scenario_hash,schedule_sha256=schedule_hash,
             modeled_cash_exposure=exposure,modeled_expected_net=expected,
             modeled_collection_wait_us=wait,modeled_budget_fit=budget_fit,modeled_schedule_fit=schedule_fit,
+            operator_capability=assess_lead(lead,source_hold=source_tier,halted=halted),
             reasons=tuple(dict.fromkeys(reasons)),independently_verified=False,
             genesis_verified=False,execution_eligible=False,external_authority=False)
