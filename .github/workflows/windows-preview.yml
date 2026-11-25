@@ -29,7 +29,7 @@ jobs:
       - run: python desktop.py --fixture-process-self-test
       - run: python desktop.py --genesis-self-test
       - run: python -m venv .preview-build
-      - run: .\.preview-build\Scripts\python.exe -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r requirements-windows-build.txt
+      - run: '.\.preview-build\Scripts\python.exe -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r requirements-windows-build.txt'
       - run: .\.preview-build\Scripts\python.exe -m pip check
       - run: .\.preview-build\Scripts\python.exe -m pip list --format=json
       - run: .\.preview-build\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name NexusExchange desktop.py
