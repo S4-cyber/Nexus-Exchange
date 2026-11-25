@@ -279,7 +279,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
             if kind=="tasks":
                 return review_tasks(current,window)
             if kind=="requirements":
-                return open_service_requirements_window(window,workspace,row["context"],current["title"])
+                return open_service_requirements_window(window,workspace,row["context"],current["title"],
+                    plan_id=row["plan_id"],sample_action=csv_action,blocked_check=operator_blocked)
             return open_scenario_window(window,current,directory=directory,halt_check=halt_check,
                 council_action=council_action,council_blocked=council_blocked,
                 operator_action=operator_action,operator_blocked=operator_blocked,csv_action=csv_action)
@@ -335,7 +336,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
         if child is None:
             raise RuntimeError("ranking GUI could not open exact lead planning")
         child.destroy()
-        child=open_service_requirements_window(window,workspace,first["context"],first["title"],smoke=True)
+        child=open_service_requirements_window(window,workspace,first["context"],first["title"],
+            plan_id=first["plan_id"],sample_action=csv_action,blocked_check=operator_blocked,smoke=True)
         child.destroy()
         query.set("synthetic nonmatching filter")
         if tree.get_children() or report is not None:

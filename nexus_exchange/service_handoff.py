@@ -26,8 +26,8 @@ def review_scope(review):
     return sha256(encoded).hexdigest()
 
 
-def checked_sample_inputs(review, expected_scope, plan_context, raw, *, right_raw=None):
-    """Project exact current declared inputs after matching actual local bytes."""
+def checked_review_route(review, expected_scope, plan_context):
+    """Validate fresh local review scope before reading any selected sample file."""
     if (review['state'] != 'DECLARED_STRUCTURE_FITS' or review['source_hold'] is not None
             or any(review[key] is not False for key in
                    ('external_authority', 'execution_eligible', 'dispatch_enabled'))
@@ -42,6 +42,15 @@ def checked_sample_inputs(review, expected_scope, plan_context, raw, *, right_ra
     spec = declared['specification']
     if declared['input_format'] != source or type(spec) is not dict:
         raise ValueError('DECLARED_SERVICE_STRUCTURE_REQUIRED')
+
+    return source, operation
+
+
+def checked_sample_inputs(review, expected_scope, plan_context, raw, *, right_raw=None):
+    """Project exact current declared inputs after matching actual local bytes."""
+    source, operation = checked_review_route(review, expected_scope, plan_context)
+    declared = review['requirements_assessment']['declared_input']
+    spec = declared['specification']
 
     def check(data, size, digest):
         if (type(data) is not bytes or type(size) is not int or not 1 <= size <= 256*1024

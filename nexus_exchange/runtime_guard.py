@@ -246,43 +246,64 @@ class RuntimeGuard:
 
     def produce_scoped_service_sample(self,plan_id,*,context,requirements,expected_scope,
                                       raw,confirmed=None,right_raw=None):
-        """One transient sample from fresh declared Scout scope, never dispatch.
-
-        The caller supplies explicit owned/authorized bytes and a prior local
-        review scope pin. The runtime derives the current review itself; a pin
-        is consistency evidence only, not data permission or authentication.
-        """
-        from .ranking_workspace import RankingWorkspace
-        from .service_handoff import review_scope, checked_sample_inputs
-        from .digital_deliverable import build_contract, _input, _right_input, DeliverableError
+        """Explicit transient local sample from caller-supplied authorized bytes."""
         self._csv_ready(confirmed)
         self._operator_active=True
         try:
-            workspace=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock)
-            snapshot=self._csv_snapshot(plan_id)
-            review=workspace.review_requirements(context,requirements)
-            inputs=checked_sample_inputs(review,expected_scope,snapshot["context"],raw,right_raw=right_raw)
-            bound=inputs.pop("max_cell_chars")
-            contract=build_contract(snapshot,halted=self.is_set(),**inputs)
-            # The ordinary producer enforces the implementation ceiling. Also
-            # check the possibly tighter declared cell bound on parsed data.
-            left=_input(contract,raw,self.is_set(),self.is_set)
-            right=_right_input(contract,right_raw,self.is_set(),self.is_set)
-            for rows in (left,right or {}):
-                for values in rows.values():
-                    if self.is_set():
-                        raise PermissionError("deliverable withheld after halt")
-                    if any(len(value)>bound for value in values):
-                        raise DeliverableError("DECLARED_CELL_BOUND_EXCEEDED")
-            result=self._csv_scoped(plan_id,raw,snapshot=snapshot,right_raw=right_raw,**inputs)
-            current=workspace.review_requirements(context,requirements)
-            if review_scope(current)!=expected_scope:
-                raise ValueError("service review changed during sample")
-            if self.is_set():
-                raise PermissionError("deliverable withheld after halt")
-            return dict(review_scope_sha256=expected_scope,sample=result,external_authority=False)
+            return self._scoped_service_sample(plan_id,context,requirements,expected_scope,
+                                               raw=raw,right_raw=right_raw)
         finally:
             self._operator_active=False
+
+    def preview_scoped_service_files(self,plan_id,*,context,requirements,expected_scope,
+                                     source_path,right_source_path=None,confirmed=None):
+        """Read only explicitly selected local files after fresh scoped preflight."""
+        self._csv_ready(confirmed)
+        self._operator_active=True
+        try:
+            return self._scoped_service_sample(plan_id,context,requirements,expected_scope,
+                file_paths=(source_path,right_source_path))
+        finally:
+            self._operator_active=False
+
+    def _scoped_service_sample(self,plan_id,context,requirements,expected_scope,
+                               *,raw=None,right_raw=None,file_paths=None):
+        from .ranking_workspace import RankingWorkspace
+        from .service_handoff import review_scope, checked_review_route, checked_sample_inputs
+        from .digital_deliverable import build_contract, _input, _right_input, DeliverableError
+        workspace=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock)
+        snapshot=self._csv_snapshot(plan_id)
+        review=workspace.review_requirements(context,requirements)
+        if file_paths is not None:
+            from .deliverable_files import read_selected_csv
+            source,operation=checked_review_route(review,expected_scope,snapshot["context"])
+            source_path,right_path=file_paths
+            if (operation=="RECONCILE")!=(right_path is not None):
+                raise ValueError("EXACT_SELECTED_INPUT_COUNT_REQUIRED")
+            # Validate the current saved-plan contract before touching a file.
+            build_contract(snapshot,review["requirements_assessment"]["declared_input"]["specification"],
+                halted=self.is_set(),source_format=source,operation=operation)
+            raw=read_selected_csv(source_path,halted=self.is_set(),halt_check=self.is_set,source_format=source)
+            if right_path is not None:
+                right_raw=read_selected_csv(right_path,halted=self.is_set(),halt_check=self.is_set)
+        inputs=checked_sample_inputs(review,expected_scope,snapshot["context"],raw,right_raw=right_raw)
+        bound=inputs.pop("max_cell_chars")
+        contract=build_contract(snapshot,halted=self.is_set(),**inputs)
+        left=_input(contract,raw,self.is_set(),self.is_set)
+        right=_right_input(contract,right_raw,self.is_set(),self.is_set)
+        for rows in (left,right or {}):
+            for values in rows.values():
+                if self.is_set():
+                    raise PermissionError("deliverable withheld after halt")
+                if any(len(value)>bound for value in values):
+                    raise DeliverableError("DECLARED_CELL_BOUND_EXCEEDED")
+        result=self._csv_scoped(plan_id,raw,snapshot=snapshot,right_raw=right_raw,**inputs)
+        current=workspace.review_requirements(context,requirements)
+        if review_scope(current)!=expected_scope:
+            raise ValueError("service review changed during sample")
+        if self.is_set():
+            raise PermissionError("deliverable withheld after halt")
+        return dict(review_scope_sha256=expected_scope,sample=result,external_authority=False)
 
     def csv_file_action(self,action,plan_id,*,confirmed=None,**inputs):
         """Fixed local preview/export actions; no arbitrary callback or external dispatch."""

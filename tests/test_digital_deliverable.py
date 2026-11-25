@@ -151,6 +151,66 @@ class DigitalDeliverableTests(unittest.TestCase):
                 self.guard.produce_scoped_service_sample(self.key,**args)
         self.assertFalse(self.guard._operator_active)
 
+    def scoped_file_args(self,raw,specification,capability,*,right_raw=None):
+        args=self.scoped_args(raw,specification,capability,right_raw=right_raw)
+        args.pop("raw")
+        args.pop("right_raw")
+        source=self.directory/("owned.json" if args["requirements"]["input_format"]==JSON_SOURCE else "owned.csv")
+        source.write_bytes(raw)
+        args["source_path"]=source
+        if right_raw is not None:
+            right=self.directory/"owned-right.csv"
+            right.write_bytes(right_raw)
+            args["right_source_path"]=right
+        return args
+
+    def test_scoped_file_preview_uses_all_four_local_services(self):
+        from nexus_exchange.operator_capabilities import CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
+        for raw,specification,capability,right,expected in (
+                (RAW,spec(),CSV_ID,None,EXPECTED),
+                (JSON_RAW,spec(JSON_RAW),JSON_ID,None,EXPECTED),
+                (PROFILE_RAW,spec(PROFILE_RAW,expected_rows=4),PROFILE_ID,None,PROFILE_EXPECTED),
+                (LEFT,spec(LEFT,expected_rows=3,right_input_sha256=sha256(RIGHT).hexdigest(),
+                           right_expected_rows=3),RECONCILE_ID,RIGHT,RECONCILED)):
+            with self.subTest(capability=capability):
+                args=self.scoped_file_args(raw,specification,capability,right_raw=right)
+                result=self.guard.preview_scoped_service_files(self.key,**args)
+                self.assertEqual(result["sample"]["artifact"],expected)
+                self.assertEqual(result["sample"]["contract"]["specification"],specification)
+                self.assertEqual(result["review_scope_sha256"],args["expected_scope"])
+                self.assertIs(result["external_authority"],False)
+        self.assertFalse((self.directory/"operator-obligations.sqlite3").exists())
+
+    def test_scoped_file_preview_denies_before_file_read(self):
+        from nexus_exchange.operator_capabilities import CSV_ID, RECONCILE_ID
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        reconcile=self.scoped_file_args(LEFT,spec(LEFT,expected_rows=3,
+            right_input_sha256=sha256(RIGHT).hexdigest(),right_expected_rows=3),RECONCILE_ID,right_raw=RIGHT)
+        with patch("nexus_exchange.deliverable_files.read_selected_csv") as read:
+            for change in (dict(expected_scope="f"*64),dict(right_source_path=args["source_path"]),
+                           dict(context=dict(args["context"],lead_key="other"))):
+                with self.subTest(change=list(change)),self.assertRaises(ValueError):
+                    self.guard.preview_scoped_service_files(self.key,**dict(args,**change))
+            with self.assertRaises(ValueError):
+                self.guard.preview_scoped_service_files(self.key,**dict(reconcile,right_source_path=None))
+            with self.assertRaises(PermissionError):
+                self.guard.preview_scoped_service_files(self.key,**dict(args,confirmed=False))
+            self.now+=timedelta(days=2)
+            with self.assertRaises(ValueError):
+                self.guard.preview_scoped_service_files(self.key,**args)
+            read.assert_not_called()
+        self.assertFalse(self.guard._operator_active)
+
+    def test_scoped_file_preview_rejects_changed_input_and_can_retry(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        args["source_path"].write_bytes(RAW.replace(b"Alpha",b"Omega"))
+        with self.assertRaises(ValueError):
+            self.guard.preview_scoped_service_files(self.key,**args)
+        self.assertFalse(self.guard._operator_active)
+        args["source_path"].write_bytes(RAW)
+        self.assertEqual(self.guard.preview_scoped_service_files(self.key,**args)["sample"]["artifact"],EXPECTED)
+
     def test_real_saved_plan_produces_exact_artifact_and_qa(self):
         result=self.call()
         self.assertEqual(result["artifact"],EXPECTED)
