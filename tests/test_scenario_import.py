@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 from test_atlas import NOW, CODE, REGION, party
@@ -43,7 +44,7 @@ class ScenarioTests(unittest.TestCase):
         report=self.evaluate()
         self.assertEqual(report["input_sha256"],hashlib.sha256(self.path.read_bytes()).hexdigest())
         self.assertEqual(report["observation"]["opportunity"]["key"],self.item.opportunity.key)
-        self.assertEqual(report["assessment"]["expected_net"],"40.000")
+        self.assertEqual(Decimal(report["assessment"]["expected_net"]),Decimal("40"))
         self.assertTrue(report["assessment"]["eligible_for_review"])
         self.assertFalse(report["assessment"]["external_authority"])
         self.assertEqual(json.loads(json.dumps(report)),report)
