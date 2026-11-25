@@ -1,0 +1,1 @@
+E33–E35 candidate: pure ordered event projection with explicit transitions, stable targets, ten-slot pagination, history and task-success counts. Inputs are untrusted assertions until authenticated by a future event store. No live telemetry, persistence, asset exports or commercial success claims. Four tests authored; CI pending.
