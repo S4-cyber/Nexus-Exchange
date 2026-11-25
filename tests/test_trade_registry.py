@@ -5,7 +5,7 @@ from nexus_exchange.trade_registry import (SOURCES,KINDS,ACCESS,catalog,get_sour
 
 class TradeRegistryTests(unittest.TestCase):
     def test_unique_and_bounded_registry(self):
-        self.assertEqual(len(SOURCES),23)
+        self.assertEqual(len(SOURCES),24)
         self.assertEqual(len({s.id for s in SOURCES}),len(SOURCES))
         self.assertTrue(all(s.kind in KINDS and s.access in ACCESS for s in SOURCES))
 
