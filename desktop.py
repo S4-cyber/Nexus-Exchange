@@ -19,6 +19,7 @@ from nexus_exchange.trade_registry import catalog, official_url, readiness, sour
 from nexus_exchange.trade_routes import ROUTES, route_assessment
 from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
 from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
+from nexus_exchange.ted_search import TedQuery, search as search_ted, notice_url as ted_notice_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -183,8 +184,8 @@ def main(*, data_directory=None, gui_smoke=False):
             result = future.result()
             if type(result) is dict:
                 scenario_report = result
-                if result.get("format")=="nexus-sam-research-v1":
-                    output.insert("end",f"SAM discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
+                if result.get("format") in ("nexus-sam-research-v1","nexus-ted-research-v1"):
+                    output.insert("end",f"Scout discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
                     show_sam_results(result)
                 else:
                     output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
@@ -240,7 +241,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
     def show_sam_results(report):
         window = tk.Toplevel(root)
-        window.title("Nexus Exchange | SAM research leads")
+        is_ted=report.get("format")=="nexus-ted-research-v1"
+        window.title("Nexus Exchange | "+("TED" if is_ted else "SAM")+" research leads")
         window.geometry("1050x700")
         count = sum(lead["research_candidate"] for lead in report["leads"])
         ttk.Label(window,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
@@ -248,13 +250,13 @@ def main(*, data_directory=None, gui_smoke=False):
         if report.get("truncated"):
             ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
         tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
-        for col,label,width in (("title","Opportunity",510),("deadline","Deadline (UTC)",200),("state","Research status",170)):
+        for col,label,width in (("title","Opportunity",510),("deadline","Deadline / reported date",200),("state","Research status",170)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=8)
         leads={lead["notice_id"]:lead for lead in report["leads"]}
         for key,lead in leads.items():
-            tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or "Unverified",
+            tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
                 "Review candidate" if lead["research_candidate"] else "Blocked"))
         details=ScrolledText(window,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
@@ -276,7 +278,7 @@ def main(*, data_directory=None, gui_smoke=False):
             lead=selected()
             if lead is not None and not stop.is_set():
                 try:
-                    webbrowser.open(notice_url(lead["notice_id"]),new=2)
+                    webbrowser.open((ted_notice_url if is_ted else notice_url)(lead["notice_id"]),new=2)
                 except (ValueError,OSError):
                     messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
         tree.bind("<<TreeviewSelect>>",display)
@@ -390,12 +392,42 @@ def main(*, data_directory=None, gui_smoke=False):
                 webbrowser.open(official_url(source.id,evidence=evidence,halted=stop.is_set()),new=2)
             except (ValueError,PermissionError,OSError):
                 write_details("Source opening unavailable or halted.")
+        def run_ted():
+            source=selected()
+            if source is None or source.id!="ted":
+                write_details("Select EU TED before starting its keyless search.")
+                return
+            if stop.is_set() or future is not None:
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            prefix=simpledialog.askstring("TED public search",
+                "CPV prefix (2–8 digits; 72 = IT services, 79 = business services).",initialvalue="72",parent=window)
+            if prefix is None:
+                return
+            today=datetime.now(timezone.utc).date()
+            request=TedQuery(prefix,today-timedelta(days=14),today)
+            try:
+                request.parameters(datetime.now(timezone.utc))
+            except ValueError:
+                write_details("Invalid CPV prefix.")
+                return
+            if not messagebox.askyesno("Authorize one TED search",
+                    "Search public EU TED notices? Up to three read-only requests; no account, bid or spending.",
+                    parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_ted(request,approved=True,halt_check=stop.is_set)
+            run(work,target="TED public notice discovery",scenario=True)
+            write_details("Search requested. See main dashboard for results.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Open official source",command=open_selected).pack(side="left")
         ttk.Button(buttons,text="Open integration documentation",command=lambda:open_selected(True)).pack(side="left",padx=5)
         ttk.Button(buttons,text="Commercial routes",command=trade_routes_window).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Search EU TED (keyless)",command=run_ted).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -570,8 +602,13 @@ def main(*, data_directory=None, gui_smoke=False):
             source_url=notice_url(sample_id),research_candidate=False,
             blockers=["SYNTHETIC_FIXTURE"],todo=[dict(instruction=text) for _,text in CHECKS])
         results_window = show_sam_results(dict(returned=1,requests=0,leads=[sample_lead],truncated=False))
+        ted_sample=dict(sample_lead,notice_id="1-2026",source_url=ted_notice_url("1-2026"),
+            earliest_deadline_date="2026-12-03",title="Synthetic TED fixture")
+        ted_window=show_sam_results(dict(format="nexus-ted-research-v1",returned=1,
+            requests=0,leads=[ted_sample],truncated=False))
         root.update_idletasks()
         root.update()
+        ted_window.destroy()
         window.destroy()
         pathway_window.destroy()
         trade_window.destroy()

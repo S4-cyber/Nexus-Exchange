@@ -357,6 +357,7 @@ def readiness(source_id, *, halted=None):
         raise PermissionError("HALTED_OR_UNKNOWN")
     source=get_source(source_id)
     return {"source_id":source.id,"research_only":True,
-        "adapter_status":"SAM adapter tested with mocks; live pilot pending" if source.id=="sam" else "catalog only",
+        "adapter_status":("SAM adapter tested with mocks; live pilot pending" if source.id=="sam" else
+                          "TED adapter; live pilot pending" if source.id=="ted" else "catalog only"),
         "income_kind":source.kind,"cash_exposure":None,"zero_capital_verified":False,
         "external_authority":False,"execution_eligible":False}
