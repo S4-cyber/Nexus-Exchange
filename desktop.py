@@ -84,7 +84,7 @@ def main(*, data_directory=None, gui_smoke=False):
     from tkinter.scrolledtext import ScrolledText
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
-    root.geometry("980x760")
+    root.geometry("1080x820")
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     if gui_smoke:
         root.withdraw()
@@ -115,7 +115,7 @@ def main(*, data_directory=None, gui_smoke=False):
         history.heading(key,text=label)
         history.column(key,width=220 if key=="time" else 160)
     history.pack(fill="both",padx=20,pady=8)
-    output = tk.Text(root,height=8,wrap="word")
+    output = ScrolledText(root,height=8,wrap="word")
     output.pack(fill="both",expand=True,padx=20,pady=16)
     output.configure(state="disabled")
     status = ttk.Label(root)
