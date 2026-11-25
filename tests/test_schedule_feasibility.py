@@ -1,6 +1,9 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 from nexus_exchange.lead_store import LeadStore
+from nexus_exchange import usaspending_search
+import test_usaspending_search as spending
 from nexus_exchange.schedule_feasibility import assess_schedule
 from test_lead_store import NOW, reports
 from test_owner_profile import profile
@@ -54,7 +57,8 @@ class ScheduleFeasibilityTests(unittest.TestCase):
         self.assertFalse(r["modeled_delivery_deadline_fit"])
 
     def test_date_only_is_not_precise_cutoff(self):
-        lead=dict(self.lead,deadline=None,earliest_deadline_date="2026-12-01")
+        self.store.record(reports()[3],now=NOW,halted=False)
+        lead=self.store.browse(now=NOW,source="canada",profile=self.profile,halted=False)["leads"][0]
         r=self.run_plan(lead=lead)
         self.assertIsNone(r["modeled_submission_fit"])
         self.assertIsNone(r["modeled_schedule_fit"])
@@ -100,8 +104,24 @@ class ScheduleFeasibilityTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.run_plan(halted=halted)
 
-    def test_authority_never_inherited_and_awards_not_solicitations(self):
+    def test_authority_never_inherited(self):
         lead=dict(self.lead,external_authority=True)
         with self.assertRaises(ValueError):
             self.run_plan(lead=lead)
         self.assertIn("HISTORICAL_OBSERVATION_REVALIDATION_REQUIRED",self.run_plan()["reasons"])
+
+    def test_actual_award_projection_is_not_a_submission_opportunity(self):
+        report=usaspending_search.search(spending.QUERY,approved=True,halt_check=lambda:False,
+            clock=lambda:NOW,transport=Mock(return_value=(200,spending.page([spending.award()]))))
+        self.store.record(report,now=NOW,halted=False)
+        lead=self.store.browse(now=NOW,source="usaspending",profile=self.profile,halted=False)["leads"][0]
+        r=self.run_plan(lead=lead)
+        self.assertFalse(r["modeled_submission_fit"])
+        self.assertFalse(r["modeled_schedule_fit"])
+        self.assertIn("HISTORICAL_AWARD_NOT_SUBMISSION_OPPORTUNITY",r["reasons"])
+
+    def test_unknown_preparation_hours_and_negative_delivery_window(self):
+        self.assertIsNone(self.run_plan(plan(preparation_hours=None))["modeled_preparation_hours_fit"])
+        r=self.run_plan(plan(delivery_deadline="2026-12-04T12:00:00Z"),scenario=scenario(delivery_days=None))
+        self.assertFalse(r["modeled_delivery_deadline_fit"])
+        self.assertFalse(r["modeled_schedule_fit"])
