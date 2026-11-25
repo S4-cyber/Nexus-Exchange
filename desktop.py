@@ -10,7 +10,7 @@ from functools import partial
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.runtime_guard import RuntimeGuard
-from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
+from nexus_exchange.lead_store import LeadStore, ResultChangedError, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileChangedError, ProfileStore, PROFILE_SOURCES, profile_revision
 from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.scenario_workspace import open_scenario_window
@@ -139,6 +139,7 @@ def main(*, data_directory=None, gui_smoke=False):
     executor = ThreadPoolExecutor(max_workers=1)
     future = None
     scenario_report = None
+    latest_results_window = None
     def busy():
         return future is not None or stop.browser_process_pending()
     def close():
@@ -269,7 +270,23 @@ def main(*, data_directory=None, gui_smoke=False):
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
+
+    def reopen_results():
+        nonlocal latest_results_window
+        if stop.is_set() or scenario_report is None or scenario_report.get("format") not in LEAD_FORMATS:
+            return
+        if latest_results_window is not None and latest_results_window.winfo_exists():
+            latest_results_window.deiconify()
+            latest_results_window.lift()
+        else:
+            latest_results_window = show_source_results(scenario_report)
+
+    reopen_button = ttk.Button(result_panel, text="View search results", command=reopen_results)
+
     def show_result_panel():
+        nonlocal latest_results_window
+        latest_results_window = None
+        reopen_button.pack_forget()
         recent.pack_forget()
         result_panel.pack(fill="both", expand=True)
         tabs.select(home)
@@ -318,8 +335,13 @@ def main(*, data_directory=None, gui_smoke=False):
             if type(result) is dict:
                 scenario_report = result
                 if result.get("format") in LEAD_FORMATS:
-                    output.insert("end",f"Scout discovery: {result['returned']} records; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
-                    show_source_results(result)
+                    guidance = ("Select a notice and choose Review checklist to see its saved steps."
+                                if result["returned"] else
+                                "Try another service or source in Research → Plan a search.")
+                    output.insert("end", f"Notices returned: {result['returned']}\n"
+                                  f"Source requests: {result['requests']}\n\n{guidance}")
+                    reopen_results()
+                    reopen_button.pack(before=output, anchor="w", pady=(0, 4))
                 else:
                     output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
                 exporter.configure(state="normal")
@@ -339,8 +361,10 @@ def main(*, data_directory=None, gui_smoke=False):
                 for button in diagnostic_buttons:
                     button.configure(state="normal")
     def show_halted(message):
-        nonlocal scenario_report
+        nonlocal scenario_report, latest_results_window
         scenario_report=None
+        latest_results_window = None
+        reopen_button.pack_forget()
         exporter.configure(state="disabled")
         output.configure(state="normal")
         output.delete("1.0","end")
@@ -527,20 +551,28 @@ def main(*, data_directory=None, gui_smoke=False):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=8)
-        leads={lead["notice_id"]:lead for lead in report["leads"]}
-        for key,lead in leads.items():
-            tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
+        leads = report["leads"]
+        for index, lead in enumerate(leads):
+            tree.insert("","end",iid=str(index),values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
                 "Award intelligence" if source_format=="nexus-usaspending-research-v1" else "Review candidate" if lead["research_candidate"] else "Blocked"))
         details=ScrolledText(content,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
-        def selected():
-            selection=tree.selection()
-            return leads.get(selection[0]) if selection else None
+        def selected_index():
+            selection = tree.selection()
+            return int(selection[0]) if selection else None
         def display(event=None):
-            lead=selected()
+            index = selected_index()
+            message.configure(text="")
+            state = "disabled" if index is None else "normal"
+            review_button.configure(state=state)
+            notice_button.configure(state=state)
             details.configure(state="normal")
             details.delete("1.0","end")
-            if lead is not None:
+            if index is None:
+                details.insert("end", "Select a notice to review." if leads else
+                               "This search returned no notices. In Research, open Plan a search to try a different service or source.")
+            else:
+                lead = leads[index]
                 lines=[lead["title"],"Notice ID: "+lead["notice_id"],
                     "Source: "+lead["source_url"],"Blockers: "+", ".join(lead["blockers"]),
                     "", "TO DO — evidence required"]
@@ -550,17 +582,48 @@ def main(*, data_directory=None, gui_smoke=False):
                 details.insert("end","\n".join(lines))
             details.configure(state="disabled")
         def open_notice():
-            lead=selected()
-            if lead is not None and not stop.is_set():
+            index = selected_index()
+            if index is not None and not stop.is_set():
+                lead = leads[index]
                 try:
                     webbrowser.open(link_for(lead["notice_id"]),new=2)
                 except (ValueError,OSError):
                     messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
+        def review_checklist():
+            index = selected_index()
+            if index is None:
+                return
+            try:
+                if stop.is_set():
+                    raise PermissionError
+                archive_path = directory / "scout-leads.sqlite3"
+                if not archive_path.exists():
+                    raise ResultChangedError("No saved search results.")
+                with ProfileStore(directory / "owner-profile.sqlite3") as profiles:
+                    profile = profiles.load(halted=stop.is_set())
+                with LeadStore(archive_path) as archive:
+                    row = archive.resolve_result(report, index, now=datetime.now(timezone.utc),
+                                                 profile=profile, halted=stop.is_set())
+                checklist_window(row, window)
+            except PermissionError:
+                message.configure(text="Select Resume offline in the main window, then reopen the checklist.")
+            except ResultChangedError:
+                message.configure(text="This result no longer matches the saved notice. Open Research → Browse leads to review the latest copy.")
+            except (ValueError, OSError, sqlite3.Error):
+                message.configure(text="The checklist could not be opened. Check the saved notice in Research → Browse leads.")
+
+        actions = ttk.Frame(content)
+        actions.pack(before=tree, anchor="w", padx=12, pady=4)
+        review_button = ttk.Button(actions, text="Review checklist", command=review_checklist)
+        review_button.pack(side="left")
+        notice_button = ttk.Button(actions, text="Open selected official notice", command=open_notice)
+        notice_button.pack(side="left", padx=5)
+        message = ttk.Label(content, wraplength=800, justify="left")
+        message.pack(before=tree, anchor="w", padx=12)
         tree.bind("<<TreeviewSelect>>",display)
-        ttk.Button(content,text="Open selected official notice",command=open_notice).pack(before=tree, anchor="w", padx=12, pady=4)
         if leads:
-            tree.selection_set(next(iter(leads)))
-            display()
+            tree.selection_set("0")
+        display()
         return window
     def trade_routes_window():
         window = tk.Toplevel(root)
@@ -1640,7 +1703,6 @@ def main(*, data_directory=None, gui_smoke=False):
         sample_lead = dict(notice_id=sample_id,title="Synthetic GUI fixture",deadline=None,
             source_url=notice_url(sample_id),research_candidate=False,
             blockers=["SYNTHETIC_FIXTURE"],todo=[dict(instruction=text) for _,text in CHECKS])
-        results_window = show_source_results(dict(returned=1,requests=0,leads=[sample_lead],truncated=False))
         ted_sample=dict(sample_lead,notice_id="1-2026",source_url=ted_notice_url("1-2026"),
             earliest_deadline_date="2026-12-03",title="Synthetic TED fixture")
         ted_window=show_source_results(dict(format="nexus-ted-research-v1",returned=1,
@@ -1662,9 +1724,10 @@ def main(*, data_directory=None, gui_smoke=False):
         todo_fixture=dict(sample_lead,retrieved_at=stamp.isoformat(),execution_eligible=False,
             external_authority=False,cash_exposure=None,
             blockers=["SYNTHETIC_FIXTURE","CASH_EXPOSURE_UNKNOWN","OWNER_APPROVAL_REQUIRED"])
+        saved_report = dict(format="nexus-sam-research-v1", returned=1, requests=1, leads=[todo_fixture],
+                            truncated=False, page_sha256=["0"*64])
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
-            fixture_store.record(dict(format="nexus-sam-research-v1",returned=1,leads=[todo_fixture],
-                truncated=False,page_sha256=["0"*64]),now=stamp,halted=False)
+            fixture_store.record(saved_report, now=stamp, halted=False)
             todo_row=fixture_store.browse(now=stamp,source="sam",halted=False)["leads"][0]
         todo_window=checklist_window(todo_row,root,smoke=True)
         # Use the first-run workflow to set up the profile needed by the receipt smoke.
@@ -1676,6 +1739,32 @@ def main(*, data_directory=None, gui_smoke=False):
         def control(parent, kind, label):
             return next(widget for widget in descendants(parent)
                         if isinstance(widget, kind) and widget.cget("text") == label)
+
+        run(lambda *, halted: saved_report, target="Synthetic search result", scenario=True)
+        deadline = monotonic() + 20
+        while future is not None:
+            if monotonic() >= deadline:
+                raise RuntimeError("Synthetic result did not reach Home")
+            root.update()
+            sleep(0.01)
+        if latest_results_window is None or not reopen_button.winfo_manager():
+            raise RuntimeError("Home did not retain the completed search results")
+        latest_results_window.destroy()
+        recorded = store.read()
+        reopen_button.invoke()
+        results_window = latest_results_window
+        if not results_window.winfo_exists() or store.read() != recorded or busy():
+            raise RuntimeError("Reopening search results must reuse the completed report")
+        control(results_window, ttk.Button, "Review checklist").invoke()
+        reopened = next(child for child in results_window.winfo_children() if isinstance(child, tk.Toplevel))
+        review_tasks = next(widget for widget in descendants(reopened) if isinstance(widget, ttk.Treeview))
+        if not any(review_tasks.set(item, "state") == "Evidence noted" for item in review_tasks.get_children()):
+            raise RuntimeError("Search result failed to reopen its saved checklist notes")
+        reopened.destroy()
+        empty_window = show_source_results(dict(saved_report, returned=0, leads=[]))
+        if not control(empty_window, ttk.Button, "Review checklist").instate(["disabled"]):
+            raise RuntimeError("Empty search result enabled checklist review")
+        empty_window.destroy()
 
         setup = discovery_window()
         start_search = control(setup, ttk.Button, "Search selected plan")

@@ -5,12 +5,16 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock,patch
-from nexus_exchange.lead_store import LeadStore
+from nexus_exchange.lead_store import LeadStore, ResultChangedError
+from nexus_exchange.checklist_store import context_for
+from nexus_exchange.owner_profile import profile_revision
 from nexus_exchange import sam_search,ted_search,fts_search,canada_search
 import test_sam_search as sam
 import test_ted_search as ted
 import test_fts_search as fts
 import test_canada_search as ca
+import test_cf_search as cf
+import test_usaspending_search as spending
 
 NOW=sam.NOW
 OPTS=dict(approved=True,halt_check=lambda:False,clock=lambda:NOW)
@@ -55,6 +59,46 @@ class LeadStoreTests(unittest.TestCase):
             self.assertEqual(store.record(report,now=NOW,halted=False),0)
             self.assertEqual(store.record(newer,now=NOW+timedelta(minutes=1),halted=False),1)
             self.assertEqual(store.browse(now=NOW+timedelta(minutes=1),halted=False)["leads"][0]["title"],"Revised historical title")
+
+    def test_search_result_resolves_the_same_checklist_as_history_for_every_source(self):
+        source_reports = reports() + [
+            cf.search(cf.QUERY, transport=Mock(return_value=(200, cf.page([cf.release()]))), **OPTS),
+            spending.search(spending.QUERY, transport=Mock(return_value=(200, spending.page([spending.award()]))), **OPTS),
+        ]
+        profile = dict(mode="genesis", budget="0", hours_per_week=5, sources=["sam"],
+                       naics=[], cpv=[], keywords=[])
+        with LeadStore(self.path) as store:
+            for report in source_reports:
+                with self.subTest(fmt=report["format"]):
+                    store.record(report, now=NOW, halted=False)
+                    result = store.resolve_result(report, 0, now=NOW, profile=profile, halted=False)
+                    archived = store.browse(now=NOW, source=result["source"], profile=profile, halted=False)["leads"]
+                    self.assertEqual(context_for(result), context_for(archived[0]))
+                    self.assertEqual(context_for(result)["profile_revision"], profile_revision(profile))
+
+    def test_selected_row_rejects_missing_changed_and_superseded_results(self):
+        report = sam_search.search(sam.QUERY, sam.KEY,
+            transport=Mock(return_value=(200, sam.page([sam.notice(1), sam.notice(2)]))), **OPTS)
+        with LeadStore(self.path) as store:
+            def resolve(report, index):
+                return store.resolve_result(report, index, now=NOW+timedelta(minutes=1), halted=False)
+            with self.assertRaises(ResultChangedError):
+                resolve(report, 1)
+            store.record(report, now=NOW, halted=False)
+            self.assertEqual(resolve(report, 1)["notice_id"], report["leads"][1]["notice_id"])
+            for bad_index in (-1, True, 2):
+                with self.subTest(index=bad_index), self.assertRaises(ValueError):
+                    resolve(report, bad_index)
+            with self.assertRaises(PermissionError):
+                store.resolve_result(report, 1, now=NOW, halted=True)
+            with self.assertRaises(ResultChangedError):
+                resolve(dict(report, page_sha256=["f"*64]), 1)
+            revised = copy.deepcopy(report["leads"][1])
+            revised["retrieved_at"] = (NOW+timedelta(minutes=1)).isoformat()
+            store.record(dict(report, returned=1, leads=[revised]), now=NOW+timedelta(minutes=1), halted=False)
+            with self.assertRaises(ResultChangedError):
+                resolve(report, 1)
+            self.assertEqual(resolve(report, 0)["notice_id"], report["leads"][0]["notice_id"])
 
     def test_conflict_and_atomic_rollback(self):
         report=reports()[0]

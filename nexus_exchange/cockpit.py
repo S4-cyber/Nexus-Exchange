@@ -70,6 +70,8 @@ HELPS={
     "check saved fingerprint":"Compare a selected file with the saved fingerprint.",
     "save selected task":"Save your local note about the selected checklist item.",
     "filter / refresh":"Apply your filters and reload the local results.",
+    "view search results": "Reopen the notices from the latest search.",
+    "review checklist": "Open the saved review steps and evidence notes for this notice.",
     "review to do":"Open the evidence checklist for the selected opportunity.",
     "plan scenario":"Open the financial and scheduling assumptions for this opportunity.",
     "export history json":"Save the displayed historical lead report to a JSON file.",
