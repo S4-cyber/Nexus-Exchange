@@ -76,17 +76,26 @@ def _worker(raw, buffer, length):
 
 
 def _cleanup(process):
-    if process.pid is not None:
-        if process.is_alive():
-            process.terminate()
-            process.join(0.5)
-        if process.is_alive():
-            process.kill()
-            process.join(0.5)
-        if process.is_alive():
-            raise ProcessDenied("WORKER_CLEANUP_FAILED")
-        process.join(0)
-    process.close()
+    try:
+        if process.pid is not None:
+            if process.is_alive():
+                try:
+                    process.terminate()
+                    process.join(0.5)
+                except Exception:
+                    # A failed terminate does not prove death; still try kill.
+                    pass
+            if process.is_alive():
+                process.kill()
+                process.join(0.5)
+            if process.is_alive():
+                raise RuntimeError("worker still alive")
+            process.join(0)
+            if process.exitcode is None:
+                raise RuntimeError("worker exit unconfirmed")
+        process.close()
+    except Exception:
+        raise ProcessDenied("WORKER_CLEANUP_FAILED") from None
 
 
 def _supervise(request, *, halt_check, timeout_ms, target=_worker):
@@ -131,6 +140,16 @@ def _supervise(request, *, halt_check, timeout_ms, target=_worker):
         reply = bytes(buffer[:size])
         try:
             review = _parse_advice(reply, request)
+            # The fixed fixture is not an open-ended model. Verify its entire
+            # deterministic transcript, not merely a valid subset of advice.
+            expected = [dict(field=row["field"], reason=row["state"],
+                             reference_id=row["reference_ids"][0] if row["reference_ids"] else None)
+                        for row in request["fields"]]
+            canonical = _json(dict(format="nexus-local-advice-response-v1",
+                                   request_sha256=request["request_sha256"],
+                                   model_sha256=request["model_sha256"], advice=expected)).encode("ascii")
+            if reply != canonical:
+                raise ValueError("incomplete or noncanonical fixture response")
         except (ValueError, TypeError, KeyError, RecursionError):
             raise ProcessDenied("INVALID_RESPONSE") from None
         _check_halt(halt_check)

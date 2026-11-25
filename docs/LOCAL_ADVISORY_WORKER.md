@@ -36,3 +36,17 @@ review must be addressed before actual inference. No new dependencies.
 Verification: six local focused process tests (Python 3.13.5), three new
 Council integration methods, source and frozen GUI smoke awaiting hosted
 checks. No full local checkout. All external authority flags false.
+
+
+## Fixed transcript and cleanup prerequisite
+
+The fixture supervisor now independently checks the entire canonical reply
+rather than merely permitting the general advisory schema's valid subset.
+Omitted fields, reordered rows, alternate reference IDs and noncanonical
+encoding fail the diagnostic. Cleanup attempts kill after a terminate/join
+error if the child is still alive, requires a confirmed exit code for a
+started child, and emits WORKER_CLEANUP_FAILED for uncertain cleanup.
+Five focused test methods passed locally; full regression remains pending
+for this increment. A future runtime owner must treat that reason as a
+fault, not as a drained failure eligible for recovery. No OS-level crash
+containment or persistent dispatch is implemented.

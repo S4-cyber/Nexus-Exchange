@@ -557,3 +557,35 @@ or commercial execution.
 ## RC3 Scout lifecycle consolidation — 2026-11-25
 
 E06/E12/E18/E31/E33/E38, H03/H06. The separate archive lifecycle #102 exact head 5b9c0ddfc50cd928fe448f3847a8d001ca26ae65 passed 822 tests each on Python 3.10/3.13 (45671905049) and Windows preview 45671904645, artifact 15049454405. The three changed non-roadmap file blobs match their original parent exactly in the consolidated parent 7aee08ea740fb4135d3411e6cf163b67bcd3ce85; transplant their exact verified replacement blobs without overriding the merged UI, resource catalogue, or advisory/current-scope code. Retain the appended Scout roadmap history. Combined parent Python jobs passed 885 tests each (45686084113); Windows 45686084062 was active at preparation. Expected combined regression is 888 tests, not yet verified. Full checkout failed GitHub DNS; no new local/full-suite result or independent review claimed. Keep existing PR #111, advance only after parent Windows checks finish, and run exact integrated CI. No new dependency, provider call, authority, paid service, or Operative modifications. Main accepted gates remain 0/42. Next: owner-thread supervised advisory lifecycle and independent acceptance/security review.
+
+
+## Fixed synthetic worker integrity — 2026-11-25
+
+GRI-7; E15/E16/E17/E27/E37/E38/E40, H01/H06/H07. Exact consolidated
+parent 0112f6a31a305e084d31c96191f8d1002ac3a736 ran 888 tests (one skipped) on each Python
+3.10 and 3.13 (45690354874), and Windows source, frozen, GUI, Genesis and
+security checks passed (45690355028, artifact 15058193291). No independent
+review submissions or threads observed for PR #111; accepted main gates 0/42.
+
+The fixed worker now requires the exact canonical complete deterministic
+reply, including field ordering and first reference selection. The general
+advisory contract remains unchanged; a valid subset is not enough for this
+specific diagnostic. Terminate errors no longer skip kill fallback; uncertain
+cleanup (including missing exit code or failed close) is normalized to
+WORKER_CLEANUP_FAILED. This is a prerequisite for a runtime owner to
+distinguish a drained diagnostic from a supervisor fault, not a proof of
+cleanup after owner crash or a guarantee of OS isolation.
+
+Local Python 3.13.5 red reproduced omitted output and cleanup failure;
+five new test methods passed green, with real spawned children and mocked
+OS cleanup failures. Exact tested source/test blobs
+41afecdec8736990fcae746869753d4ec0fa375a and
+06ccbf574481ae5868695d9021390128e46696c9. Full checkout DNS still blocked;
+hosted full regression and independent review required. No remote red
+commit. Rechecked agency-agents pinned handoff template and MIT license
+(8ae6164602c95ca78828b148b9052460ee426885), and read-only Operative journal
+blob 59ee08e7734347897b29af33603dffba783ec9ad for bounded failure semantics;
+no source copied or dependencies added. Next: owner-thread reservation,
+collection, fresh scope inspection, durable halt, no replay, and prove
+child drain across owner death before activating actual inference.
+No new services, model execution, commercial actions, spend or Operative changes.
