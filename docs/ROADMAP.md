@@ -189,3 +189,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 ## Keyless TED Scout pilot
 - S02/R03/E10–E12 candidate: fixed anonymous TED v3 search, CPV and date filters, three-request cap, provenance, conservative tender classification, native source search and lead-specific checklists. Eleven mocked test methods; exact-head CI/build pending. No key required, no submission, no execution, no known cash exposure.
 - Previous Global Trade candidate 8fa86250520d585b853cf22bd44e3731ce94f2f0 passed 122-test CI and Windows 45531247704 (artifact 14984487891). Consolidation and formal release gate acceptance still pending. Next: authorized real TED response/schema validation, UK OCDS/Canada public sources, lead-bound evidence/profile persistence, independent review.
+
+
+## UK Find a Tender release pilot
+- S02/R03/E10–E12: anonymous official UK OCDS release-package collection candidate, frozen update window, same-origin cursor validation, bounded requests, source-scoped release identity, lifecycle-aware blocking and native source search. Thirteen new mocked regression methods; exact-head results pending.
+- E14/R05: historical tender events generate verification tasks; reject superseded, ambiguous, incomplete-window and non-active events. Full record rehydration, current-state compilation, persistent source evidence and independent eligibility/cash exposure verification remain pending. Official help returned 403; parameters corroborated by published secondary documentation, not live provider tests.
+- Prior TED head e31ac801ff8e7d25958b970ea92e55c0417e7767 passed 133-test CI (45531803268, 45531817458) and Windows run 45531803354 (artifact 14984567823). No new paid dependencies. Main accepted gates 0/42 pending integration; next: CanadaBuys, source lifecycle reconstruction and unified lead archive.
