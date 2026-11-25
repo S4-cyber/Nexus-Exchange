@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from nexus_exchange.operator_workspace import OperatorWorkspace
 from nexus_exchange.correspondence_workspace import CorrespondenceWorkspace
 from nexus_exchange.operator_recipients import prepare_recipient, _FLAGS_EXTRA
-from nexus_exchange.correspondence_thread import open_thread
+from nexus_exchange.correspondence_thread import open_thread, append_event
+from nexus_exchange.evidence import fingerprint
+from tempfile import TemporaryDirectory
+from pathlib import Path
 from test_operator_workspace import PLAN, fields, draft
 
 NOW=datetime(2026,11,24,12,tzinfo=timezone.utc)
@@ -76,3 +79,50 @@ class NativeCorrespondenceTests(unittest.TestCase):
         self.action.side_effect=halted
         with self.assertRaises(PermissionError):
             self.controller.preview(self.contact,'selected')
+
+    def test_event_preview_and_exact_append(self):
+        thread=open_thread(self.rfq,self.candidate,now=NOW,confirmed=True,halted=False)
+        with TemporaryDirectory() as temp:
+            path=Path(temp)/'reply.txt'
+            path.write_bytes(b'owned simulated reply')
+            self.action.return_value=thread
+            expected=self.controller.preview_event(self.record,'SIMULATED_REPLY',path)
+            self.assertEqual(expected,dict(thread_id=thread['thread_id'],head=thread['head_sha256'],
+                kind='SIMULATED_REPLY',evidence=fingerprint(path,halted=False)))
+            updated=append_event(self.rfq,self.candidate,thread,kind=expected['kind'],
+                evidence_reference=expected['evidence'],expected_head=expected['head'],
+                now=NOW,confirmed=True,halted=False)
+            self.action.side_effect=[thread,updated]
+            self.assertEqual(self.controller.save_event(self.record,path,expected,confirmed=True),updated)
+            self.action.assert_called_with('thread_append',PLAN,draft_id=self.rfq['draft_id'],
+                recipient_id=self.candidate['recipient_id'],supplier=self.controller.supplier,
+                kind=expected['kind'],evidence_path=path,expected_head=expected['head'],
+                expected_evidence=expected['evidence'],confirmed=True)
+
+    def test_event_confirmation_stale_and_invalid_kind(self):
+        thread=open_thread(self.rfq,self.candidate,now=NOW,confirmed=True,halted=False)
+        expected=dict(thread_id=thread['thread_id'],head=thread['head_sha256'],
+                      kind='SIMULATED_REPLY',evidence=REFERENCE)
+        with self.assertRaises(PermissionError):
+            self.controller.save_event(self.record,'unused',expected,confirmed=1)
+        with self.assertRaises(ValueError):
+            self.controller.preview_event(self.record,'SENT', 'unused')
+        self.action.assert_not_called()
+        self.action.return_value=thread
+        with self.assertRaises(ValueError):
+            self.controller.save_event(self.record,'unused',dict(expected,head='f'*64),confirmed=True)
+        self.assertEqual(self.action.call_args.args[0],'thread_history')
+
+    def test_event_response_forgery_and_replay(self):
+        thread=open_thread(self.rfq,self.candidate,now=NOW,confirmed=True,halted=False)
+        expected=dict(thread_id=thread['thread_id'],head=thread['head_sha256'],
+                      kind='SIMULATED_REPLY',evidence=REFERENCE)
+        wrong=append_event(self.rfq,self.candidate,thread,kind='LOCAL_FOLLOWUP_DRAFT',
+            evidence_reference=REFERENCE,expected_head=expected['head'],now=NOW,confirmed=True,halted=False)
+        self.action.side_effect=[thread,wrong]
+        with self.assertRaises(ValueError):
+            self.controller.save_event(self.record,'unused',expected,confirmed=True)
+        self.action.side_effect=[wrong]
+        with self.assertRaises(ValueError):
+            self.controller.save_event(self.record,'unused',dict(expected,head=wrong['head_sha256']),confirmed=True)
+        self.assertEqual(self.action.call_args.args[0],'thread_history')
