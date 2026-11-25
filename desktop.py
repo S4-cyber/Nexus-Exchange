@@ -11,7 +11,7 @@ from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
-from nexus_exchange.checklist_store import ChecklistStore, context_for, STATES
+from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
@@ -714,7 +714,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Clear profile",command=clear).pack(side="left",padx=6)
         load()
         return window
-    def checklist_window(row,parent):
+    def checklist_window(row,parent,*,smoke=False):
         initial=context_for(row)
         def current_context():
             if stop.is_set():
@@ -809,6 +809,17 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Reload",command=reload).pack(side="left",padx=8)
         tree.bind("<<TreeviewSelect>>",select)
         reload()
+        if smoke:
+            if data is None or not tasks:
+                raise RuntimeError("checklist GUI failed to load")
+            state.set(labels["evidence_noted"])
+            reference.set("Synthetic GUI smoke reference")
+            save()
+            if data["evidence_noted"]!=1:
+                raise RuntimeError("checklist GUI failed to save")
+            reload()
+            if data is None or data["evidence_noted"]!=1:
+                raise RuntimeError("checklist GUI failed to reload")
         return window
     def browse_leads():
         window=tk.Toplevel(root)
@@ -1010,11 +1021,11 @@ def main(*, data_directory=None, gui_smoke=False):
         todo_fixture=dict(sample_lead,retrieved_at=stamp.isoformat(),execution_eligible=False,
             external_authority=False,cash_exposure=None,
             blockers=["SYNTHETIC_FIXTURE","CASH_EXPOSURE_UNKNOWN","OWNER_APPROVAL_REQUIRED"])
-        with LeadStore(directory / "scout-leads.sqlite3") as store:
-            store.record(dict(format="nexus-sam-research-v1",returned=1,leads=[todo_fixture],
+        with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
+            fixture_store.record(dict(format="nexus-sam-research-v1",returned=1,leads=[todo_fixture],
                 truncated=False,page_sha256=["0"*64]),now=stamp,halted=False)
-            todo_row=store.browse(now=stamp,source="sam",halted=False)["leads"][0]
-        todo_window=checklist_window(todo_row,root)
+            todo_row=fixture_store.browse(now=stamp,source="sam",halted=False)["leads"][0]
+        todo_window=checklist_window(todo_row,root,smoke=True)
         root.update_idletasks()
         root.update()
         todo_window.destroy()
