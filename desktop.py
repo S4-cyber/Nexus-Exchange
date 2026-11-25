@@ -11,6 +11,7 @@ from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
+from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
@@ -713,6 +714,113 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Clear profile",command=clear).pack(side="left",padx=6)
         load()
         return window
+    def checklist_window(row,parent,*,smoke=False):
+        initial=context_for(row)
+        def current_context():
+            if stop.is_set():
+                raise PermissionError("HALTED")
+            with ProfileStore(directory / "owner-profile.sqlite3") as profiles:
+                profile=profiles.load(halted=stop.is_set())
+            with LeadStore(directory / "scout-leads.sqlite3") as leads:
+                result=leads.browse(now=datetime.now(timezone.utc),source=initial["source"],
+                    lead_key=initial["lead_key"],profile=profile,limit=1,halted=stop.is_set())
+            if not result["leads"] or context_for(result["leads"][0])!=initial:
+                raise ValueError("Observation or profile changed. Refresh Scout history.")
+            return initial
+        current_context()
+        window=tk.Toplevel(parent)
+        window.title("Nexus Exchange | Persistent To Do")
+        window.geometry("1000x720")
+        ttk.Label(window,text="TO DO — Owner review notes",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(window,text=row["title"],wraplength=940).pack(padx=12)
+        ttk.Label(window,text="Evidence noted means an owner assertion, NOT verification or authorization.",
+            wraplength=940).pack(pady=4)
+        summary=ttk.Label(window)
+        summary.pack()
+        tree=ttk.Treeview(window,columns=("instruction","state"),show="headings",height=9)
+        tree.heading("instruction",text="Required check")
+        tree.heading("state",text="Owner review state")
+        tree.column("instruction",width=730,anchor="w")
+        tree.column("state",width=180,anchor="w")
+        tree.pack(fill="x",padx=12,pady=8)
+        instruction=ttk.Label(window,wraplength=940,justify="left")
+        instruction.pack(fill="x",padx=12,pady=4)
+        editor=ttk.Frame(window)
+        editor.pack(fill="x",padx=12,pady=8)
+        labels={"pending":"Pending","needs_followup":"Needs follow-up","evidence_noted":"Evidence noted"}
+        values={v:k for k,v in labels.items()}
+        state=tk.StringVar(value=labels["pending"])
+        reference=tk.StringVar(value="")
+        ttk.Label(editor,text="State").grid(row=0,column=0,sticky="w")
+        ttk.Combobox(editor,textvariable=state,values=list(labels.values()),state="readonly",width=22).grid(row=0,column=1,sticky="w")
+        ttk.Label(editor,text="Evidence reference (no credentials or personal data)").grid(row=1,column=0,sticky="w",pady=6)
+        ttk.Entry(editor,textvariable=reference).grid(row=1,column=1,sticky="ew",padx=8)
+        editor.columnconfigure(1,weight=1)
+        message=ttk.Label(window,wraplength=940,justify="left")
+        message.pack(fill="x",padx=12,pady=6)
+        data=None
+        tasks={}
+        def select(event=None):
+            selection=tree.selection()
+            task=tasks.get(selection[0]) if selection else None
+            if task:
+                instruction.configure(text=task["instruction"])
+                state.set(labels[task["state"]])
+                reference.set(task["reference"])
+        def populate(result,selected=None):
+            nonlocal data
+            data=result
+            tasks.clear()
+            for item in tree.get_children():
+                tree.delete(item)
+            for task in result["tasks"]:
+                tasks[task["key"]]=task
+                tree.insert("","end",iid=task["key"],values=(task["instruction"],labels[task["state"]]))
+            summary.configure(text=f"{result['evidence_noted']} / {result['total']} evidence references noted — independent verification pending")
+            if tasks:
+                tree.selection_set(selected if selected in tasks else next(iter(tasks)))
+                select()
+        def reload():
+            nonlocal data
+            data=None
+            try:
+                with ChecklistStore(directory / "scout-todo.sqlite3") as store:
+                    populate(store.load(current_context(),halted=stop.is_set()))
+                message.configure(text="Local review notes loaded.")
+            except Exception:
+                message.configure(text="Unable to load current context. Refresh Scout history or resume.")
+        def save():
+            selection=tree.selection()
+            if not selection or data is None:
+                return
+            try:
+                with ChecklistStore(directory / "scout-todo.sqlite3") as store:
+                    result=store.save(current_context(),selection[0],values[state.get()],reference.get(),
+                        now=datetime.now(timezone.utc),expected_revision=data["revision"],halted=stop.is_set())
+                populate(result,selection[0])
+                message.configure(text="Saved locally. No commercial authority granted.")
+            except (ValueError,PermissionError) as exc:
+                message.configure(text=str(exc))
+            except Exception:
+                message.configure(text="Save failed. Reload before retrying.")
+        buttons=ttk.Frame(window)
+        buttons.pack(pady=6)
+        ttk.Button(buttons,text="Save selected task",command=save).pack(side="left")
+        ttk.Button(buttons,text="Reload",command=reload).pack(side="left",padx=8)
+        tree.bind("<<TreeviewSelect>>",select)
+        reload()
+        if smoke:
+            if data is None or not tasks:
+                raise RuntimeError("checklist GUI failed to load")
+            state.set(labels["evidence_noted"])
+            reference.set("Synthetic GUI smoke reference")
+            save()
+            if data["evidence_noted"]!=1:
+                raise RuntimeError("checklist GUI failed to save")
+            reload()
+            if data is None or data["evidence_noted"]!=1:
+                raise RuntimeError("checklist GUI failed to reload")
+        return window
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
@@ -806,6 +914,16 @@ def main(*, data_directory=None, gui_smoke=False):
         buttons=ttk.Frame(window)
         buttons.pack(pady=6)
         ttk.Button(buttons,text="Open official notice",command=open_selected).pack(side="left")
+        def review_tasks():
+            row=selected()
+            if row is not None:
+                try:
+                    checklist_window(row,window)
+                except (ValueError,PermissionError):
+                    write("Checklist context changed or halted. Refresh history.")
+                except Exception:
+                    write("Checklist unavailable.")
+        ttk.Button(buttons,text="Review To Do",command=review_tasks).pack(side="left",padx=5)
         ttk.Button(buttons,text="Export history JSON",command=export).pack(side="left",padx=5)
         ttk.Button(buttons,text="Owner profile",command=owner_profile_window).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
@@ -898,8 +1016,19 @@ def main(*, data_directory=None, gui_smoke=False):
             source_url=award_url("CONT_AWD_SYNTHETIC_9700_-NONE-_-NONE-"),title="Synthetic prime award")
         spending_window=show_source_results(dict(format="nexus-usaspending-research-v1",returned=1,
             requests=0,leads=[spending_sample],truncated=False))
+        # Populate a synthetic local history row for the checklist smoke.
+        stamp=datetime.now(timezone.utc)
+        todo_fixture=dict(sample_lead,retrieved_at=stamp.isoformat(),execution_eligible=False,
+            external_authority=False,cash_exposure=None,
+            blockers=["SYNTHETIC_FIXTURE","CASH_EXPOSURE_UNKNOWN","OWNER_APPROVAL_REQUIRED"])
+        with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
+            fixture_store.record(dict(format="nexus-sam-research-v1",returned=1,leads=[todo_fixture],
+                truncated=False,page_sha256=["0"*64]),now=stamp,halted=False)
+            todo_row=fixture_store.browse(now=stamp,source="sam",halted=False)["leads"][0]
+        todo_window=checklist_window(todo_row,root,smoke=True)
         root.update_idletasks()
         root.update()
+        todo_window.destroy()
         spending_window.destroy()
         profile_window.destroy()
         leads_window.destroy()

@@ -192,11 +192,13 @@ class LeadStore:
             raise
         return inserted
 
-    def browse(self,*,now,source=None,query="",limit=100,profile=None,halted=None):
+    def browse(self,*,now,source=None,query="",limit=100,profile=None,lead_key=None,halted=None):
         _permit(halted)
         now=_now(now)
         if source is not None and (type(source) is not str or source not in {v[0] for v in SOURCES.values()}):
             raise ValueError("invalid source filter")
+        if lead_key is not None and (source is None or type(lead_key) is not str or not re.fullmatch("[0-9a-f]{64}",lead_key)):
+            raise ValueError("exact lookup requires source and valid lead key")
         if type(query) is not str or len(query)>120 or any(ord(c)<32 for c in query):
             raise ValueError("invalid search query")
         if type(limit) is not int or not 1<=limit<=100:
@@ -229,6 +231,8 @@ class LeadStore:
         for p in latest.values():
             if source is not None and p["source"]!=source:
                 continue
+            if lead_key is not None and p["key"]!=lead_key:
+                continue
             if needle not in " ".join((p["title"],p["notice_id"],p["source"])).casefold():
                 continue
             reasons=list(p["blockers"])+["HISTORICAL_OBSERVATION_REVALIDATION_REQUIRED"]
@@ -246,7 +250,7 @@ class LeadStore:
                     reasons.append("LATER_UK_EVENT_IN_ARCHIVE")
                 elif uk_ties[p["ocid"]]>1:
                     reasons.append("AMBIGUOUS_UK_EVENT_IN_ARCHIVE")
-            output.append(dict(p,blockers=list(dict.fromkeys(reasons)),research_candidate=False,
+            output.append(dict(p,observation_sha256=_digest(_json(p)),blockers=list(dict.fromkeys(reasons)),research_candidate=False,
                 execution_eligible=False,external_authority=False,cash_exposure=None,
                 todo=[dict(key=k,instruction=t,status="needs independent evidence") for k,t in (CONTRACTOR_TASKS if p["source"]=="usaspending" else CHECKS)]))
         if profile is not None:
