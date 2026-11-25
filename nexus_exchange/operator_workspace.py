@@ -273,6 +273,17 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
     for label,callback in (('Preview draft',prepare),('Save immutable draft',save),('Refresh saved drafts',refresh)):
         ttk.Button(buttons,text=label,command=callback).pack(side='left',padx=4)
     ack_button=ttk.Button(buttons,text='Acknowledge selected locally',command=acknowledge,state='disabled'); ack_button.pack(side='left',padx=4)
+    from .correspondence_workspace import CorrespondenceWorkspace, open_correspondence_window
+    def correspondence():
+        try:
+            workspace._permit()
+            key=displayed
+            if key is None or tree.selection()!=(key,) or records[key]['supplier_scope_pinned'] is not True:
+                raise ValueError('select a saved scoped draft')
+            record=workspace.history(key)
+            return open_correspondence_window(window,CorrespondenceWorkspace(workspace,record['draft'],fields()))
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc: error(exc)
+    ttk.Button(buttons,text='Local correspondence',command=correspondence).pack(side='left',padx=4)
     tree.bind('<<TreeviewSelect>>',display)
     window.bind('<Destroy>',destroyed,add='+')
     for var in (*values.values(),region): var.trace_add('write',changed)
@@ -295,4 +306,6 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
         reviewed=acknowledge(smoke_confirm=True)
         if reviewed is None or reviewed['state']!='LOCALLY_ACKNOWLEDGED_DRAFT_ONLY' or reviewed['send_enabled']:
             raise RuntimeError('Operator GUI acknowledgment boundary failed')
+        child=open_correspondence_window(window,CorrespondenceWorkspace(workspace,reviewed['draft'],fields()),smoke=True)
+        child.destroy()
     return window
