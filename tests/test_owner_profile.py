@@ -5,7 +5,7 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock
-from nexus_exchange.owner_profile import (ProfileStore,normalize_profile,profile_revision,
+from nexus_exchange.owner_profile import (ProfileChangedError,ProfileStore,normalize_profile,profile_revision,
     assess_profile,reported_codes)
 from nexus_exchange.lead_store import LeadStore
 from test_lead_store import reports,NOW,OPTS
@@ -34,6 +34,22 @@ class ProfileTests(unittest.TestCase):
                     store.load(halted=False)
                 store.clear(halted=False)
                 self.assertIsNone(store.load(halted=False))
+
+    def test_two_editors_preserve_newer_preferences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "owner.sqlite3"
+            with ProfileStore(path) as first, ProfileStore(path) as second:
+                initial = first.save(profile(), halted=False, expected_revision=None)
+                with self.assertRaises(ProfileChangedError):
+                    second.save(profile(hours_per_week=2), halted=False, expected_revision=None)
+                updated = first.save(profile(hours_per_week=8), halted=False, expected_revision=initial)
+                with self.assertRaises(ProfileChangedError):
+                    second.clear(halted=False, expected_revision=initial)
+                with self.assertRaises(ProfileChangedError):
+                    second.save(profile(), halted=False, expected_revision=initial)
+                self.assertEqual(second.load(halted=False)["hours_per_week"], 8)
+                second.clear(halted=False, expected_revision=updated)
+                self.assertIsNone(first.load(halted=False))
 
     def test_profile_strict_and_no_authority_fields(self):
         for changes in (dict(mode="other"),dict(budget="1"),dict(hours_per_week=True),
