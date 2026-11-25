@@ -87,3 +87,16 @@ local sessions, not a hostile administrator or a replaced/restored database.
 The fixed synthetic fixture remains the only worker. Four isolated SQLite
 marker tests passed locally on Python 3.13; runtime integration and full
 regression require hosted verification (local checkout DNS unavailable).
+
+## Desktop shutdown integration candidate (GRI-7 / GRI-10)
+
+The desktop busy predicate includes an owner-held advisory reservation even if
+its child has finished. Window close asserts halt, drains the existing Scout
+and advisory supervisors, and only then releases local runtime ownership. An
+unresolved launch marker is shown as a startup hold; restart is not clearance.
+The GUI/frozen smoke now starts a second explicitly approved synthetic attempt
+immediately before normal close, reopens the same temporary data directory and
+requires exactly one recovered interrupted attempt, no published result, and no
+remaining cleanup marker. No new user-facing model launch control or authority.
+Full local checkout remains DNS-blocked; these GUI changes require exact-head
+hosted Windows verification and independent review.

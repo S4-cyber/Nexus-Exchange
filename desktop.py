@@ -152,7 +152,8 @@ def main(*, data_directory=None, gui_smoke=False):
     scenario_report = None
     latest_results_window = None
     def busy():
-        return future is not None or stop.browser_process_pending()
+        return (future is not None or stop.browser_process_pending()
+                or stop.advisory_process_pending())
     def close():
         if activity_tick is not None:
             root.after_cancel(activity_tick)
@@ -162,6 +163,7 @@ def main(*, data_directory=None, gui_smoke=False):
             pass  # In-memory halt is asserted even when persistence fails.
         executor.shutdown(wait=True, cancel_futures=True)
         stop.drain_browser_process()
+        stop.drain_advisory_process()
         try:
             stop.close()
         finally:
@@ -466,7 +468,7 @@ def main(*, data_directory=None, gui_smoke=False):
         try:
             result=stop.recover_advisory()
         except Exception:
-            halt_status.configure(text="HALTED — advisory recovery failed; restart and review storage.")
+            halt_status.configure(text="HALTED — advisory recovery blocked. Review storage and worker cleanup; do not delete local data.")
             return None
         halt_status.configure(text=f"HALTED — {result['recovered']} advisory attempts reconciled, "
             f"{result['escalated']} escalated; Resume offline explicitly.")
@@ -1711,7 +1713,10 @@ def main(*, data_directory=None, gui_smoke=False):
     # Advanced manual tools can be enabled separately in Settings.
     halt_status = ttk.Label(chrome.safety, text="Ready · Select Engage on Home.")
     halt_status.pack(fill="x", pady=(2, 0))
-    if stop.recovered_count or stop.council_recovered_count or stop.advisory_recovered_count:
+    if stop.status()["advisory_cleanup_unconfirmed"]:
+        halt_status.configure(text="HALTED — previous advisory worker cleanup is unconfirmed. "
+                              "Do not delete local data or resume; independent recovery review is required.")
+    elif stop.recovered_count or stop.council_recovered_count or stop.advisory_recovered_count:
         halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks, "
                               f"{stop.council_recovered_count} Council and {stop.advisory_recovered_count} advisory attempts. Select Engage on Home.")
     chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
@@ -2172,7 +2177,25 @@ def main(*, data_directory=None, gui_smoke=False):
         trade_window.destroy()
         routes_window.destroy()
         results_window.destroy()
-        close()
+        # Start an explicitly approved synthetic reservation immediately before
+        # closing. Even an already-finished child is busy until owner collection.
+        shutdown_ticket=stop.start_advisory_process(key,confirmed=True)
+        try:
+            if (shutdown_ticket["attempt"]!=2 or not busy() or not council_blocked()
+                    or not stop.status()["advisory_cleanup_unconfirmed"]):
+                raise RuntimeError("Desktop did not interlock reserved advisory worker")
+        finally:
+            close()
+        # The normal close path must halt and drain before releasing ownership.
+        # Startup may reconcile the interrupted attempt, never publish its result.
+        with RuntimeGuard(directory) as restarted:
+            if (not restarted.is_set() or restarted.status()["advisory_cleanup_unconfirmed"]
+                    or restarted.advisory_recovered_count!=1):
+                raise RuntimeError("Desktop advisory shutdown did not recover safely")
+            with AdvisoryAttemptStore(directory/DB_NAME,existing_only=True) as ledger:
+                state=ledger.status(key,halted=False)
+                if state["state"]!="INTERRUPTED" or state["attempts_used"]!=2:
+                    raise RuntimeError("Desktop shutdown replayed or lost an advisory attempt")
         return
     root.mainloop()
 
