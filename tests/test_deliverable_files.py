@@ -60,7 +60,7 @@ class DeliverableFilesTests(unittest.TestCase):
 
     def test_expired_source_blocks_export_even_with_stable_scope(self):
         self.preview()
-        self.fixture.fixture.now+=timedelta(days=2)
+        self.fixture.now+=timedelta(days=2)
         with self.assertRaises(ValueError):
             self.workspace.export(self.dest,confirmed=True)
         self.assertFalse(self.dest.exists())
