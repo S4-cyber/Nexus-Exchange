@@ -10,6 +10,7 @@ from functools import partial
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
+from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
@@ -637,12 +638,87 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Global trade catalog",command=trade_catalog).pack(side="left")
         refresh_plan()
         return window
+    def owner_profile_window():
+        window=tk.Toplevel(root)
+        window.title("Nexus Exchange | Owner capability profile")
+        window.geometry("880x690")
+        ttk.Label(window,text="OWNER — Declared research capabilities",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(window,text="Local planning only. No identity verification, credentials, bank details or authority.",wraplength=820).pack(pady=6)
+        form=ttk.Frame(window)
+        form.pack(fill="x",padx=20,pady=12)
+        values={"mode":tk.StringVar(value="genesis"),"budget":tk.StringVar(value="0"),
+            "hours_per_week":tk.StringVar(value="0"),"naics":tk.StringVar(value=""),
+            "cpv":tk.StringVar(value=""),"keywords":tk.StringVar(value="")}
+        fields=(("Operating pathway","mode"),("USD planning budget (not balance)","budget"),
+            ("Declared weekly availability, hours","hours_per_week"),("NAICS six-digit codes, comma separated","naics"),
+            ("CPV prefixes, comma separated","cpv"),("Service keywords, comma separated","keywords"))
+        for i,(label,key) in enumerate(fields):
+            ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=5)
+            widget=(ttk.Combobox(form,textvariable=values[key],values=["genesis","catalyst"],state="readonly")
+                if key=="mode" else ttk.Entry(form,textvariable=values[key],width=42))
+            widget.grid(row=i,column=1,sticky="ew",padx=8)
+        form.columnconfigure(1,weight=1)
+        ttk.Label(window,text="Only declare services you can actually deliver. Examples: NAICS 541511, CPV 72, keyword software. No private or sensitive information.",wraplength=810).pack(padx=20,pady=8)
+        source_box=ttk.LabelFrame(window,text="Sources to prioritize")
+        source_box.pack(fill="x",padx=20,pady=8)
+        flags={source:tk.BooleanVar(value=False) for source in PROFILE_SOURCES}
+        for source,flag in flags.items():
+            ttk.Checkbutton(source_box,text=source,variable=flag).pack(side="left",padx=7,pady=8)
+        message=ttk.Label(window,wraplength=810)
+        message.pack(fill="x",padx=20,pady=8)
+        def split(key):
+            return [v.strip() for v in values[key].get().split(",") if v.strip()]
+        def populate(profile):
+            if profile is None:
+                profile=dict(mode="genesis",budget="0",hours_per_week=0,naics=[],cpv=[],keywords=[],sources=[])
+            for key,var in values.items():
+                v=profile[key]
+                var.set(", ".join(v) if type(v) is list else str(v))
+            for source,flag in flags.items():
+                flag.set(source in profile["sources"])
+        def load():
+            try:
+                with ProfileStore(directory / "owner-profile.sqlite3") as store:
+                    profile=store.load(halted=stop.is_set())
+                populate(profile)
+                message.configure(text="Saved profile loaded." if profile else "No profile saved. Defaults grant no permissions.")
+            except (ValueError,PermissionError,OSError):
+                message.configure(text="Profile unavailable or research halted.")
+        def save():
+            if stop.is_set():
+                message.configure(text="Research halted.")
+                return
+            try:
+                profile=dict(mode=values["mode"].get(),budget=values["budget"].get(),
+                    hours_per_week=int(values["hours_per_week"].get()),
+                    naics=split("naics"),cpv=split("cpv"),keywords=[x.casefold() for x in split("keywords")],
+                    sources=[s for s,v in flags.items() if v.get()])
+                with ProfileStore(directory / "owner-profile.sqlite3") as store:
+                    revision=store.save(profile,halted=stop.is_set())
+                message.configure(text="Saved declared profile "+revision[:12]+". Refresh Scout history to apply priorities.")
+            except (ValueError,PermissionError,OSError):
+                message.configure(text="Invalid profile. Check codes, hours, budget and duplicate entries.")
+        def clear():
+            if stop.is_set():
+                message.configure(text="Research halted.")
+                return
+            if messagebox.askyesno("Clear local profile","Remove saved planning preferences?",parent=window):
+                with ProfileStore(directory / "owner-profile.sqlite3") as store:
+                    store.clear(halted=stop.is_set())
+                load()
+        buttons=ttk.Frame(window)
+        buttons.pack(pady=10)
+        ttk.Button(buttons,text="Save local profile",command=save).pack(side="left",padx=6)
+        ttk.Button(buttons,text="Reload",command=load).pack(side="left",padx=6)
+        ttk.Button(buttons,text="Clear profile",command=clear).pack(side="left",padx=6)
+        load()
+        return window
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
         window.geometry("1050x720")
         ttk.Label(window,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(window,text="Saved observations only. Every lead requires current verification.").pack()
+        ttk.Label(window,text="Saved observations only. Owner profile changes review order, never eligibility.").pack()
         filters=ttk.Frame(window)
         filters.pack(fill="x",padx=12,pady=8)
         source=tk.StringVar(value="All")
@@ -652,9 +728,9 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Entry(filters,textvariable=search,width=40).pack(side="left",padx=5)
         summary=ttk.Label(window)
         summary.pack()
-        tree=ttk.Treeview(window,columns=("source","title","retrieved","deadline"),show="headings",height=10)
+        tree=ttk.Treeview(window,columns=("source","title","fit","deadline"),show="headings",height=10)
         for col,label,width in (("source","Source",105),("title","Notice",420),
-                ("retrieved","Retrieved UTC",205),("deadline","Reported deadline",210)):
+                ("fit","Review priority",235),("deadline","Reported deadline",175)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=6)
@@ -675,6 +751,8 @@ def main(*, data_directory=None, gui_smoke=False):
             if row is not None:
                 write("\n".join([row["title"],row["source_url"],"Historical only; execution blocked.",
                     *(f"{k}: {v or 'Unknown'}" for k,v in row.get("award_metadata",{}).items()),
+                    "Retrieved: "+row["retrieved_at"],
+                    "Profile: "+row.get("profile_fit",{}).get("reason","No saved profile"),
                     "Verification blockers: "+", ".join(row["blockers"]),"","TO DO",
                     *("[ ] "+t["instruction"] for t in row["todo"])]))
         def reload():
@@ -684,14 +762,16 @@ def main(*, data_directory=None, gui_smoke=False):
             for item in tree.get_children():
                 tree.delete(item)
             try:
+                with ProfileStore(directory / "owner-profile.sqlite3") as profiles:
+                    profile=profiles.load(halted=stop.is_set())
                 with LeadStore(directory / "scout-leads.sqlite3") as store:
-                    report=store.browse(now=datetime.now(timezone.utc),
+                    report=store.browse(now=datetime.now(timezone.utc),profile=profile,
                         source=None if source.get()=="All" else source.get(),
                         query=search.get(),halted=stop.is_set())
                 for i,row in enumerate(report["leads"]):
                     rows[str(i)]=row
                     tree.insert("","end",iid=str(i),values=(row["source"],row["title"],
-                        row["retrieved_at"],row["deadline"] or row["earliest_deadline_date"] or "Unverified"))
+                        row.get("profile_fit",{}).get("reason","Unranked"),row["deadline"] or row["earliest_deadline_date"] or "Unverified"))
                 summary.configure(text=f"{report['returned']} shown / {report['matched']} matching historical notices")
                 if rows:
                     tree.selection_set("0")
@@ -727,6 +807,7 @@ def main(*, data_directory=None, gui_smoke=False):
         buttons.pack(pady=6)
         ttk.Button(buttons,text="Open official notice",command=open_selected).pack(side="left")
         ttk.Button(buttons,text="Export history JSON",command=export).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Owner profile",command=owner_profile_window).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -786,11 +867,13 @@ def main(*, data_directory=None, gui_smoke=False):
     exporter.pack(side="left")
     ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
+    ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
     if gui_smoke:
         window = browse_archive()
         leads_window = browse_leads()
+        profile_window = owner_profile_window()
         pathway_window = revenue_workspace()
         trade_window = trade_catalog()
         routes_window = trade_routes_window()
@@ -818,6 +901,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.update_idletasks()
         root.update()
         spending_window.destroy()
+        profile_window.destroy()
         leads_window.destroy()
         canada_window.destroy()
         fts_window.destroy()

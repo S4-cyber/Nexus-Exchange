@@ -214,3 +214,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - S03/R03/R05/E10–E12/E18/E20: bounded official prime-award search by NAICS and signed-date range; preserve contractor and award identity separately from active tenders, never award amounts as revenue. Native search, source-specific checklist and unified historical memory. Ten regression methods; CI/build pending at entry.
 - Reuse official USAspending API contract pinned 24290f79dbec0e07238cd4e890a9e3ef6044d984 (CC0). No upstream code copied. No actual provider request, paid service or commercial dispatch during development. Next: authorized live validation, subaward discovery, owner capability/profile and durable evidence tasks.
 - Prior unified lead memory head ac7c4184e3129579d7cbd5762d2bd4713679f4c1: 167 tests passed; Windows 45532680488 artifact 14985935006 passed. Main formal acceptance remains 0/42 pending consolidation/review.
+
+
+## Declared owner capabilities and Scout review ordering
+- R04/R05/R06/E20/E21/E33: local owner planning profile with explicit save/clear, source and availability preferences, NAICS/CPV/keyword matching, profile revision, source-backed classification retention and native ranked historical view. Ten new regression methods; exact-head CI and Windows build pending.
+- Every profile is self-declared, not identity, authority, bank balance or verified capability. Historical blockers and award intelligence are preserved. Existing stored records remain readable. Actual evidence-bound durable owner checklist completion, encrypted credential storage, verified entity linkage and executable zero-cash ranking remain pending.
+- Prior USAspending candidate f877bf70176d18f5009496ed7b6f9dde5bad13b3 passed 177 tests (45533021295) and Windows 45533021285, artifact 14986065268. No new dependencies. Main formal acceptance remains 0/42 pending consolidation.
