@@ -1,0 +1,10 @@
+# H08 / E25 — local correspondence thread contract
+
+Base: PR #58 exact head d0093cc04d96334e300647fc400719d5978594fa. Prior PR CI and Windows preview successful (45556986616 / 45556986619). This separate candidate addresses the commercial Operator backlog without changing the browser diagnostic runtime.
+
+- Exact RFQ v2 and canonical recipient declaration bind the thread; creation requires explicit local confirmation, fresh recipient observation, and Governor permission.
+- Three fixed event types: simulated reply, local evidence declaration, local follow-up draft. No send, delivery, authenticated reply, offer, payment, signature or collection event. All authority flags false.
+- At most 32 events; canonical UTC timestamps cannot regress; duplicate evidence references rejected; each event links its predecessor and scope. Expected head checked before append. Full chain rebuilt on read. No raw content, contact address, file path or attachment bytes accepted by the thread model.
+- This is an in-memory snapshot and validation contract; hashes are not authentication, caller can construct a new history, and expected-head checks do not provide durable concurrency or replay protection. No store, UI, runtime dispatch or provider integration claimed. Next: transactionally compare-and-append in existing-only scoped SQLite store, explicit evidence selection and native recipient/thread workspace, revocation and retention. No external actions.
+- Reuse: reviewed Operative journal blob 59ee08e7734347897b29af33603dffba783ec9ad (bounded offline result/payload integrity); no code copied or trading logic imported. Reviewed OCDS release schema at eb57a46e69efead6ae62144fe1b7cefc53d07ff2, ContactPoint and Document classification; preserve distinction between asserted organization contact and documentary evidence. No upstream dependency installed; full transitive audit/benchmark outstanding. No new spending.
+- Seven focused regression methods. Full local checkout blocked by GitHub DNS; coherent source/tests/docs submission together, hosted CI pending. No deliberate remote red. Formal main acceptance 0/42. H08/E25/E31 partial, E38 candidate coverage only.
