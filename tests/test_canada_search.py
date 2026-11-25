@@ -131,14 +131,19 @@ class CanadaTests(unittest.TestCase):
             self.evaluate(transport=transport,halt_check=Mock(side_effect=[False,True]))
 
     def test_fixed_origin_no_redirect(self):
-        with patch("nexus_exchange.canada_search.http.client.HTTPSConnection") as factory:
-            conn=factory.return_value
-            conn.getresponse.return_value.status=302
-            self.assertEqual(_request(),(302,b"",None))
-            factory.assert_called_once_with(HOST,443,timeout=15)
-            self.assertEqual(conn.request.call_args.args,("GET",PATH))
-            conn.request.assert_called_once()
-            conn.close.assert_called_once()
-        for bad in ("../bad","https://evil.example","a/b"):
+        from urllib.error import HTTPError
+        from nexus_exchange.public_feeds import NoRedirect
+        with patch("nexus_exchange.public_feeds.build_opener") as factory:
+            transport = factory.return_value.open
+            transport.side_effect = HTTPError("https://" + HOST, 302, "redirect", {}, None)
+            self.assertEqual(_request(), (302,b"",None))
+            request = transport.call_args.args[0]
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.full_url.split("?")[0], "https://" + HOST + PATH)
+            self.assertIsInstance(factory.call_args.args[0], NoRedirect)
+            self.assertIsNone(NoRedirect().redirect_request(request, None, 302, "", {}, "https://elsewhere.invalid"))
+            transport.assert_called_once()
+        self.assertEqual(notice_url("SSC-26-00035538:T"), "https://" + HOST + "/en/tender-opportunities")
+        for bad in ("SSC-26-00035538:../T", "../bad","https://evil.example","a/b"):
             with self.assertRaises(ValueError):
                 notice_url(bad)

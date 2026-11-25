@@ -154,16 +154,18 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(transport.call_count,1)
 
     def test_fixed_origin_and_no_redirect(self):
-        with patch("nexus_exchange.fts_search.http.client.HTTPSConnection") as factory:
-            conn=factory.return_value
-            conn.getresponse.return_value.status=302
-            self.assertEqual(_request(QUERY.parameters(NOW)),(302,b""))
-            factory.assert_called_once_with(HOST,443,timeout=10)
-            method,path=conn.request.call_args.args
-            self.assertEqual(method,"GET")
-            self.assertTrue(path.startswith(PATH+"?"))
-            conn.request.assert_called_once()
-            conn.close.assert_called_once()
+        from urllib.error import HTTPError
+        from nexus_exchange.public_feeds import NoRedirect
+        with patch("nexus_exchange.public_feeds.build_opener") as factory:
+            transport = factory.return_value.open
+            transport.side_effect = HTTPError("https://" + HOST, 302, "redirect", {}, None)
+            self.assertEqual(_request(QUERY.parameters(NOW)), (302,b""))
+            request = transport.call_args.args[0]
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.full_url.split("?")[0], "https://" + HOST + PATH)
+            self.assertIsInstance(factory.call_args.args[0], NoRedirect)
+            self.assertIsNone(NoRedirect().redirect_request(request, None, 302, "", {}, "https://elsewhere.invalid"))
+            transport.assert_called_once()
         for bad in ("../evil","https://evil.example","000000-2026"):
             with self.assertRaises(ValueError):
                 notice_url(bad)

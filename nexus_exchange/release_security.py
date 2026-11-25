@@ -119,6 +119,7 @@ def scan_source(path,raw):
                 allowed=imported=="http.client" and module in ADAPTERS
                 allowed=allowed or (imported=="webbrowser" and path=="desktop.py")
                 allowed = allowed or (imported == "http.client" and path == "nexus_exchange/account_providers.py")
+                allowed = allowed or (imported == "urllib.request" and path == "nexus_exchange/public_feeds.py")
                 allowed = allowed or (imported == "http.server" and path == "nexus_exchange/consent_callback.py")
                 if not allowed:
                     finding("NETWORK_IMPORT_OUTSIDE_REVIEWED_SURFACE",node.lineno)
