@@ -40,3 +40,20 @@ def project(events, page=1):
     return {"tasks": tuple(states[k] for k in selected.task_ids),
             "pages": selected.pages, "history": tuple(history),
             "successful_tasks": sum(v.state=="succeeded" for v in states.values())}
+
+
+def search_history(history, query=""):
+    """Return the newest 100 matching journal events and the total match count."""
+    query = query.strip().casefold()
+    if not query:
+        return list(reversed(history[-100:])), len(history)
+    visible = []
+    matches = 0
+    for event in reversed(history):
+        if not any(query in field.casefold() for field in
+                             (event.task_id, event.target, event.state, event.timestamp)):
+            continue
+        matches += 1
+        if len(visible) < 100:
+            visible.append(event)
+    return visible, matches
