@@ -16,6 +16,7 @@ from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
 from nexus_exchange.scenario_import import evaluate_scenario
 from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
+from nexus_exchange.sam_search import Query, search as search_sam, SearchError
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -82,7 +83,7 @@ def export_report(path, report):
 
 def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
@@ -186,7 +187,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 o=item.observation.opportunity
                 output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nHistorical observation; source assertions are unverified.\n")
         except Exception as exc:
-            output.insert("end",f"Screening failed: {type(exc).__name__}")
+            output.insert("end",f"Task failed: {str(exc) if type(exc) is SearchError else type(exc).__name__}")
         finally:
             refresh()
             output.configure(state="disabled")
@@ -225,7 +226,7 @@ def main(*, data_directory=None, gui_smoke=False):
         if scenario_report is None:
             return
         path = filedialog.asksaveasfilename(parent=root,defaultextension=".json",
-            filetypes=[("JSON","*.json")],initialfile="nexus-deal-report.json")
+            filetypes=[("JSON","*.json")],initialfile="nexus-report.json")
         if path:
             try:
                 export_report(path,scenario_report)
@@ -272,6 +273,11 @@ def main(*, data_directory=None, gui_smoke=False):
                     else "Blocked: "+", ".join(plan.reasons))+"\nExternal authority: none.")
             except (ValueError,PermissionError) as exc:
                 result.configure(text="Blocked: "+str(exc))
+        procurement_type = tk.StringVar(value="Combined synopsis/solicitation")
+        selector = ttk.Frame(window)
+        selector.pack(fill="x",padx=15,pady=4)
+        ttk.Label(selector,text="SAM notice type").pack(side="left")
+        ttk.Combobox(selector,textvariable=procurement_type,values=["Combined synopsis/solicitation","Solicitation"],state="readonly",width=32).pack(side="left",padx=8)
         def reset_checks(*unused):
             for flag in flags.values():
                 flag.set(False)
@@ -292,9 +298,40 @@ def main(*, data_directory=None, gui_smoke=False):
             var.trace_add("write",reset_checks)
         for flag in flags.values():
             flag.trace_add("write",lambda *unused:refresh_plan())
+        def run_sam():
+            if stop.is_set() or future is not None:
+                result.configure(text="Halted or busy. Resume or finish the current task first.")
+                return
+            if source.get()!="sam":
+                result.configure(text="Choose SAM as the official source first.")
+                return
+            title=simpledialog.askstring("SAM read-only search","Enter a public opportunity title keyword (no personal data).",parent=window)
+            if not title:
+                return
+            today=datetime.now(timezone.utc).date()
+            query=Query(today-timedelta(days=14),today,title,
+                "o" if procurement_type.get()=="Solicitation" else "k")
+            try:
+                query.parameters(datetime.now(timezone.utc))
+            except ValueError:
+                result.configure(text="Invalid search keyword.")
+                return
+            if not messagebox.askyesno("Authorize one SAM search",
+                    "Send this search to the official SAM.gov API? Up to 3 requests using your API quota. No bid, submission or spending.\n\nKeyword: "+title,parent=window):
+                return
+            key=simpledialog.askstring("SAM API key","Enter your own SAM public API key for this search. It will not be saved.",show="*",parent=window)
+            if not key:
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_sam(query,key,approved=True,halt_check=stop.is_set)
+            run(work,target="SAM read-only notice discovery",scenario=True)
+            result.configure(text="Search requested. See the main dashboard for results.")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
+        ttk.Button(buttons,text="Search SAM (read only)",command=run_sam).pack(side="left")
         ttk.Button(buttons,text="Refresh checklist",command=refresh_plan).pack(side="left")
         refresh_plan()
         return window
@@ -350,7 +387,7 @@ def main(*, data_directory=None, gui_smoke=False):
     simulation_controls.pack(pady=5)
     simulator = ttk.Button(simulation_controls,text="Evaluate deal scenario JSON",command=import_scenario)
     simulator.pack(side="left")
-    exporter = ttk.Button(simulation_controls,text="Export deal report",command=export_scenario,state="disabled")
+    exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
     exporter.pack(side="left")
     ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
