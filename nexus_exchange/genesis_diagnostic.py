@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 
 from . import sam_search
 from .cash_feasibility import COSTS
+from .database_backup import create_backup, restore_backup, verify_backup
 from .checklist_store import context_for
 from .csv_workspace import CsvWorkspace
 from .finance_workspace import FinanceWorkspace
@@ -96,7 +97,9 @@ def run_diagnostic(*,confirmed=None):
               key_column="id",expected_rows=2)
 
     with TemporaryDirectory(prefix="nexus-genesis-owned-") as scratch:
-        directory=Path(scratch).resolve()
+        root=Path(scratch).resolve()
+        directory=root/"original"
+        directory.mkdir()
         source=directory/"owned-input.csv"
         output=directory/"owned-output.csv"
         source.write_bytes(_RAW)
@@ -202,8 +205,18 @@ def run_diagnostic(*,confirmed=None):
             _denied(lambda:guard.simulated_invoice_action("find",plan_id),PermissionError)
             pass_check("EMERGENCY_HALT_DENIES")
 
+        backup=root/"backup"
+        restored=root/"restored"
+        manifest=create_backup(directory,backup,confirmed=True)
+        recovery=restore_backup(backup,restored,confirmed=True)
+        pass_check("VERIFIED_BACKUP_RESTORE",verify_backup(backup)==manifest
+            and recovery["restored_files"]==len(manifest["files"])
+            and recovery["runtime_state"]["state"]=="halted"
+            and recovery["automatic_resume"] is False
+            and not (restored/"owned-input.csv").exists()
+            and not (restored/"owned-output.csv").exists())
         now[0]+=timedelta(seconds=1)
-        with RuntimeGuard(directory,clock=clock) as reopened:
+        with RuntimeGuard(restored,clock=clock) as reopened:
             pass_check("RESTART_REQUIRES_RESUME",reopened.is_set())
             _denied(lambda:reopened.simulated_invoice_action("find",plan_id),PermissionError)
             reopened.resume()
@@ -235,6 +248,7 @@ def run_diagnostic(*,confirmed=None):
                 council_attempts=history["attempts_used"],
                 council_report_sha256=reviewed["report_sha256"],
                 assumption_references=reviewed["snapshot"]["referenced"],
+                restored_database_count=recovery["restored_files"],
                 independently_verified_assumptions=0,artifact_sha256=preview["report"]["artifact_sha256"],
                 qa_report_sha256=preview["report"]["report_sha256"],
                 obligation_id=obligation["obligation_id"],obligation_head_sha256=obligation["head_sha256"],

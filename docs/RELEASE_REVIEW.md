@@ -129,3 +129,8 @@ production files or close the historical branches as part of this draft.
 Seven new bundle consistency tests; no new application runtime dependency.
 Hosted exact-head CI and packaged smoke must be inspected before claims.
 No local checkout run claimed.
+
+
+## Database backup and recovery drill candidate
+
+Use the source CLI `python -m nexus_exchange.database_backup backup <closed-data-dir> <new-backup-dir> --confirm-offline`, `verify <backup-dir>`, then `restore <backup-dir> <new-test-dir> --confirm-offline` with absolute local paths. This is database-only; manually retain original evidence and exported deliverables separately. The implementation requires a clean shutdown and acquires the existing cooperating runtime lock, denies sidecars and unknown database-like names, validates SQLite integrity and known table presence, hashes/copies bounded files, verifies the exact manifest, never overwrites, and restores only into a new directory. Backups are NOT encrypted; store them on access-controlled encrypted storage. No live instance, production restore, user data transfer or automatic resume. A malicious local process or rewritten manifest can defeat local consistency checks. The owned Genesis diagnostic now reopens a restored copy and verifies Council, obligation and receipt history before modeled settlement. This is supporting E18/E19/E31/E37/E40 evidence, not independent acceptance. See docs/DATABASE_BACKUP.md.
