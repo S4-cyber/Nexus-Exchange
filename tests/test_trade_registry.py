@@ -58,6 +58,7 @@ class TradeRegistryTests(unittest.TestCase):
         self.assertEqual(get_source("census").access,"key_api")
         self.assertEqual(get_source("companies_house").access,"key_api")
         self.assertEqual(get_source("sec_edgar").kind,"compliance")
+        self.assertIn("SEC EDGAR CIK metadata adapter",readiness("sec_edgar",halted=False)["adapter_status"])
         self.assertIn("Frankfurter v2",readiness("frankfurter",halted=False)["adapter_status"])
         self.assertTrue(all(s.kind!="earned" for s in catalog(query="reference-rate",halted=False)))
 

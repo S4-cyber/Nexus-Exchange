@@ -470,6 +470,7 @@ def readiness(source_id, *, halted=None):
                           "UK FTS release adapter; live pilot pending" if source.id=="uk_tender" else
                           "CanadaBuys CSV adapter; live pilot pending" if source.id=="canada" else
                           "USAspending award intelligence adapter; live pilot pending" if source.id=="usaspending" else
-                          "Frankfurter v2 reference FX adapter; live pilot pending" if source.id=="frankfurter" else "catalog only"),
+                          "Frankfurter v2 reference FX adapter; live pilot pending" if source.id=="frankfurter" else
+                          "SEC EDGAR CIK metadata adapter; declared business contact and live pilot pending" if source.id=="sec_edgar" else "catalog only"),
         "income_kind":source.kind,"cash_exposure":None,"zero_capital_verified":False,
         "external_authority":False,"execution_eligible":False}
