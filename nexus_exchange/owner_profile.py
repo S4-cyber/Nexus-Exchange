@@ -184,6 +184,11 @@ def assess_profile(profile,lead):
         profile_revision=profile_revision(profile),declared_only=True,execution_eligible=False,
         external_authority=False,cash_exposure=None)
 
+PROFILE_TASKS=(
+    ("capability_profile","Verify actual requirements against declared services, skill and availability."),
+    ("capital_profile","Confirm actual cash exposure and payment terms against the planning pathway; no spending authorized."),
+)
+
 def rank_history(profile,leads):
     profile=normalize_profile(profile)
     if type(leads) is not list or len(leads)>10000:
@@ -191,11 +196,8 @@ def rank_history(profile,leads):
     rows=[]
     for lead in leads:
         fit=assess_profile(profile,lead)
-        tasks=list(lead["todo"])+[
-            dict(key="capability_profile",instruction="Verify actual requirements against declared services, skill and availability.",
-                status="needs independent evidence"),
-            dict(key="capital_profile",instruction="Confirm actual cash exposure and payment terms against the planning pathway; no spending authorized.",
-                status="needs independent evidence")]
+        tasks=list(lead["todo"])+[dict(key=k,instruction=t,status="needs independent evidence")
+            for k,t in PROFILE_TASKS]
         rows.append(dict(lead,profile_fit=fit,todo=tasks))
     # Stable sorting preserves existing newest-first ordering within each tier.
     rows.sort(key=lambda row:row["profile_fit"]["priority"])
