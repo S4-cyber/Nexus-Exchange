@@ -14,3 +14,10 @@ Nexus Operative read-only nexus/risk_gate.py at 6a1df5c2003ae6fa3f3536f5cdd72ab7
 
 ## Limits
 Local trusted directory and cooperating app versions only; not authentication, a remote/multi-tenant lock, malicious local database owner or protection from older/direct library callers. Synchronous bounded scans may require performance benchmarking on large archives. No live commercial actions, reviewer authentication, independent factual verification, new runtime dependencies, paid infrastructure or release claim. Main formal acceptance 0/42. Native Council dashboard remains separate.
+
+## Observed verification
+- Test-first ff224c4a7c6cd3f9eeb06ba942fdea819aed53de, run 45547852497: 393 tests, three failures and nine errors for missing Council recovery integration.
+- Ledger maintenance fc470465a3a972f68dbdd789bc3cdc2fa5c88c67 and RuntimeGuard integration 8a93a69b57b8cc23da952bfa04cc447f8a956bfb (45547961733, both unit jobs passed).
+- Desktop recovery control and smoke integration 998481d201dc396793e65cf60db8102064274d5a, run 45547992818: 393 tests on both Python versions.
+- Expanded code/test head 46ef0db4cdf888606c83a70cbe18b4f70d34eee8 passed 396/396 on Python 3.10 and 3.13 (45548045184, jobs 138982269264 and 138982269693). Fifteen new tests including actual child-process crash, all-task rollback, prior v2 audit preservation, unexpected review failure halt and orphaned audit rejection.
+- Draft PR #48. New Windows source/frozen smoke and exact final-head CI remain distinct verification steps. No formal gate accepted on main.
