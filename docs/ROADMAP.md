@@ -170,3 +170,11 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R01/R02 candidate: native Scout pathway planning and checklist UI, fixed official SAM/SBA/Grants source links, cost/authority gates, seven new regression tests. User click opens default browser; embedded browser and automated acquisition remain pending. No bank connected or transfer enabled. Checkboxes are assertions only, not permissions.
 - R03 next: official SAM public API adapter with secure key handling, quotas, bounded pagination, read-only authorization and explicit source verification. R04/R05: secure owner profile and persistent lead-specific evidence/checklists.
 - Prior consolidated baseline 6c8f5e5aa1cf971c7a9fc7235d788b3a1e6b3ef4 passed Windows run 45529112749 and unit run 45529126511, still draft PR #21. Main acceptance remains 0/42; no new formal gate acceptance.
+
+
+## SAM read-only source pilot candidate
+- R03/E10–E12: official SAM v2 search transport fixed to HTTPS GET, explicit owner consent and cooperative halt, 3-request cap including a single transient retry, 25 rows/page, paced pagination, strict bounded JSON validation, no redirect or contact-data retention, sanitized errors and key-echo rejection. Native masked per-search key prompt; key not saved. Live request not yet tested/authorized. No automatic polling or durable quota enforcement.
+- R05/R06/E14/E33: per-notice evidence To Do and research-only deadline/type ordering; no execution eligibility or known cash exposure. Native results window and export; evidence persistence and independent validation remain pending.
+- R07: explicit official notice browser link, no embedded browser yet. No live application submission, bid, outreach, funding or payment capability.
+- E38: 12 new SAM test methods. Observed 110/110 tests on Python 3.13 and both Python jobs successful at 610634d5fd135750000e86eba4c7b445b8c1c554, run 45530331128. GUI results and exact-head build pending at documentation time.
+- Prior revenue pathways exact-head Windows build 45529794634 succeeded, artifact 14983629079. Main formal acceptance remains 0/42. Next: verified owner profile and secure local credential handling, persistent evidence checklists, SAM live pilot only with explicit consent and own key, then approved automated read-only cadence.

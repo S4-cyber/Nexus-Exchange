@@ -16,6 +16,7 @@ from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
 from nexus_exchange.scenario_import import evaluate_scenario
 from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
+from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -82,7 +83,7 @@ def export_report(path, report):
 
 def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
@@ -180,13 +181,17 @@ def main(*, data_directory=None, gui_smoke=False):
             result = future.result()
             if type(result) is dict:
                 scenario_report = result
-                output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
+                if result.get("format")=="nexus-sam-research-v1":
+                    output.insert("end",f"SAM discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
+                    show_sam_results(result)
+                else:
+                    output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
                 exporter.configure(state="normal")
             for item in (() if type(result) is dict else result):
                 o=item.observation.opportunity
                 output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nHistorical observation; source assertions are unverified.\n")
         except Exception as exc:
-            output.insert("end",f"Screening failed: {type(exc).__name__}")
+            output.insert("end",f"Task failed: {str(exc) if type(exc) is SearchError else type(exc).__name__}")
         finally:
             refresh()
             output.configure(state="disabled")
@@ -225,12 +230,59 @@ def main(*, data_directory=None, gui_smoke=False):
         if scenario_report is None:
             return
         path = filedialog.asksaveasfilename(parent=root,defaultextension=".json",
-            filetypes=[("JSON","*.json")],initialfile="nexus-deal-report.json")
+            filetypes=[("JSON","*.json")],initialfile="nexus-report.json")
         if path:
             try:
                 export_report(path,scenario_report)
             except OSError as exc:
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
+    def show_sam_results(report):
+        window = tk.Toplevel(root)
+        window.title("Nexus Exchange | SAM research leads")
+        window.geometry("1050x700")
+        count = sum(lead["research_candidate"] for lead in report["leads"])
+        ttk.Label(window,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
+        ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
+        if report.get("truncated"):
+            ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
+        tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
+        for col,label,width in (("title","Opportunity",510),("deadline","Deadline (UTC)",200),("state","Research status",170)):
+            tree.heading(col,text=label)
+            tree.column(col,width=width,anchor="w")
+        tree.pack(fill="x",padx=12,pady=8)
+        leads={lead["notice_id"]:lead for lead in report["leads"]}
+        for key,lead in leads.items():
+            tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or "Unverified",
+                "Review candidate" if lead["research_candidate"] else "Blocked"))
+        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details.pack(fill="both",expand=True,padx=12,pady=8)
+        def selected():
+            selection=tree.selection()
+            return leads.get(selection[0]) if selection else None
+        def display(event=None):
+            lead=selected()
+            details.configure(state="normal")
+            details.delete("1.0","end")
+            if lead is not None:
+                lines=[lead["title"],"Notice ID: "+lead["notice_id"],
+                    "Source: "+lead["source_url"],"Blockers: "+", ".join(lead["blockers"]),
+                    "", "TO DO — evidence required"]
+                lines.extend("[ ] "+task["instruction"] for task in lead["todo"])
+                details.insert("end","\n".join(lines))
+            details.configure(state="disabled")
+        def open_notice():
+            lead=selected()
+            if lead is not None and not stop.is_set():
+                try:
+                    webbrowser.open(notice_url(lead["notice_id"]),new=2)
+                except (ValueError,OSError):
+                    messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
+        tree.bind("<<TreeviewSelect>>",display)
+        ttk.Button(window,text="Open selected official notice",command=open_notice).pack(pady=8)
+        if leads:
+            tree.selection_set(next(iter(leads)))
+            display()
+        return window
     def revenue_workspace():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Scout revenue pathways")
@@ -272,6 +324,11 @@ def main(*, data_directory=None, gui_smoke=False):
                     else "Blocked: "+", ".join(plan.reasons))+"\nExternal authority: none.")
             except (ValueError,PermissionError) as exc:
                 result.configure(text="Blocked: "+str(exc))
+        procurement_type = tk.StringVar(value="Combined synopsis/solicitation")
+        selector = ttk.Frame(window)
+        selector.pack(fill="x",padx=15,pady=4)
+        ttk.Label(selector,text="SAM notice type").pack(side="left")
+        ttk.Combobox(selector,textvariable=procurement_type,values=["Combined synopsis/solicitation","Solicitation"],state="readonly",width=32).pack(side="left",padx=8)
         def reset_checks(*unused):
             for flag in flags.values():
                 flag.set(False)
@@ -292,9 +349,40 @@ def main(*, data_directory=None, gui_smoke=False):
             var.trace_add("write",reset_checks)
         for flag in flags.values():
             flag.trace_add("write",lambda *unused:refresh_plan())
+        def run_sam():
+            if stop.is_set() or future is not None:
+                result.configure(text="Halted or busy. Resume or finish the current task first.")
+                return
+            if source.get()!="sam":
+                result.configure(text="Choose SAM as the official source first.")
+                return
+            title=simpledialog.askstring("SAM read-only search","Enter a public opportunity title keyword (no personal data).",parent=window)
+            if not title:
+                return
+            today=datetime.now(timezone.utc).date()
+            query=Query(today-timedelta(days=14),today,title,
+                "o" if procurement_type.get()=="Solicitation" else "k")
+            try:
+                query.parameters(datetime.now(timezone.utc))
+            except ValueError:
+                result.configure(text="Invalid search keyword.")
+                return
+            if not messagebox.askyesno("Authorize one SAM search",
+                    "Send this search to the official SAM.gov API? Up to 3 requests using your API quota. No bid, submission or spending.\n\nKeyword: "+title,parent=window):
+                return
+            key=simpledialog.askstring("SAM API key","Enter your own SAM public API key for this search. It will not be saved.",show="*",parent=window)
+            if not key:
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_sam(query,key,approved=True,halt_check=stop.is_set)
+            run(work,target="SAM read-only notice discovery",scenario=True)
+            result.configure(text="Search requested. See the main dashboard for results.")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
+        ttk.Button(buttons,text="Search SAM (read only)",command=run_sam).pack(side="left")
         ttk.Button(buttons,text="Refresh checklist",command=refresh_plan).pack(side="left")
         refresh_plan()
         return window
@@ -350,7 +438,7 @@ def main(*, data_directory=None, gui_smoke=False):
     simulation_controls.pack(pady=5)
     simulator = ttk.Button(simulation_controls,text="Evaluate deal scenario JSON",command=import_scenario)
     simulator.pack(side="left")
-    exporter = ttk.Button(simulation_controls,text="Export deal report",command=export_scenario,state="disabled")
+    exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
     exporter.pack(side="left")
     ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
@@ -358,10 +446,16 @@ def main(*, data_directory=None, gui_smoke=False):
     if gui_smoke:
         window = browse_archive()
         pathway_window = revenue_workspace()
+        sample_id = "0"*32
+        sample_lead = dict(notice_id=sample_id,title="Synthetic GUI fixture",deadline=None,
+            source_url=notice_url(sample_id),research_candidate=False,
+            blockers=["SYNTHETIC_FIXTURE"],todo=[dict(instruction=text) for _,text in CHECKS])
+        results_window = show_sam_results(dict(returned=1,requests=0,leads=[sample_lead],truncated=False))
         root.update_idletasks()
         root.update()
         window.destroy()
         pathway_window.destroy()
+        results_window.destroy()
         close()
         return
     root.mainloop()
