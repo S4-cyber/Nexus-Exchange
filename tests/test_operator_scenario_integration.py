@@ -149,3 +149,57 @@ class OperatorRuntimeTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.guard.operator_action('history_list',self.key,limit=100)
+
+    def test_recipient_runtime_bound_to_exact_draft_and_file(self):
+        self.guard.resume()
+        draft=self.call()["draft"]
+        key=draft["draft_id"]
+        path=self.directory/"synthetic-recipient-evidence.txt"
+        path.write_bytes(b"synthetic public contact evidence")
+        recipient=dict(scheme="REGISTRY",identifier="SYNTHETIC-1",organization_name="Synthetic supplier",
+            email="quotes@example.org",source_url="https://example.org/contact",observed_at=self.now.isoformat())
+        args=dict(draft_id=key,supplier=self.supplier(),recipient=recipient,evidence_path=path)
+        preview=self.guard.operator_action("recipient_preview",self.key,**args)
+        self.assertFalse(preview["recipient_verified"])
+        self.assertFalse((self.directory/"operator-recipients.sqlite3").exists())
+        self.assertEqual(self.guard.operator_action("recipient_history",self.key,draft_id=key,limit=100)["rows"],[])
+        path.write_bytes(b"changed evidence")
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("recipient_save",self.key,**args,
+                expected_recipient_id=preview["recipient_id"],confirmed=True)
+        self.assertFalse((self.directory/"operator-recipients.sqlite3").exists())
+        path.write_bytes(b"synthetic public contact evidence")
+        saved=self.guard.operator_action("recipient_save",self.key,**args,
+            expected_recipient_id=preview["recipient_id"],confirmed=True)
+        self.assertEqual(saved["candidate"],preview)
+        self.assertNotIn(str(path),str(saved))
+        self.assertFalse(saved["send_enabled"])
+        rows=self.guard.operator_action("recipient_history",self.key,draft_id=key,limit=100)
+        self.assertEqual(rows["rows"],[saved])
+        self.assertEqual(self.guard.operator_action("recipient_history",self.key,
+            draft_id=self.call(supplier=self.supplier(identifier="SYNTHETIC-2"))["draft"]["draft_id"],limit=100)["rows"],[])
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(profile(hours_per_week=30),halted=False)
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("recipient_preview",self.key,**args)
+        self.assertEqual(self.guard.operator_action("recipient_history",self.key,draft_id=key,limit=100),rows)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action("recipient_history",self.key,draft_id=key,limit=100)
+
+    def test_recipient_malformed_declaration_denied_before_file_and_no_send(self):
+        self.guard.resume()
+        key=self.call()["draft"]["draft_id"]
+        args=dict(draft_id=key,supplier=self.supplier(),
+            recipient=dict(scheme="REGISTRY",identifier="OTHER",organization_name="Other",
+                email="quotes@example.org",source_url="https://example.org/contact",observed_at=self.now.isoformat()),
+            evidence_path=self.directory/"missing")
+        with patch("nexus_exchange.evidence.fingerprint") as reader:
+            with self.assertRaises(ValueError):
+                self.guard.operator_action("recipient_preview",self.key,**args)
+            reader.assert_not_called()
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action("recipient_save",self.key,**args,
+                expected_recipient_id="a"*64,confirmed=False)
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("recipient_send",self.key,draft_id=key)
