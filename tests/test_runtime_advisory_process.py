@@ -48,6 +48,7 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 self.assertEqual(ticket["attempt"],1)
                 self.assertEqual(self.state()["state"],"RESERVED")
                 self.assertTrue(guard.advisory_process_pending())
+                self.assertTrue(guard.status()["advisory_cleanup_unconfirmed"])
                 with self.assertRaises(PermissionError):
                     guard.close()
                 with self.assertRaises(PermissionError):
@@ -57,6 +58,7 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 self.assertEqual(result["state"],"REVIEWED")
                 self.assertFalse(result["review"]["external_authority"])
                 self.assertFalse(guard.advisory_process_pending())
+                self.assertFalse(guard.status()["advisory_cleanup_unconfirmed"])
                 self.assertEqual(self.state()["attempts_used"],1)
             finally:
                 if guard.advisory_process_pending():
@@ -76,6 +78,7 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
             finally:
                 guard.drain_advisory_process()
             self.assertEqual(self.state()["state"],"RESERVED")
+            self.assertFalse(guard.status()["advisory_cleanup_unconfirmed"])
             self.assertEqual(guard.recover_advisory()["recovered"],1)
             self.assertEqual(self.state()["state"],"INTERRUPTED")
             guard.resume()
@@ -100,6 +103,32 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 guard.recover_advisory()
             with self.assertRaises(PermissionError):
                 guard.resume()
+            self.assertTrue(guard.status()["advisory_cleanup_unconfirmed"])
+        # An ordinary application restart must not erase uncertain cleanup.
+        with self.guard() as restarted:
+            self.assertTrue(restarted.is_set())
+            self.assertTrue(restarted.status()["advisory_cleanup_unconfirmed"])
+            self.assertEqual(self.state()["state"],"RESERVED")
+            with self.assertRaises(PermissionError):
+                restarted.recover_advisory()
+            with self.assertRaises(PermissionError):
+                restarted.resume()
+
+    def test_failed_submission_quarantines_before_worker_launch(self):
+        with self.guard() as guard:
+            guard.resume()
+            with patch("nexus_exchange.runtime_guard.ThreadPoolExecutor.submit",
+                       side_effect=RuntimeError("synthetic submission fault")):
+                with self.assertRaises(RuntimeError):
+                    guard.start_advisory_process(self.key,confirmed=True)
+            self.assertTrue(guard.status()["advisory_cleanup_unconfirmed"])
+            self.assertFalse(guard.advisory_process_pending())
+            self.assertEqual(self.state()["state"],"RESERVED")
+        with self.guard() as restarted:
+            self.assertTrue(restarted.status()["advisory_cleanup_unconfirmed"])
+            with self.assertRaises(PermissionError):
+                restarted.resume()
+            self.assertEqual(self.state()["state"],"RESERVED")
 
     def test_scope_change_withholds_result(self):
         with self.guard() as guard:

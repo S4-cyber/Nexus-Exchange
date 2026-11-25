@@ -11,6 +11,7 @@ from threading import Event, get_ident
 import os
 
 from .event_store import EventStore
+from . import advisory_launch_marker as launch_marker
 from .council_attempts import CouncilAttemptStore
 from .advisory_attempts import AdvisoryAttemptStore, DB_NAME as ADVISORY_DB
 from .scenario_council import ScenarioCouncil
@@ -73,13 +74,19 @@ class RuntimeGuard:
         try:
             self.events=EventStore(directory/"events.sqlite3")
             self.events.db.execute("PRAGMA synchronous=FULL")
+            launch_marker.initialize(self.events.db)
             self.events.db.execute("""CREATE TABLE IF NOT EXISTS runtime_guard_v1(
                 slot INTEGER PRIMARY KEY CHECK(slot=1),state TEXT NOT NULL,
                 reason TEXT NOT NULL,revision INTEGER NOT NULL,changed_at TEXT NOT NULL)""")
             self._persist("halted","startup")
             self.recovered_count=self.events.recover_interrupted(now=self._clock())
             self.recover_council()
-            self.recover_advisory()
+            if launch_marker.pending(self.events.db):
+                # The previous owner did not prove its child drained. A new
+                # OS lock proves exclusive ownership, not process-tree death.
+                self._faulted=True
+            else:
+                self.recover_advisory()
         except BaseException:
             try:
                 if self.events is not None:
@@ -170,6 +177,8 @@ class RuntimeGuard:
         if self._faulted or not self.is_set():
             raise PermissionError("halted healthy runtime required for advisory recovery")
         try:
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("advisory process cleanup unconfirmed; quarantine retained")
             path=self._advisory_path()
             if path is None:
                 return dict(recovered=0,escalated=0)
@@ -207,7 +216,10 @@ class RuntimeGuard:
             raise PermissionError("explicit local advisory confirmation required")
         from .advisory_process import FIXTURE_MODEL_SHA256, DEFAULT_PARENT_MS, _supervise
         self._advisory_active=True
+        armed=False
         try:
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("previous advisory cleanup unconfirmed")
             if self._council_pending() or self._advisory_pending():
                 raise PermissionError("outstanding reservation requires halted recovery")
             original=ScenarioCouncil(self._directory,halt_check=self.is_set,
@@ -220,12 +232,16 @@ class RuntimeGuard:
                 reserved=store.reserve(original,FIXTURE_MODEL_SHA256,now=self._clock(),
                                        approved=True,halted=self.is_set())
             self._advisory_reservation=(original,reserved)
+            # Commit BEFORE even submitting the worker. Crash between marker
+            # and launch is intentionally a conservative false-positive hold.
+            launch_marker.arm(self.events.db,reserved["ticket"]["reservation_id"])
+            armed=True
             self._advisory_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix="advisory-fixture")
             self._advisory_job=self._advisory_executor.submit(
                 _supervise,reserved["request"],halt_check=self.is_set,timeout_ms=DEFAULT_PARENT_MS)
             return dict(reserved["ticket"],external_authority=False)
         except BaseException:
-            self._advisory_fault()
+            self._advisory_fault(uncertain=armed)
             if self._advisory_executor is not None:
                 self._advisory_executor.shutdown(wait=True,cancel_futures=True)
             self._advisory_executor=None
@@ -242,14 +258,29 @@ class RuntimeGuard:
         if not wait and not job.done():
             return None
         from .advisory_process import ProcessDenied
+        cleanup_confirmed=False
         try:
-            report=job.result()
+            original,reserved=self._advisory_reservation
+            token=reserved["ticket"]["reservation_id"]
+            try:
+                report=job.result()
+            except ProcessDenied as exc:
+                self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+                # Only these known supervisor exits establish either no launch
+                # or a successful finally-cleanup. Unknown and start/identity
+                # failures remain quarantined, even if the thread has joined.
+                if exc.reason in ("HALTED_OR_UNKNOWN","WORKER_DEADLINE",
+                                  "WORKER_EXIT_FAILED","RESULT_SIZE","INVALID_RESPONSE"):
+                    launch_marker.clear(self.events.db,token)
+                    cleanup_confirmed=True
+                raise
             # A future becoming done is not enough: join its supervisor before
             # checking fresh scope or passing the ledger's worker_drained flag.
             self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+            launch_marker.clear(self.events.db,token)
+            cleanup_confirmed=True
             if self.is_set():
                 raise PermissionError("advisory result withheld after halt")
-            original,reserved=self._advisory_reservation
             current=ScenarioCouncil(self._directory,halt_check=self.is_set,
                                     clock=self._clock).inspect(reserved["ticket"]["plan_id"])
             if self.is_set():
@@ -264,9 +295,8 @@ class RuntimeGuard:
             if self.is_set():
                 raise PermissionError("advisory result withheld after halt")
             return result
-        except BaseException as exc:
-            self._advisory_fault(uncertain=isinstance(exc,ProcessDenied)
-                                 and exc.reason=="WORKER_CLEANUP_FAILED")
+        except BaseException:
+            self._advisory_fault(uncertain=not cleanup_confirmed)
             raise
         finally:
             self._advisory_executor.shutdown(wait=True,cancel_futures=True)
@@ -854,7 +884,8 @@ class RuntimeGuard:
             council_recovered_count=self.council_recovered_count,
             council_escalated_count=self.council_escalated_count,
             advisory_recovered_count=self.advisory_recovered_count,
-            advisory_escalated_count=self.advisory_escalated_count,external_authority=False)
+            advisory_escalated_count=self.advisory_escalated_count,
+            advisory_cleanup_unconfirmed=launch_marker.pending(self.events.db),external_authority=False)
 
     def _persist(self,state,reason):
         now=self._clock()
@@ -901,6 +932,8 @@ class RuntimeGuard:
         try:
             if self._council_pending():
                 raise PermissionError("unfinished Council reservations require halted recovery")
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("advisory process cleanup unconfirmed; quarantine retained")
             if self._advisory_pending():
                 raise PermissionError("unfinished advisory reservations require halted recovery")
             self._persist("offline_ready","explicit_resume")

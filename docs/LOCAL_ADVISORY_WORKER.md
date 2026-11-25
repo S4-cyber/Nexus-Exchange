@@ -69,3 +69,21 @@ existing startup ledger reconciliation is not evidence of OS containment.
 Do not enable a real worker before durable quarantine and process-tree
 containment, independent QA, and shutdown integration. Full local checkout
 remains DNS-blocked; hosted tests are required for this coherent batch.
+
+## Restart-safe launch quarantine candidate (GRI-7)
+
+Before submitting a fixed advisory worker, the owner commits a singleton
+reservation ID in the existing event database (autocommit, synchronous FULL).
+It clears that marker only after joining its own supervisor and observing a
+successful result or an explicitly recognized clean exit. Unknown, launch,
+identity and cleanup failures retain the marker. A later owner can inspect
+halted status but cannot automatically recover the advisory ledger or resume.
+There is deliberately no reset/clear UI or automatic PID-based clearance. A
+crash before launch may produce a conservative false-positive hold; do not
+delete the marker or database to recover. Review and implement separately
+authenticated OS process-tree containment and an evidence-backed recovery path
+before a real model or normal production release. This protects cooperating
+local sessions, not a hostile administrator or a replaced/restored database.
+The fixed synthetic fixture remains the only worker. Four isolated SQLite
+marker tests passed locally on Python 3.13; runtime integration and full
+regression require hosted verification (local checkout DNS unavailable).
