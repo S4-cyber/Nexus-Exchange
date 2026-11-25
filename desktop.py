@@ -37,21 +37,56 @@ def main():
     from tkinter import ttk
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
-    root.geometry("840x540")
+    root.geometry("980x760")
     directory = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     directory.mkdir(parents=True, exist_ok=True)
     store = EventStore(directory / "events.sqlite3")
     root.protocol("WM_DELETE_WINDOW", lambda: (store.close(), root.destroy()))
     ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
     ttk.Label(root,text="OFFLINE DEMONSTRATION — External actions disabled").pack()
-    output = tk.Text(root,height=16,wrap="word")
+    tasks = ttk.LabelFrame(root,text="Active tasks")
+    tasks.pack(fill="x",padx=20,pady=8)
+    slots = []
+    for i in range(10):
+        cell = ttk.Label(tasks,text="Idle",width=24,anchor="center",relief="groove")
+        cell.grid(row=i//5,column=i%5,sticky="ew",padx=3,pady=4)
+        tasks.columnconfigure(i%5,weight=1)
+        slots.append(cell)
+    history = ttk.Treeview(root,columns=("time","target","state"),show="headings",height=7)
+    for key,label in (("time","UTC timestamp"),("target","Target"),("state","Status")):
+        history.heading(key,text=label)
+        history.column(key,width=220 if key=="time" else 160)
+    history.pack(fill="both",padx=20,pady=8)
+    output = tk.Text(root,height=8,wrap="word")
     output.pack(fill="both",expand=True,padx=20,pady=16)
     output.configure(state="disabled")
     status = ttk.Label(root)
     status.pack()
+    page = 1
     def refresh():
-        view = project(store.read())
+        nonlocal page
+        events = store.read()
+        first = project(events)
+        page = min(page,first["pages"])
+        view = project(events,page)
+        for i,slot in enumerate(slots):
+            slot.configure(text=(view["tasks"][i].target+" | "+view["tasks"][i].state) if i<len(view["tasks"]) else "Idle")
+        page_label.configure(text=f"Page {page} / {view['pages']}")
+        for item in history.get_children():
+            history.delete(item)
+        for event in reversed(view["history"][-100:]):
+            history.insert("","end",values=(event.timestamp,event.target,event.state))
         status.configure(text=f"Successful tasks: {view['successful_tasks']} | Recorded events: {len(view['history'])}")
+    navigation = ttk.Frame(root)
+    navigation.pack()
+    def move(delta):
+        nonlocal page
+        page = max(1,min(page+delta,project(store.read())["pages"]))
+        refresh()
+    ttk.Button(navigation,text="Previous",command=lambda:move(-1)).pack(side="left")
+    page_label = ttk.Label(navigation)
+    page_label.pack(side="left",padx=8)
+    ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
     def run():
         output.configure(state="normal")
