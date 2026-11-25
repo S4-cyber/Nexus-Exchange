@@ -1,7 +1,7 @@
 name: Windows preview
 on:
   push:
-    branches: [review/windows-desktop]
+    branches: [review/windows-desktop, review/desktop-opportunity-browser]
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,12 +17,15 @@ jobs:
           architecture: x64
       - run: python -m unittest discover -s tests -v
       - run: python desktop.py --self-test
+      - run: python desktop.py --gui-self-test
       - run: python -m pip install pyinstaller==6.12.0
       - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name NexusExchange desktop.py
       - shell: pwsh
         run: |
           $p = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--self-test' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Executable smoke test failed" }
+          $g = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--gui-self-test' -Wait -PassThru
+          if ($g.ExitCode -ne 0) { throw "Executable GUI smoke test failed" }
           (Get-FileHash dist/NexusExchange.exe -Algorithm SHA256).Hash | Set-Content dist/SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
