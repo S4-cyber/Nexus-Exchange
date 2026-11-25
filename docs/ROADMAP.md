@@ -387,3 +387,7 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 ## RC2 scoped Scout-to-Operator requirements review candidate (2026-11-25)
 - Prior RC2 #89 `426517d2ece7b9b73827e2c2d0685af079412bdc`: both Python versions passed 726 tests in run 45620248029; Windows run 45620247946 succeeded (artifact 15022864857).
 - E13/E14/E21/E25/E27/E31/E38, H08: exact current archive/profile scoped declared service review, source holds take precedence over structural fit; no title inference or authority. Five new actual workspace regressions. See docs/SCOUT_SCOPED_SERVICE_REVIEW.md. Full local checkout DNS blocked; exact-head hosted checks pending. No new packages or live actions. No formal main gate promotion; 0/42.
+
+## RC2 native Scout service requirements form (2026-11-25)
+- Predecessor `8f9a147c11c7dae3a9bfa1dc7331baac17963abc`: both Python logs 731 tests passed, run 45630193966; Windows run 45630193991 succeeded, artifact 15029614617.
+- E13/E14/E21/E25/E27/E33/E34/E38, H04/H05/H08: native read-only explicit requirements form bound to selected archive context, no inferred values or external authority. Six private focused parser tests passed; exact blobs matched; integrated GUI smoke expanded, hosted CI pending. See docs/SCOUT_NATIVE_REQUIREMENTS_FORM.md. Formal main gate acceptance unchanged 0/42. No new dependencies, costs, live actions or Operative modifications.

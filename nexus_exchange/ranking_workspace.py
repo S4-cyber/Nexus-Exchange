@@ -8,6 +8,7 @@ from .checklist_store import _context, context_for
 from .owner_profile import ProfileStore, PROFILE_SOURCES, profile_revision
 from .review_ranking import RankingStore
 from .operator_capabilities import detail_text
+from .scout_requirements_form import open_service_requirements_window
 from .scenario_workspace import open_scenario_window
 
 TIERS={
@@ -277,6 +278,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
             current=workspace.resolve(row["context"])
             if kind=="tasks":
                 return review_tasks(current,window)
+            if kind=="requirements":
+                return open_service_requirements_window(window,workspace,row["context"],current["title"])
             return open_scenario_window(window,current,directory=directory,halt_check=halt_check,
                 council_action=council_action,council_blocked=council_blocked,
                 operator_action=operator_action,operator_blocked=operator_blocked,csv_action=csv_action)
@@ -307,6 +310,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
 
     ttk.Button(filters,text="Refresh ranking",command=refresh).pack(side="left",padx=8)
     ttk.Button(buttons,text="Open selected lead planning",command=lambda:navigate("plan")).pack(side="left",padx=5)
+    ttk.Button(buttons,text="Review service requirements",command=lambda:navigate("requirements")).pack(side="left",padx=5)
     if review_tasks is not None:
         ttk.Button(buttons,text="Review selected To Do",command=lambda:navigate("tasks")).pack(side="left",padx=5)
     tree.bind("<<TreeviewSelect>>",display)
@@ -330,6 +334,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
         child=navigate("plan")
         if child is None:
             raise RuntimeError("ranking GUI could not open exact lead planning")
+        child.destroy()
+        child=open_service_requirements_window(window,workspace,first["context"],first["title"],smoke=True)
         child.destroy()
         query.set("synthetic nonmatching filter")
         if tree.get_children() or report is not None:
