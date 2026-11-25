@@ -170,3 +170,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R01/R02 candidate: native Scout pathway planning and checklist UI, fixed official SAM/SBA/Grants source links, cost/authority gates, seven new regression tests. User click opens default browser; embedded browser and automated acquisition remain pending. No bank connected or transfer enabled. Checkboxes are assertions only, not permissions.
 - R03 next: official SAM public API adapter with secure key handling, quotas, bounded pagination, read-only authorization and explicit source verification. R04/R05: secure owner profile and persistent lead-specific evidence/checklists.
 - Prior consolidated baseline 6c8f5e5aa1cf971c7a9fc7235d788b3a1e6b3ef4 passed Windows run 45529112749 and unit run 45529126511, still draft PR #21. Main acceptance remains 0/42; no new formal gate acceptance.
+
+
+## R03 / E10–E12 offline SAM v2 candidate
+- Prior Genesis/Catalyst head 901a77623cbc5dd50c6c7c17ace15172b2be18cd exact-head CI and Windows preview passed (45529808352, 45529794634).
+- Implement bounded offline SAM query planning and response validation with provenance digest, notice-type and deadline filtering, missing-value and eligibility blockers. Eight regression tests; candidate CI pending. See docs/SAM_DISCOVERY.md.
+- No network transport, API key or live authority. R03 partial; next secure consent/credential storage, durable quota, bounded transport and live read-only pilot. E01–E42 formal main acceptance remains 0/42.
