@@ -12,6 +12,7 @@ from nexus_exchange.event_store import EventStore
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
+from nexus_exchange.scenario_workspace import open_scenario_window
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
@@ -986,6 +987,16 @@ def main(*, data_directory=None, gui_smoke=False):
                 except Exception:
                     write("Checklist unavailable.")
         ttk.Button(buttons,text="Review To Do",command=review_tasks).pack(side="left",padx=5)
+        def review_scenarios():
+            row=selected()
+            if row is not None:
+                try:
+                    open_scenario_window(window,row,directory=directory,halt_check=stop.is_set)
+                except (ValueError,PermissionError):
+                    write("Save an owner profile and refresh Scout history; scenario context changed or research halted.")
+                except Exception:
+                    write("Scenario workspace unavailable.")
+        ttk.Button(buttons,text="Plan scenario",command=review_scenarios).pack(side="left",padx=5)
         ttk.Button(buttons,text="Export history JSON",command=export).pack(side="left",padx=5)
         ttk.Button(buttons,text="Owner profile",command=owner_profile_window).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
@@ -1088,8 +1099,15 @@ def main(*, data_directory=None, gui_smoke=False):
                 truncated=False,page_sha256=["0"*64]),now=stamp,halted=False)
             todo_row=fixture_store.browse(now=stamp,source="sam",halted=False)["leads"][0]
         todo_window=checklist_window(todo_row,root,smoke=True)
+        with ProfileStore(directory / "owner-profile.sqlite3") as fixture_profiles:
+            declared=dict(mode="genesis",budget="0",hours_per_week=20,sources=["sam"],naics=[],cpv=[],keywords=[])
+            fixture_profiles.save(declared,halted=False)
+        with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
+            scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
+        scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,smoke=True)
         root.update_idletasks()
         root.update()
+        scenario_window.destroy()
         todo_window.destroy()
         spending_window.destroy()
         profile_window.destroy()
