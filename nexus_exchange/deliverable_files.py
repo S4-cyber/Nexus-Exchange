@@ -39,11 +39,19 @@ def _path(value,*,source_format=CSV_SOURCE):
 
 
 def read_selected_csv(value,*,halted=None,halt_check=None,source_format=CSV_SOURCE):
+    return _read_local_file(value, source_format, MAX_INPUT_BYTES, halted, halt_check)
+
+
+def read_published_csv(value, *, halted=None, halt_check=None):
+    return _read_local_file(value, CSV_SOURCE, MAX_OUTPUT_BYTES, halted, halt_check)
+
+
+def _read_local_file(value, source_format, maximum, halted, halt_check):
     _permit(halted,halt_check)
     path=_path(value,source_format=source_format)
     try:
         initial=path.lstat()
-        if not stat.S_ISREG(initial.st_mode) or not 1<=initial.st_size<=MAX_INPUT_BYTES:
+        if not stat.S_ISREG(initial.st_mode) or not 1<=initial.st_size<=maximum:
             raise DeliverableError("CSV_SOURCE_TYPE_OR_SIZE")
         flags=os.O_RDONLY|getattr(os,"O_BINARY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0)
         fd=os.open(path,flags)
@@ -54,11 +62,11 @@ def read_selected_csv(value,*,halted=None,halt_check=None,source_format=CSV_SOUR
             data=bytearray()
             while True:
                 _permit(halted,halt_check)
-                chunk=os.read(fd,min(_CHUNK,MAX_INPUT_BYTES+1-len(data)))
+                chunk=os.read(fd,min(_CHUNK,maximum+1-len(data)))
                 if not chunk:
                     break
                 data.extend(chunk)
-                if len(data)>MAX_INPUT_BYTES:
+                if len(data)>maximum:
                     raise DeliverableError("CSV_SOURCE_TYPE_OR_SIZE")
             after=os.fstat(fd)
             final=path.lstat()

@@ -177,8 +177,8 @@ def _table(raw,spec,*,maximum,ordered,halted,halt_check):
         raise DeliverableError("CSV_PARSE_INVALID") from None
 
 
-def _json_table(raw,spec,halted,halt_check):
-    """Accept only a bounded array of flat, exact-schema string records."""
+def _string_records(raw, halted, halt_check):
+    """Decode JSON without coercing values or silently dropping duplicate members."""
     _permit(halted,halt_check)
     def pairs(items):
         if len(items)>MAX_COLUMNS:
@@ -200,6 +200,12 @@ def _json_table(raw,spec,halted,halt_check):
     except (UnicodeError,json.JSONDecodeError,RecursionError):
         raise DeliverableError("JSON_PARSE_INVALID") from None
     _permit(halted,halt_check)
+    return records
+
+
+def _json_table(raw,spec,halted,halt_check):
+    """Accept only a bounded array of flat, exact-schema string records."""
+    records = _string_records(raw, halted, halt_check)
     if type(records) is not list or len(records)!=spec["expected_rows"]:
         raise DeliverableError("JSON_ROW_COUNT_OR_SHAPE_MISMATCH")
     cols=spec["columns"]
