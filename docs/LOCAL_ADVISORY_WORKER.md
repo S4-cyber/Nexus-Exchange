@@ -50,3 +50,22 @@ Five focused test methods passed locally; full regression remains pending
 for this increment. A future runtime owner must treat that reason as a
 fault, not as a drained failure eligible for recovery. No OS-level crash
 containment or persistent dispatch is implemented.
+
+
+## Runtime-owned synthetic reservation candidate (GRI-7)
+
+The headless owner-thread facade reserves an exact saved Council plan before
+starting a fixed synthetic supervisor in one executor. While the job is
+reserved, all existing owner maintenance and close paths reject concurrent
+work. The owner polls, joins the supervisor, re-inspects the saved plan and
+atomically completes the original ledger ticket with the fresh scope. Raw
+response bytes are not returned. Halt or scope drift withholds the result;
+failed jobs leave a reservation for explicit halted recovery, not replay.
+Uncertain cleanup faults the current session and blocks resume/recovery.
+
+This is a fixed owned fixture only, not model inference, a GUI control or
+OS containment. A process crash/restart cannot yet prove orphan-child cleanup;
+existing startup ledger reconciliation is not evidence of OS containment.
+Do not enable a real worker before durable quarantine and process-tree
+containment, independent QA, and shutdown integration. Full local checkout
+remains DNS-blocked; hosted tests are required for this coherent batch.

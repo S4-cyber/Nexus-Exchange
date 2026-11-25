@@ -589,3 +589,9 @@ no source copied or dependencies added. Next: owner-thread reservation,
 collection, fresh scope inspection, durable halt, no replay, and prove
 child drain across owner death before activating actual inference.
 No new services, model execution, commercial actions, spend or Operative changes.
+
+
+## 2026-11-25 — GRI-7 owner-thread synthetic reservation candidate
+- E15–E19/E31/E37/E38/E40, H01/H03/H06/H07: previous exact candidate fb75be1baf882e20d8e5bbe841b4008b5d817221 passed Python 3.10/3.13 (45700408240) and Windows (45700408827). New owner-thread headless reservation, asynchronous fixed fixture, drain interlock and fresh scope completion candidate; four new integration tests, hosted CI pending. Full local checkout DNS failure; no local red/green claim.
+- No new dependencies or external authority. Same-session uncertain cleanup faults runtime; abrupt parent crash/orphan process quarantine and desktop shutdown wiring remain open. No real inference or commercial dispatch. Formal accepted gates 0/42 pending independent acceptance.
+- Reuse: Operative risk_gate.py blob ab737fdd8fae557ef456e3240d6580fc35d9e459 read-only; trading-specific imports unsuitable. OpenViking pinned 13135999c0cde133b6fd4b4c2dcdd03c1a7db93f ACL blob cceb028efcf2117fe7f619943443787501083ec7 uses Pydantic and context-dependent permission resolution; AGPL, dependency/privacy review incomplete, no import or copy.
