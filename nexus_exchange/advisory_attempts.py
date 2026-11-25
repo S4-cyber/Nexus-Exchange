@@ -210,6 +210,20 @@ class AdvisoryAttemptStore:
         return record, row
 
     def complete(self, ticket, request, snapshot, raw, *, now, approved=None, halted=None, worker_drained=None):
+        """Exact original snapshot review; not a fresh owner inspection."""
+        return self._complete(ticket, request, snapshot, raw, now=now, approved=approved,
+                              halted=halted, worker_drained=worker_drained)
+
+    def complete_current(self, ticket, request, original, current, raw, *, now,
+                         approved=None, halted=None, worker_drained=None):
+        """Complete only after independent fresh trusted saved-plan inspection."""
+        if type(current) is not dict:
+            raise ValueError("fresh advisory snapshot required")
+        return self._complete(ticket, request, original, raw, now=now, approved=approved,
+                              halted=halted, worker_drained=worker_drained, current=current)
+
+    def _complete(self, ticket, request, snapshot, raw, *, now, approved, halted,
+                  worker_drained, current=None):
         _permit(approved, halted)
         if worker_drained is not True:
             raise PermissionError("worker drain required")
@@ -223,7 +237,12 @@ class AdvisoryAttemptStore:
                            ("attempt", "request_sha256", "snapshot_sha256", "model_sha256"))
                     or request.get("created_at") != row["reserved_at"]):
                 raise ValueError("advisory request does not match reservation")
-            review = review_response(raw, request, snapshot, now=now, approved=approved, halted=halted)
+            if current is None:
+                review = review_response(raw, request, snapshot, now=now, approved=approved, halted=halted)
+            else:
+                from .advisory_current_scope import review_current_response
+                review = review_current_response(raw, request, snapshot, current, now=now,
+                                                 approved=approved, halted=halted)
             row.update(state="REVIEWED", completed_at=now.isoformat(timespec="microseconds"),
                        response_sha256=review["response_sha256"], review_sha256=_digest(review))
             self._write(record)
