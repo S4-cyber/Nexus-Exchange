@@ -1,4 +1,5 @@
 """Native saved-plan CSV work sample preview and explicit new-file export."""
+from copy import deepcopy
 import csv
 import io
 import re
@@ -8,6 +9,7 @@ from .checklist_store import _hash
 from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT, PROFILE_FORMAT, RECONCILE_FORMAT
 from .deliverable_files import preview_pins
 from .obligation_workspace import validate_record, open_obligation_window
+from .operator_workflow import preview_progress, export_progress, historical_progress, template_text, progress_text
 
 
 def parse_fields(columns,key,rows):
@@ -34,6 +36,8 @@ class CsvWorkspace:
     def clear(self):
         self._pins=None
         self._inputs=None
+        self._reviewed=None
+        self._progress=None
 
     def _permit(self):
         if self.blocked_check() is not False:
@@ -59,19 +63,29 @@ class CsvWorkspace:
         if (result["contract"]["plan_id"]!=self.plan_id or
                 result["contract"]["format"]!=self.contract_format):
             raise ValueError("CSV preview outside selected plan")
+        progress=preview_progress(result,halted=False)
+        self._permit()
         self._pins=pins
         self._inputs=inputs
+        self._reviewed=deepcopy(result)
+        self._progress=progress
         return result
 
     @property
     def ready(self):
         return self._pins is not None
 
+    @property
+    def progress(self):
+        self._permit()
+        return deepcopy(self._progress)
+
     def export(self,destination,*,confirmed=None):
         self._permit()
         if confirmed is not True or not self.ready:
             raise PermissionError("explicit export of a current preview required")
         pins,inputs=self._pins,self._inputs
+        reviewed=self._reviewed
         # Consume preview even if export fails; a second export requires review.
         self.clear()
         result=self.action("export",self.plan_id,confirmed=True,
@@ -82,6 +96,9 @@ class CsvWorkspace:
                 or result.get("buyer_accepted") is not False
                 or any(result.get(k)!=v for k,v in pins.items())):
             raise ValueError("CSV export result mismatch")
+        progress=export_progress(reviewed,result,halted=False)
+        self._permit()
+        self._progress=progress
         return result
 
     def register(self,artifact_path,*,confirmed=None):
@@ -99,6 +116,9 @@ class CsvWorkspace:
                 or binding["qa_report"]["report_sha256"]!=pins["expected_report"]
                 or binding["qa_report"]["artifact_sha256"]!=pins["expected_artifact"]):
             raise ValueError("registered obligation differs from reviewed preview")
+        progress=historical_progress(record,self.plan_id,halted=False)
+        self._permit()
+        self._progress=progress
         return record
 
 
@@ -121,6 +141,7 @@ def preview_text(result):
         if index>10:
             break
         lines.append(" | ".join(row))
+    lines.extend(["",progress_text(preview_progress(result,halted=False))])
     return "\n".join(lines)
 
 
@@ -172,7 +193,7 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
 
     def clear(message="Requirements changed. Preview explicitly."):
         workspace.clear()
-        write("")
+        write(template_text(workspace.contract_format,halted=False))
         export_button.configure(state="disabled")
         register_button.configure(state="disabled")
         status.configure(text=message)
@@ -215,7 +236,9 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     def export_to(path,confirmed):
         try:
             result=workspace.export(path,confirmed=confirmed)
+            progress=workspace.progress
             clear("New CSV published. No customer acceptance or revenue recorded.")
+            write(progress_text(progress))
             return result
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             if smoke_paths is not None:
@@ -236,7 +259,9 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     def register_to(path,confirmed):
         try:
             record=workspace.register(path,confirmed=confirmed)
+            progress=workspace.progress
             clear("Local artifact registered: "+record["obligation_id"][:12]+"... Open obligation history to review.")
+            write(progress_text(progress))
             return record
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             if smoke_paths is not None:
@@ -281,6 +306,7 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
             workspace.clear()
     window.bind("<Destroy>",destroyed,add="+")
     check()
+    write(template_text(workspace.contract_format,halted=False))
     if smoke_paths is not None:
         if reconcile_mode:
             src,other,dest=smoke_paths
@@ -289,17 +315,21 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
             src,dest=smoke_paths
         source.set(str(src)); columns.set("id,name"); key.set("id"); rows.set("2")
         result=preview()
-        if result is None or "LOCAL WORK SAMPLE" not in output.get("1.0","end"):
+        if (result is None or "LOCAL WORK SAMPLE" not in output.get("1.0","end")
+                or "WORKFLOW — " not in output.get("1.0","end")
+                or "Review required" not in output.get("1.0","end")):
             raise RuntimeError("CSV native preview failed")
         if export_to(str(dest),True) is None or dest.read_bytes()!=result["artifact"]:
             raise RuntimeError("CSV native export failed")
-        if workspace.ready or str(export_button.cget("state"))!="disabled":
+        if (workspace.ready or str(export_button.cget("state"))!="disabled"
+                or "Local export reported" not in output.get("1.0","end")):
             raise RuntimeError("CSV native preview not consumed")
         if smoke_evidence is not None:
             if preview() is None:
                 raise RuntimeError("CSV registration preview failed")
             record=register_to(str(dest),True)
-            if record is None or record["buyer_accepted"] or workspace.ready:
+            if (record is None or record["buyer_accepted"] or workspace.ready
+                    or "Local registration recorded" not in output.get("1.0","end")):
                 raise RuntimeError("CSV native registration failed")
             history_window=open_obligation_window(window,plan_id=plan_id,action=action,
                 blocked_check=blocked_check,smoke=(record["obligation_id"],smoke_evidence))
