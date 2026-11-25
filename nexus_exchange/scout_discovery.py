@@ -227,6 +227,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     from .cockpit import install_cockpit, fit_geometry
     from .lead_store import LeadStore
     from .discovery_history import recent_hint, hint_text
+    from .discovery_performance import analyze,empty_history,priority_label,option_performance_text,performance_text
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
     window.title("Nexus Exchange | Capability search planner")
@@ -238,9 +239,10 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     service=tk.StringVar(master=window,value=next(iter(labels)))
     chooser=ttk.Combobox(controls,textvariable=service,values=list(labels),state="readonly",width=32)
     chooser.pack(side="left")
-    tree=ttk.Treeview(content,columns=("source","filter","state","requests"),show="headings",height=8)
+    tree=ttk.Treeview(content,columns=("source","filter","state","requests","priority"),show="headings",height=8)
     for key,title,width in (("source","Source",205),("filter","Filter / query",255),
-                            ("state","Research state",265),("requests","Max requests",95)):
+                            ("state","Research state",220),("requests","Max requests",95),
+                            ("priority","History priority",225)):
         tree.heading(key,text=title);tree.column(key,width=width,anchor="w")
     tree.pack(fill="x",padx=12,pady=6)
     output=ScrolledText(content,height=11,wrap="word",state="disabled")
@@ -248,14 +250,16 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     plan=None
     rows={}
     search_history={"rows":[]}
+    performance=None
+    priorities={}
 
     def write(value):
         output.configure(state="normal");output.delete("1.0","end")
         output.insert("end",value);output.configure(state="disabled")
 
     def clear(message):
-        nonlocal plan
-        plan=None;rows.clear()
+        nonlocal plan,performance
+        plan=None;performance=None;rows.clear();priorities.clear()
         for item in tree.get_children():
             tree.delete(item)
         search_button.configure(state="disabled")
@@ -271,26 +275,29 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
                  and blocked_check() is False and halt_check() is False)
         search_button.configure(state="normal" if allowed else "disabled")
         if plan is not None and row is not None:
-            write(option_text(plan,row)+"\n\n"+hint_text(recent_hint(row,search_history,now=datetime.now(timezone.utc))))
+            write(option_text(plan,row)+"\n\n"+hint_text(recent_hint(row,search_history,now=datetime.now(timezone.utc)))
+                  +"\n\n"+option_performance_text(priorities[row["option_id"]]))
 
     def refresh():
-        nonlocal plan,search_history
+        nonlocal plan,search_history,performance
         clear("Planning locally...")
         try:
             profile=load_profile(directory,halt_check=halt_check)
             now=datetime.now(timezone.utc)
             plan=build_plan(profile,labels[service.get()],now=now,halted=halt_check())
             archive=Path(directory)/"scout-leads.sqlite3"
-            search_history={"rows":[]}
+            search_history=empty_history(now)
             if archive.is_file():
                 with LeadStore(archive) as store:
                     search_history=store.search_history(now=now,halted=halt_check())
-            for row in plan["options"]:
-                key=row["option_id"];rows[key]=row
+            performance=analyze(profile,plan,search_history,now=now,halted=halt_check())
+            original={row["option_id"]:row for row in plan["options"]}
+            for priority in performance["ranked_options"]:
+                key=priority["option_id"];row=original[key];rows[key]=row;priorities[key]=priority
                 value=row["filter_value"] or row["filter_kind"]
                 if row["procurement_type"]:
                     value+=" / "+row["procurement_type"]
-                tree.insert("","end",iid=key,values=(row["source_label"],value,row["state"],row["max_requests"]))
+                tree.insert("","end",iid=key,values=(row["source_label"],value,row["state"],row["max_requests"],priority_label(priority)))
             if rows:
                 tree.selection_set(next(iter(rows)));display()
             else:
@@ -351,10 +358,17 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         except (ValueError,PermissionError,OSError,sqlite3.Error):
             write("Search history unavailable. Review local storage and halt state.")
 
+    def show_performance():
+        if performance is None or halt_check() is not False or blocked_check() is not False:
+            write("Search performance unavailable. Refresh the local plan when idle.")
+            return
+        write(performance_text(performance))
+
     ttk.Button(controls,text="Refresh discovery plan",command=refresh).pack(side="left",padx=4)
     search_button=ttk.Button(controls,text="Search selected plan",command=search_selected,state="disabled")
     search_button.pack(side="left",padx=4)
     ttk.Button(controls,text="Search history",command=show_history).pack(side="left",padx=4)
+    ttk.Button(controls,text="Search performance",command=show_performance).pack(side="left",padx=4)
     tree.bind("<<TreeviewSelect>>",display,add="+")
     chooser.bind("<<ComboboxSelected>>",lambda _event:refresh(),add="+")
     refresh()
@@ -371,4 +385,8 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         show_history()
         if "COMPLETED CAPABILITY SEARCHES" not in output.get("1.0","end"):
             raise RuntimeError("Capability discovery GUI history missing")
+        show_performance()
+        if ("SCOUT SEARCH PERFORMANCE" not in output.get("1.0","end")
+                or "Explore unmeasured filter" not in output.get("1.0","end")):
+            raise RuntimeError("Capability discovery GUI performance missing")
     return window
