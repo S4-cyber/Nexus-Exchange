@@ -38,5 +38,5 @@ def map_active_tender(publisher, release, source_url, retrieved_at):
     opportunity = normalize(dict(source=publisher, external_id=key,
         title=tender.get("title"), source_url=source_url,
         retrieved_at=retrieved_at, deadline=period["endDate"],
-        currency=value.get("currency"), amount=format(amount,"f")))
+        currency=value.get("currency"), amount=format(Decimal(amount),"f")))
     return TenderObservation(opportunity, key, published)

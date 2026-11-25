@@ -24,3 +24,7 @@ class AdapterTests(unittest.TestCase):
     def test_future(self):
         self.r["date"]="2026-01-03T00:00:00Z"
         with self.assertRaises(ValueError): self.run_map()
+
+    def test_integer_amount(self):
+        self.r["tender"]["value"]["amount"]=100
+        self.assertEqual(self.run_map().opportunity.amount,Decimal("100"))
