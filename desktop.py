@@ -446,7 +446,11 @@ def main(*, data_directory=None, gui_smoke=False):
     if gui_smoke:
         window = browse_archive()
         pathway_window = revenue_workspace()
-        results_window = show_sam_results(dict(returned=0,requests=0,leads=[],truncated=False))
+        sample_id = "0"*32
+        sample_lead = dict(notice_id=sample_id,title="Synthetic GUI fixture",deadline=None,
+            source_url=notice_url(sample_id),research_candidate=False,
+            blockers=["SYNTHETIC_FIXTURE"],todo=[dict(instruction=text) for _,text in CHECKS])
+        results_window = show_sam_results(dict(returned=1,requests=0,leads=[sample_lead],truncated=False))
         root.update_idletasks()
         root.update()
         window.destroy()
