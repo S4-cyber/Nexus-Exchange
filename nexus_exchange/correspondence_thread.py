@@ -101,3 +101,141 @@ def append_event(draft, recipient, thread, *, kind, evidence_reference, now,
     proposed = dict(current, events=current["events"] + [event],
                     head_sha256=event["event_sha256"])
     return validate_thread(draft, recipient, proposed, halted=False)
+
+
+# Persistent local compare-and-append. The single-user runtime supplies the
+# exact saved draft and recipient; hashes are not authentication.
+from contextlib import contextmanager
+import json
+import os
+from pathlib import Path
+import sqlite3
+
+MAX_THREADS = 1000
+MAX_THREAD_PAYLOAD = 32768
+_TABLE = "operator_threads_v1"
+
+
+class ThreadStore:
+    """One non-resettable history per exact draft/recipient pair.
+
+    Uses a separate bounded local SQLite database. No message contents, file
+    paths, addresses or external authority are stored here.
+    """
+
+    def __init__(self, path, *, existing_only=False):
+        if type(existing_only) is not bool:
+            raise ValueError("invalid thread storage mode")
+        path = Path(path)
+        exists = os.path.lexists(path)
+        if exists and (path.is_symlink() or not path.is_file()):
+            raise ValueError("invalid thread database path")
+        if existing_only and not exists:
+            raise ValueError("existing thread database required")
+        self.db = sqlite3.connect(path.resolve().as_uri() + ("?mode=rw" if existing_only else "?mode=rwc"),
+                                  uri=True, timeout=5, isolation_level=None)
+        try:
+            self.db.execute("PRAGMA trusted_schema=OFF")
+            self.db.execute("PRAGMA synchronous=FULL")
+            if existing_only:
+                if self.db.execute("SELECT type FROM sqlite_master WHERE name=?", (_TABLE,)).fetchone() != ("table",):
+                    raise ValueError("thread storage schema missing")
+            else:
+                self.db.execute("""CREATE TABLE IF NOT EXISTS operator_threads_v1(
+                    draft_id TEXT NOT NULL, recipient_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL UNIQUE, head_sha256 TEXT NOT NULL,
+                    payload TEXT NOT NULL, digest TEXT NOT NULL,
+                    PRIMARY KEY(draft_id,recipient_id))""")
+        except BaseException:
+            self.db.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.db.close()
+
+    @contextmanager
+    def _transaction(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            self.db.execute("COMMIT")
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _scope(draft, recipient):
+        candidate = _for_draft(draft, recipient)
+        return draft["draft_id"], candidate["recipient_id"]
+
+    @staticmethod
+    def _row(thread):
+        payload = _json(thread)
+        if len(payload) > MAX_THREAD_PAYLOAD:
+            raise ValueError("thread storage payload exceeds bound")
+        return (thread["draft_id"], thread["recipient_id"], thread["thread_id"],
+                thread["head_sha256"], payload, _digest(payload))
+
+    def _read(self, draft, recipient):
+        scope = self._scope(draft, recipient)
+        # Avoid loading unbounded payloads even if the local DB is damaged.
+        row = self.db.execute("""SELECT draft_id,recipient_id,thread_id,head_sha256,
+            CASE WHEN length(payload)<=? THEN payload ELSE NULL END,digest
+            FROM operator_threads_v1 WHERE draft_id=? AND recipient_id=?""",
+            (MAX_THREAD_PAYLOAD, *scope)).fetchone()
+        if row is None:
+            return None
+        payload = row[4]
+        if type(payload) is not str or _digest(payload) != row[5]:
+            raise ValueError("thread storage integrity mismatch")
+        try:
+            checked = validate_thread(draft, recipient, json.loads(payload), halted=False)
+        except (ValueError, RecursionError, TypeError) as exc:
+            raise ValueError("thread storage validation failed") from None
+        if self._row(checked) != row:
+            raise ValueError("stored thread identity mismatch")
+        return checked
+
+    def get(self, draft, recipient, *, halted=None):
+        _permit(halted)
+        return self._read(draft, recipient)
+
+    def open(self, draft, recipient, *, now, confirmed=None, halted=None):
+        proposed = open_thread(draft, recipient, now=now, confirmed=confirmed, halted=halted)
+        with self._transaction():
+            current = self._read(draft, recipient)
+            if current is not None:
+                last = current["events"][-1]["recorded_at"] if current["events"] else current["created_at"]
+                if proposed["created_at"] < last:
+                    raise ValueError("thread replay clock moved backward")
+                return current
+            if self.db.execute("SELECT COUNT(*) FROM operator_threads_v1").fetchone()[0] >= MAX_THREADS:
+                raise ValueError("thread storage capacity review required")
+            self.db.execute("INSERT INTO operator_threads_v1 VALUES (?,?,?,?,?,?)", self._row(proposed))
+            return proposed
+
+    def append(self, draft, recipient, *, kind, evidence_reference, now,
+               expected_head, confirmed=None, halted=None):
+        _permit(halted)
+        if confirmed is not True:
+            raise PermissionError("explicit local event confirmation required")
+        _hash(expected_head)
+        with self._transaction():
+            current = self._read(draft, recipient)
+            if current is None:
+                raise ValueError("saved correspondence thread required")
+            updated = append_event(draft, recipient, current, kind=kind,
+                evidence_reference=evidence_reference, now=now, expected_head=expected_head,
+                confirmed=True, halted=False)
+            row = self._row(updated)
+            changed = self.db.execute("""UPDATE operator_threads_v1
+                SET head_sha256=?,payload=?,digest=?
+                WHERE draft_id=? AND recipient_id=? AND thread_id=? AND head_sha256=?""",
+                (row[3], row[4], row[5], row[0], row[1], row[2], expected_head))
+            if changed.rowcount != 1:
+                raise ValueError("thread head changed; inspect again")
+            return updated

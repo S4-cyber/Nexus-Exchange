@@ -100,3 +100,63 @@ class CorrespondenceThreadTests(unittest.TestCase):
         bad["events"][0]["body"] = "untrusted raw message"
         with self.assertRaises(ValueError):
             validate_thread(self.draft, self.recipient, bad, halted=False)
+
+
+class DurableCorrespondenceTests(unittest.TestCase):
+    def setUp(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        temp=TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path=Path(temp.name)/"threads.sqlite3"
+        self.draft=draft()
+        self.recipient=prepare_recipient(self.draft,contact(),organization_name="Synthetic supplier",
+            evidence_reference=REFERENCE,now=NOW,halted=False)
+
+    def test_reopen_and_compare_append_no_reset(self):
+        from nexus_exchange.correspondence_thread import ThreadStore
+        with ThreadStore(self.path) as first, ThreadStore(self.path,existing_only=True) as second:
+            opened=first.open(self.draft,self.recipient,now=NOW,confirmed=True,halted=False)
+            args=dict(kind="SIMULATED_REPLY",evidence_reference="sha256:"+"b"*64+";bytes:24",
+                      now=NOW+timedelta(seconds=1),expected_head=opened["head_sha256"],
+                      confirmed=True,halted=False)
+            latest=first.append(self.draft,self.recipient,**args)
+            with self.assertRaises(ValueError):
+                second.append(self.draft,self.recipient,**args)
+            self.assertEqual(second.open(self.draft,self.recipient,now=args["now"],
+                confirmed=True,halted=False),latest)
+        with ThreadStore(self.path,existing_only=True) as restored:
+            self.assertEqual(restored.get(self.draft,self.recipient,halted=False),latest)
+            self.assertFalse(latest["external_authority"])
+
+    def test_scope_confirmation_capacity_and_tamper(self):
+        from nexus_exchange.correspondence_thread import ThreadStore
+        with self.assertRaises(ValueError):
+            ThreadStore(self.path,existing_only=True)
+        self.assertFalse(self.path.exists())
+        with ThreadStore(self.path) as store:
+            with self.assertRaises(PermissionError):
+                store.open(self.draft,self.recipient,now=NOW,confirmed=1,halted=False)
+            self.assertIsNone(store.get(self.draft,self.recipient,halted=False))
+            store.open(self.draft,self.recipient,now=NOW,confirmed=True,halted=False)
+            other=prepare_recipient(self.draft,contact(email="sales@example.org"),
+                organization_name="Synthetic supplier",evidence_reference=REFERENCE,now=NOW,halted=False)
+            self.assertIsNone(store.get(self.draft,other,halted=False))
+            with patch("nexus_exchange.correspondence_thread.MAX_THREADS",1):
+                with self.assertRaises(ValueError):
+                    store.open(self.draft,other,now=NOW,confirmed=True,halted=False)
+            with self.assertRaises(PermissionError):
+                store.get(self.draft,self.recipient,halted=True)
+            store.db.execute("UPDATE operator_threads_v1 SET head_sha256=?",("f"*64,))
+            with self.assertRaises(ValueError):
+                store.get(self.draft,self.recipient,halted=False)
+
+    def test_invalid_append_rolls_back_without_claiming_delivery(self):
+        from nexus_exchange.correspondence_thread import ThreadStore
+        with ThreadStore(self.path) as store:
+            opened=store.open(self.draft,self.recipient,now=NOW,confirmed=True,halted=False)
+            args=dict(kind="DELIVERED",evidence_reference=REFERENCE,now=NOW,
+                      expected_head=opened["head_sha256"],confirmed=True,halted=False)
+            with self.assertRaises(ValueError):
+                store.append(self.draft,self.recipient,**args)
+            self.assertEqual(store.get(self.draft,self.recipient,halted=False),opened)

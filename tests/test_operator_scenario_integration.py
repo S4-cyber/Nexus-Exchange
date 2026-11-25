@@ -203,3 +203,45 @@ class OperatorRuntimeTests(unittest.TestCase):
                 expected_recipient_id="a"*64,confirmed=False)
         with self.assertRaises(ValueError):
             self.guard.operator_action("recipient_send",self.key,draft_id=key)
+
+
+    def test_durable_thread_runtime_scope_evidence_and_halt(self):
+        from nexus_exchange.evidence import fingerprint
+        self.guard.resume()
+        draft=self.call()["draft"]
+        key=draft["draft_id"]
+        supplier=self.supplier()
+        path=self.directory/"synthetic-thread-evidence.txt"
+        path.write_bytes(b"synthetic contact evidence")
+        recipient=dict(scheme="REGISTRY",identifier="SYNTHETIC-1",organization_name="Synthetic supplier",
+            email="quotes@example.org",source_url="https://example.org/contact",observed_at=self.now.isoformat())
+        args=dict(draft_id=key,supplier=supplier,recipient=recipient,evidence_path=path)
+        preview=self.guard.operator_action("recipient_preview",self.key,**args)
+        self.guard.operator_action("recipient_save",self.key,**args,
+            expected_recipient_id=preview["recipient_id"],confirmed=True)
+        scope=dict(draft_id=key,recipient_id=preview["recipient_id"])
+        self.assertIsNone(self.guard.operator_action("thread_history",self.key,**scope))
+        self.assertFalse((self.directory/"operator-threads.sqlite3").exists())
+        opened=self.guard.operator_action("thread_open",self.key,**scope,supplier=supplier,confirmed=True)
+        path.write_bytes(b"synthetic reply")
+        reference=fingerprint(path,halted=False)
+        event=dict(**scope,supplier=supplier,kind="SIMULATED_REPLY",evidence_path=path,
+                   expected_head=opened["head_sha256"],expected_evidence=reference,confirmed=True)
+        path.write_bytes(b"changed reply")
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("thread_append",self.key,**event)
+        path.write_bytes(b"synthetic reply")
+        updated=self.guard.operator_action("thread_append",self.key,**event)
+        self.assertEqual(len(updated["events"]),1)
+        self.assertFalse(updated["reply_authenticated"])
+        self.assertNotIn(str(path),str(updated))
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("thread_append",self.key,**event)
+        self.assertEqual(self.guard.operator_action("thread_open",self.key,**scope,supplier=supplier,
+            confirmed=True),updated)
+        self.assertEqual(self.guard.operator_action("thread_history",self.key,**scope),updated)
+        with self.assertRaises(ValueError):
+            self.guard.operator_action("thread_history",self.key,draft_id=key,recipient_id="a"*64)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action("thread_history",self.key,**scope)
