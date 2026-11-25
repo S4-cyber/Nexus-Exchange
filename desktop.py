@@ -1515,6 +1515,10 @@ def main(*, data_directory=None, gui_smoke=False):
 if __name__ == "__main__":
     from multiprocessing import freeze_support
     freeze_support()
+    if "--genesis-self-test" in sys.argv:
+        from nexus_exchange.genesis_diagnostic import run_diagnostic
+        diagnostic=run_diagnostic(confirmed=True)
+        sys.exit(0 if diagnostic["mode"]=="OWNED_OFFLINE_FIXTURE_ONLY" and not diagnostic["external_authority"] else 1)
     if "--fixture-process-self-test" in sys.argv:
         from nexus_exchange.browser_process import run_isolated_fixture
         for fixture_id in ("procurement","digital_services"):
