@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from nexus_exchange import sam_search
 from nexus_exchange.checklist_store import context_for
 from nexus_exchange.digital_deliverable import MAX_ROWS,MAX_COLUMNS,MAX_INPUT_BYTES,MAX_CELL_CHARS
-from nexus_exchange.operator_capabilities import catalog,assess_lead,assess_requirements,CSV_ID,JSON_ID
+from nexus_exchange.operator_capabilities import catalog,assess_lead,assess_requirements,CSV_ID,JSON_ID,PROFILE_ID
 from nexus_exchange.review_ranking import RankingStore
 from nexus_exchange.ranking_workspace import row_details
 from test_cash_feasibility import scenario
@@ -49,7 +49,9 @@ class OperatorCapabilitiesTests(unittest.TestCase):
     def test_catalog_is_bounded_and_uses_actual_limits(self):
         result=catalog(halted=False)
         entry=result["capabilities"][0]
-        self.assertEqual(len(result["capabilities"]),2)
+        self.assertEqual(len(result["capabilities"]),3)
+        self.assertEqual(result["capabilities"][2]["capability_id"],PROFILE_ID)
+        self.assertIn("distinct_nonblank_count",result["capabilities"][2]["output_columns"])
         self.assertEqual(result["capabilities"][1]["capability_id"],JSON_ID)
         self.assertEqual(result["capabilities"][1]["input_format"],"UTF8_JSON_RECORDS")
         self.assertEqual(entry["max_rows"],MAX_ROWS)
@@ -103,6 +105,36 @@ class OperatorCapabilitiesTests(unittest.TestCase):
         self.assertFalse(result["requirements_verified"])
         mismatch=assess_requirements(requirements(capability_id=JSON_ID),halted=False)
         self.assertIn("UNSUPPORTED_INPUT_FORMAT",mismatch["reasons"])
+
+    def test_profile_title_hints_and_source_hold(self):
+        report=sam_search.search(sam.QUERY,sam.KEY,
+            transport=Mock(return_value=(200,sam.page([
+                sam.notice(7,title="Synthetic CSV quality report"),
+                sam.notice(8,title="Synthetic general data quality"),
+                sam.notice(9,title="Synthetic CSV completeness report",active="No")]))),
+            approved=True,halt_check=lambda:False,clock=lambda:NOW)
+        self.store.record(report,now=NOW,halted=False)
+        rows=self.by_title(operator_focus=True)
+        match=rows["Synthetic CSV quality report"]["operator_capability"]
+        self.assertEqual(match["capability_ids"],[PROFILE_ID])
+        self.assertEqual(match["review_priority"],0)
+        self.assertFalse(match["execution_eligible"])
+        self.assertEqual(rows["Synthetic general data quality"]["operator_capability"]["capability_ids"],[])
+        held=rows["Synthetic CSV completeness report"]["operator_capability"]
+        self.assertEqual(held["state"],"SOURCE_HELD")
+        self.assertEqual(held["review_priority"],1)
+
+    def test_profile_requirements_are_aggregate_only(self):
+        result=assess_requirements(requirements(capability_id=PROFILE_ID,
+            preserve_all_fields=False),halted=False)
+        self.assertTrue(result["declared_structure_fits"])
+        self.assertFalse(result["source_bytes_checked"])
+        self.assertFalse(result["execution_eligible"])
+        incompatible=assess_requirements(requirements(capability_id=PROFILE_ID),halted=False)
+        self.assertIn("ROW_LEVEL_OUTPUT_UNSUPPORTED_FOR_PROFILE",incompatible["reasons"])
+        wrong=assess_requirements(requirements(capability_id=PROFILE_ID,
+            preserve_all_fields=False,input_format="UTF8_JSON_RECORDS"),halted=False)
+        self.assertIn("UNSUPPORTED_INPUT_FORMAT",wrong["reasons"])
 
     def test_focus_only_within_existing_review_tiers(self):
         result=self.rank(operator_focus=True)

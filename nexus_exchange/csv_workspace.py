@@ -5,7 +5,7 @@ import re
 import sqlite3
 
 from .checklist_store import _hash
-from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT
+from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT, PROFILE_FORMAT
 from .deliverable_files import preview_pins
 from .obligation_workspace import validate_record, open_obligation_window
 
@@ -20,10 +20,11 @@ def parse_fields(columns,key,rows):
 
 
 class CsvWorkspace:
-    def __init__(self,plan_id,*,action,blocked_check,source_format=CSV_SOURCE):
+    def __init__(self,plan_id,*,action,blocked_check,source_format=CSV_SOURCE,operation="PRESERVE"):
         self.plan_id=_hash(plan_id)
         self.source_format=source_format
-        self.contract_format=_source_contract_format(source_format)
+        self.operation=operation
+        self.contract_format=_source_contract_format(source_format,operation)
         if not callable(action) or not callable(blocked_check):
             raise ValueError("trusted desktop callbacks required")
         self.action=action
@@ -45,6 +46,8 @@ class CsvWorkspace:
         inputs=dict(source_path=source_path,**parse_fields(columns,key,rows))
         if self.source_format!=CSV_SOURCE:
             inputs["source_format"]=self.source_format
+        if self.operation!="PRESERVE":
+            inputs["operation"]=self.operation
         result=self.action("preview",self.plan_id,confirmed=True,**inputs)
         self._permit()
         pins=preview_pins(result)
@@ -100,7 +103,8 @@ def preview_text(result):
     reader=csv.reader(io.StringIO(result["artifact"].decode("utf-8"),newline=""))
     lines=["LOCAL WORK SAMPLE — not customer acceptance or commercial authority",
            "Source: "+("flat JSON string records" if result["contract"]["format"]==JSON_FORMAT else "CSV"),
-           "Rows: "+str(report["rows"])+" | bytes: "+str(report["artifact_bytes"]),
+           "Service: "+("Column quality profile (aggregate statistics)" if result["contract"]["format"]==PROFILE_FORMAT else "Field-preserving CSV output"),
+           "Input rows: "+str(result["contract"]["specification"]["expected_rows"])+" | output rows: "+str(report["rows"])+" | bytes: "+str(report["artifact_bytes"]),
            "Contract: "+pins["expected_contract"],"Artifact: "+pins["expected_artifact"],
            "QA: "+", ".join(report["checks"]),"",
            "Preview: header and up to 10 data rows (full artifact on explicit export)"]
@@ -112,27 +116,28 @@ def preview_text(result):
 
 
 def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke_evidence=None,
-                    source_format=CSV_SOURCE):
+                    source_format=CSV_SOURCE,operation="PRESERVE"):
     import tkinter as tk
     from tkinter import ttk,filedialog,messagebox
     from tkinter.scrolledtext import ScrolledText
 
-    workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check,source_format=source_format)
+    workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check,source_format=source_format,operation=operation)
+    profile_mode=operation=="COLUMN_PROFILE"
     json_source=source_format==JSON_SOURCE
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
-    window.title("Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
+    window.title("Nexus Exchange | Operator CSV quality report" if profile_mode else "Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
     window.geometry(fit_geometry(window,1000,650))
-    ttk.Label(content,text="OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
+    ttk.Label(content,text="OPERATOR — CSV column quality report" if profile_mode else "OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(content,text="Saved plan: "+plan_id,wraplength=950).pack()
-    ttk.Label(content,text=("Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)
+    ttk.Label(content,text=("Select UTF-8 CSV and declare its exact input columns, unique key and row count. Produce aggregate empty, whitespace, nonblank, distinct and length counts per column; no source cell values or data correction." if profile_mode else "Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)
     form=ttk.Frame(content); form.pack(fill="x",padx=12,pady=5)
     source=tk.StringVar(master=window)
     columns=tk.StringVar(master=window)
     key=tk.StringVar(master=window)
     rows=tk.StringVar(master=window)
-    for i,(label,var) in enumerate((("Source JSON" if json_source else "Source CSV",source),("Output columns (comma separated)",columns),
+    for i,(label,var) in enumerate((("Source JSON" if json_source else "Source CSV",source),("Input columns (comma separated)" if profile_mode else "Output columns (comma separated)",columns),
                                    ("Unique key column",key),("Expected data rows (1–2000)",rows))):
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=4)
         ttk.Entry(form,textvariable=var,width=66,state="readonly" if i==0 else "normal").grid(row=i,column=1,sticky="ew",padx=6)

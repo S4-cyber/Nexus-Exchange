@@ -310,12 +310,12 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             error(exc)
             return None
-    def csv_deliverable(source_format="UTF8_CSV"):
+    def csv_deliverable(source_format="UTF8_CSV",operation="PRESERVE"):
         try:
             key=selection()
             workspace.load(key)
             return open_csv_window(window,plan_id=key,action=csv_action,blocked_check=operator_blocked,
-                                   source_format=source_format)
+                                   source_format=source_format,operation=operation)
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             error(exc)
             return None
@@ -334,6 +334,8 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
         ttk.Button(content,text="Operator CSV work sample",command=csv_deliverable).pack(pady=3)
         ttk.Button(content,text="Operator JSON-to-CSV work sample",
                    command=lambda:csv_deliverable("UTF8_JSON_RECORDS")).pack(pady=3)
+        ttk.Button(content,text="Operator CSV quality report",
+                   command=lambda:csv_deliverable(operation="COLUMN_PROFILE")).pack(pady=3)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
         items=tree.selection()

@@ -10,7 +10,7 @@ from datetime import timedelta
 from nexus_exchange import sam_search
 from nexus_exchange.checklist_store import context_for
 from nexus_exchange.digital_deliverable import (
-    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES, JSON_FORMAT, JSON_SOURCE,
+    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES, JSON_FORMAT, JSON_SOURCE, PROFILE_FORMAT, PROFILE_COLUMNS,
 )
 from nexus_exchange.lead_store import _digest,_json
 from nexus_exchange.owner_profile import ProfileStore
@@ -25,6 +25,10 @@ import test_sam_search as sam
 RAW=b'name,id,category\n"Beta, Inc",002,Research\nAlpha,001,Design\n'
 EXPECTED=b'"id","name","category"\r\n"001","Alpha","Design"\r\n"002","Beta, Inc","Research"\r\n'
 JSON_RAW=b'[{"name":"Beta, Inc","id":"002","category":"Research"},{"category":"Design","id":"001","name":"Alpha"}]'
+
+PROFILE_RAW=b'id,name,category\n001,,A\n002, ,A\n003,Alpha,a\n004,Alpha,\n'
+PROFILE_EXPECTED=(b'"column","row_count","empty_count","whitespace_only_count","nonblank_count","distinct_nonblank_count","min_chars","max_chars"\r\n'
+    b'"category","4","1","0","3","2","0","1"\r\n"id","4","0","0","4","4","3","3"\r\n"name","4","1","1","2","1","0","5"\r\n')
 
 
 def spec(raw=RAW,**changes):
@@ -160,6 +164,75 @@ class DigitalDeliverableTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.json_call()
+
+    def profile_call(self,raw=PROFILE_RAW,**changes):
+        return self.guard.produce_csv_deliverable(self.key,raw=raw,
+            specification=spec(raw,**dict(dict(expected_rows=4),**changes)),
+            operation="COLUMN_PROFILE",confirmed=True)
+
+    def test_column_profile_exact_aggregates_and_no_source_values(self):
+        result=self.profile_call()
+        self.assertEqual(result["artifact"],PROFILE_EXPECTED)
+        self.assertEqual(result["contract"]["format"],PROFILE_FORMAT)
+        self.assertEqual(result["report"]["rows"],3)
+        self.assertEqual(result["report"]["columns"],list(PROFILE_COLUMNS))
+        self.assertEqual(result["report"]["key_column"],"column")
+        self.assertNotIn(b"Alpha",result["artifact"])
+        self.assertNotIn(b"001",result["artifact"])
+        self.assertNotIn("EXACT_CELL_PRESERVATION",result["report"]["checks"])
+        self.assertEqual(result["report"],verify_csv(result["contract"],PROFILE_RAW,PROFILE_EXPECTED,halted=False))
+        self.assertEqual(self.profile_call(),result)
+        for flag in ("external_authority","buyer_accepted","revenue_realized","invoice_eligible"):
+            self.assertFalse(result["report"][flag])
+
+    def test_column_profile_rejects_changed_output_and_unsafe_source(self):
+        result=self.profile_call()
+        for artifact in (PROFILE_EXPECTED.replace(b'"category","4"',b'"category","5"'),
+                         PROFILE_EXPECTED.replace(b'"category","4"',b'"other","4"'),
+                         PROFILE_EXPECTED.replace(b"\r\n",b"\n"),
+                         PROFILE_EXPECTED.replace(b'"name","4"',b'"id","4"')):
+            with self.subTest(artifact=artifact),self.assertRaises(DeliverableError):
+                verify_csv(result["contract"],PROFILE_RAW,artifact,halted=False)
+        for raw in (PROFILE_RAW.replace(b"Alpha",b"=1+1"),PROFILE_RAW.replace(b"004",b"003"),
+                    PROFILE_RAW.replace(b"Alpha",b"\x00"),PROFILE_RAW.replace(b"category",b"extra")):
+            with self.subTest(raw=raw),self.assertRaises(DeliverableError):
+                self.profile_call(raw)
+        with self.assertRaises(DeliverableError):
+            self.profile_call(expected_rows=3)
+        with self.assertRaises(DeliverableError):
+            self.guard.produce_csv_deliverable(self.key,raw=JSON_RAW,specification=spec(JSON_RAW),
+                source_format=JSON_SOURCE,operation="COLUMN_PROFILE",confirmed=True)
+
+    def test_column_profile_file_registration_and_operation_pins(self):
+        from nexus_exchange.csv_workspace import CsvWorkspace
+        from nexus_exchange.deliverable_files import preview_pins
+        source=self.directory/"profile.csv"
+        target=self.directory/"report.csv"
+        source.write_bytes(PROFILE_RAW)
+        workspace=CsvWorkspace(self.key,action=self.guard.csv_file_action,
+            blocked_check=self.guard.is_set,operation="COLUMN_PROFILE")
+        reviewed=workspace.preview(source,"id,name,category","id","4")
+        self.assertEqual(reviewed["artifact"],PROFILE_EXPECTED)
+        with self.assertRaises(ValueError):
+            self.guard.csv_file_action("export",self.key,confirmed=True,source_path=source,
+                columns=["id","name","category"],key_column="id",expected_rows=4,
+                destination_path=target,**preview_pins(reviewed))
+        self.assertFalse(target.exists())
+        self.assertTrue(workspace.export(target,confirmed=True)["exported"])
+        self.assertEqual(target.read_bytes(),PROFILE_EXPECTED)
+        workspace.preview(source,"id,name,category","id","4")
+        saved=workspace.register(target,confirmed=True)
+        self.assertEqual(saved["binding"]["qa_report"]["rows"],3)
+        self.assertEqual(saved["binding"]["contract"]["specification"]["expected_rows"],4)
+        self.assertFalse(saved["buyer_accepted"])
+        self.assertEqual(self.guard.csv_obligation_action("history",self.key,
+            obligation_id=saved["obligation_id"]),saved)
+        legacy=self.call(PROFILE_RAW,expected_rows=4)
+        self.assertEqual(legacy["report"]["rows"],4)
+        self.assertNotEqual(legacy["contract"]["contract_sha256"],reviewed["contract"]["contract_sha256"])
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.profile_call()
 
     def test_changed_input_or_artifact_rejected(self):
         contract=self.contract()

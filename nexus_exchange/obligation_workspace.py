@@ -148,6 +148,8 @@ def record_text(record):
            "Artifact: "+binding["artifact_reference"],"QA: "+qa["report_sha256"],
            "Expected rows: "+str(spec["expected_rows"])+" | key: "+spec["key_column"],
            "Columns: "+", ".join(spec["columns"]),
+           "Output rows: "+str(qa["rows"])+" | output key: "+qa["key_column"],
+           "Output columns: "+", ".join(qa["columns"]),
            "Local checks: "+", ".join(qa["checks"]),
            "Evidence head: "+record["head_sha256"],"",
            "Evidence notes (owner declarations; file fingerprints only)"]

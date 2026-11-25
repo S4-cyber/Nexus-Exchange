@@ -109,6 +109,7 @@ HELPS={
     "operator rfq":"Open a local request-for-quotation draft workspace.",
     "operator csv work sample":"Open the tool for producing and checking a local CSV sample.",
     "operator json-to-csv work sample":"Convert a selected flat JSON array of string records to a checked CSV without sending it.",
+    "operator csv quality report":"Calculate per-column aggregate completeness, distinctness and length statistics locally.",
     "animate stars":"Turn the decorative star movement on or off in all app windows. Work continues unchanged.",
 }
 

@@ -217,25 +217,25 @@ class RuntimeGuard:
         return ScenarioCouncil(self._directory,halt_check=self.is_set,
                                clock=self._clock).inspect(plan_id)
 
-    def _csv_scoped(self,plan_id,raw,specification,*,snapshot=None,source_format="UTF8_CSV"):
+    def _csv_scoped(self,plan_id,raw,specification,*,snapshot=None,source_format="UTF8_CSV",operation="PRESERVE"):
         from .digital_deliverable import build_contract, produce_csv
         if snapshot is None:
             snapshot=self._csv_snapshot(plan_id)
-        contract=build_contract(snapshot,specification,halted=self.is_set(),source_format=source_format)
+        contract=build_contract(snapshot,specification,halted=self.is_set(),source_format=source_format,operation=operation)
         result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
         current=self._csv_snapshot(plan_id)
-        if build_contract(current,specification,halted=self.is_set(),source_format=source_format)!=contract:
+        if build_contract(current,specification,halted=self.is_set(),source_format=source_format,operation=operation)!=contract:
             raise ValueError("deliverable scenario scope changed")
         if self.is_set():
             raise PermissionError("deliverable withheld after halt")
         return result
 
-    def produce_csv_deliverable(self,plan_id,*,raw,specification,confirmed=None,source_format="UTF8_CSV"):
+    def produce_csv_deliverable(self,plan_id,*,raw,specification,confirmed=None,source_format="UTF8_CSV",operation="PRESERVE"):
         """One explicit local, bounded work sample for an exact saved plan."""
         self._csv_ready(confirmed)
         self._operator_active=True
         try:
-            return self._csv_scoped(plan_id,raw,specification,source_format=source_format)
+            return self._csv_scoped(plan_id,raw,specification,source_format=source_format,operation=operation)
         finally:
             self._operator_active=False
 
@@ -248,9 +248,10 @@ class RuntimeGuard:
                 "register":{"source_path","columns","key_column","expected_rows",
                             "artifact_path","expected_contract","expected_report","expected_artifact"}}
         if (type(action) is not str or action not in fields or
-                set(inputs) not in (fields[action],fields[action]|{"source_format"})):
+                not (fields[action]<=set(inputs)<=(fields[action]|{"source_format","operation"}))):
             raise ValueError("unsupported CSV action or inputs")
         source_format=inputs.get("source_format","UTF8_CSV")
+        operation=inputs.get("operation","PRESERVE")
         from .digital_deliverable import build_contract
         from .deliverable_files import read_selected_csv, publish_new_csv, preview_pins
         from .checklist_store import _hash
@@ -264,10 +265,10 @@ class RuntimeGuard:
             # Validate the declared schema and current source before file I/O.
             spec=dict(input_sha256="0"*64,columns=inputs["columns"],
                       key_column=inputs["key_column"],expected_rows=inputs["expected_rows"])
-            build_contract(snapshot,spec,halted=self.is_set(),source_format=source_format)
+            build_contract(snapshot,spec,halted=self.is_set(),source_format=source_format,operation=operation)
             raw=read_selected_csv(inputs["source_path"],halted=self.is_set(),halt_check=self.is_set,source_format=source_format)
             spec["input_sha256"]=sha256(raw).hexdigest()
-            result=self._csv_scoped(plan_id,raw,spec,snapshot=snapshot,source_format=source_format)
+            result=self._csv_scoped(plan_id,raw,spec,snapshot=snapshot,source_format=source_format,operation=operation)
             if action=="preview":
                 return result
             pins=preview_pins(result)
@@ -281,7 +282,7 @@ class RuntimeGuard:
                 if match["byte_match"] is not True:
                     raise ValueError("selected artifact does not match reviewed deliverable")
                 current=self._csv_snapshot(plan_id)
-                if build_contract(current,spec,halted=self.is_set(),source_format=source_format)!=result["contract"]:
+                if build_contract(current,spec,halted=self.is_set(),source_format=source_format,operation=operation)!=result["contract"]:
                     raise ValueError("deliverable scenario scope changed")
                 path=self._directory/"operator-obligations.sqlite3"
                 with ObligationStore(path,existing_only=os.path.lexists(path)) as store:
