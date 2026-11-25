@@ -293,6 +293,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 return stop.csv_obligation_action(action,plan_id,**inputs)
             if action=="scoped_preview":
                 return stop.preview_scoped_service_files(plan_id,**inputs)
+            if action=="scoped_export":
+                return stop.export_scoped_service_files(plan_id,**inputs)
             return stop.csv_file_action(action,plan_id,**inputs)
         finally:
             if stop.is_set():
@@ -1518,7 +1520,8 @@ def main(*, data_directory=None, gui_smoke=False):
             scoped_window=open_service_requirements_window(root,
                 RankingWorkspace(directory,halt_check=stop.is_set),context_for(operator_row),
                 operator_row["title"],plan_id=operator_key,sample_action=csv_action,
-                blocked_check=council_blocked,smoke_sample=(csv_source,len(owned),sha256(owned).hexdigest(),expected_scoped))
+                blocked_check=council_blocked,smoke_sample=(csv_source,len(owned),sha256(owned).hexdigest(),expected_scoped,
+                    directory/"synthetic-scoped-output.csv"))
             scoped_window.destroy()
             csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
                 blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination),smoke_evidence=csv_evidence)

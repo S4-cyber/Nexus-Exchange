@@ -69,6 +69,8 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
     from .csv_workspace import preview_text
     from .digital_deliverable import _source_contract_format
     from .service_handoff import checked_review_route
+    from .deliverable_files import preview_pins
+    from .scoped_export import require_matching_pins
 
     workspace.resolve(context)
     context = dict(context)
@@ -115,11 +117,14 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         output.configure(state="disabled")
 
     reviewed = None
+    export_ready = None
 
     def invalidate(message):
-        nonlocal reviewed
+        nonlocal reviewed, export_ready
         reviewed = None
+        export_ready = None
         sample_button.configure(state="disabled")
+        export_button.configure(state="disabled")
         write(message)
 
     def available():
@@ -159,6 +164,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         return review
 
     def produce_sample(selected, source_path, right_path, confirmed):
+        nonlocal export_ready
         if selected is None or selected is not reviewed or not available() or confirmed is not True:
             invalidate("Review changed or local preview not confirmed. Review again.")
             return None
@@ -178,9 +184,11 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
                     or sample["contract"]["format"] != _source_contract_format(source,operation)
                     or sample["contract"]["specification"] != review["requirements_assessment"]["declared_input"]["specification"]):
                 raise ValueError("Scoped preview mismatch.")
-            text = preview_text(sample).replace(" (full artifact on explicit export)", " (preview only; export unavailable here)")
+            text = preview_text(sample)
+            export_ready = (declaration,pin,source_path,right_path,preview_pins(sample))
+            export_button.configure(state="normal")
             write("EXACT SCOUT SCOPE — TRANSIENT LOCAL SAMPLE\nScope: " + pin + "\n" + text
-                  + "\nNo export, registration, customer acceptance or revenue. Review again to produce another sample.")
+                  + "\nExport requires a separate confirmation and exact reproduction. No registration, customer acceptance or revenue.")
             return result
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError, KeyError, TypeError):
             invalidate("Local sample unavailable or changed. Check requirements, selected files, saved plan and halt state; review again.")
@@ -211,11 +219,55 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         if confirmed:
             produce_sample(selected, source_path, right_path, confirmed)
 
+    def export_sample(selected, destination, confirmed):
+        if selected is None or selected is not export_ready or not available() or confirmed is not True:
+            invalidate("Preview changed or export not confirmed. Review and preview again.")
+            return None
+        declaration,pin,source_path,right_path,pins = selected
+        invalidate("Reproducing the exact reviewed sample for local export...")
+        try:
+            result=sample_action("scoped_export",plan_id,context=context,requirements=declaration,
+                expected_scope=pin,source_path=source_path,right_source_path=right_path,
+                destination_path=destination,expected_pins=pins,confirmed=True)
+            if (not available() or type(result) is not dict
+                    or set(result)!=set(pins)|{"review_scope_sha256","exported","buyer_accepted","external_authority"}
+                    or result["review_scope_sha256"]!=pin or result["exported"] is not True
+                    or result["buyer_accepted"] is not False or result["external_authority"] is not False):
+                raise ValueError("Invalid scoped export receipt.")
+            require_matching_pins(pins,{key:result[key] for key in pins})
+            write("EXACT SCOUT SCOPE — LOCAL CSV EXPORTED\nScope: "+pin
+                  +"\nArtifact: "+pins["expected_artifact"]
+                  +"\nNo registration, delivery, customer acceptance or revenue. Review again for another export.")
+            return result
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError, KeyError, TypeError):
+            invalidate("Local export unavailable or changed. Inspect the selected destination before retrying; review and preview again.")
+            return None
+
+    def choose_export():
+        selected=export_ready
+        if selected is None or not available():
+            invalidate("Export unavailable. Review and preview again.")
+            return
+        destination=filedialog.asksaveasfilename(parent=window,defaultextension=".csv",
+            filetypes=[("CSV","*.csv")],initialfile="nexus-scoped-sample.csv",confirmoverwrite=False)
+        if not destination:
+            return
+        if selected is not export_ready or not available():
+            invalidate("Preview changed while selecting destination. Review again.")
+            return
+        confirmed=messagebox.askyesno("Export exact local sample",
+            "Reproduce the reviewed sample and create a new local CSV? No overwrite, registration or external action.",
+            parent=window)
+        if confirmed:
+            export_sample(selected,destination,confirmed)
+
     bar = ttk.Frame(content)
     bar.pack(pady=4)
     ttk.Button(bar, text="Review declared requirements", command=evaluate).pack(side="left",padx=4)
     sample_button = ttk.Button(bar,text="Preview exact local sample",command=choose_sample,state="disabled")
     sample_button.pack(side="left",padx=4)
+    export_button=ttk.Button(bar,text="Export exact sample",command=choose_export,state="disabled")
+    export_button.pack(side="left",padx=4)
     for var in variables.values():
         var.trace_add("write", lambda *_: invalidate("Fields changed. Review again."))
     timer = None
@@ -252,7 +304,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         if "Fields changed" not in output.get("1.0", "end"):
             raise RuntimeError("Scout requirements GUI retained stale review")
     if smoke_sample is not None:
-        path,size,digest,expected=smoke_sample
+        path,size,digest,expected,destination=smoke_sample
         for key,value in dict(capability_id="CSV standardization",input_format="UTF8_CSV",
                 input_bytes=str(size),max_cell_chars="30",preserve_all_fields="Yes",
                 requires_deduplication="No",requires_inference="No",requires_formulas="No",
@@ -264,8 +316,14 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         result=produce_sample(reviewed,path,None,True)
         if (result is None or result["sample"]["artifact"]!=expected
                 or "EXACT SCOUT SCOPE" not in output.get("1.0","end")
-                or str(sample_button.cget("state"))!="disabled"):
+                or str(sample_button.cget("state"))!="disabled"
+                or str(export_button.cget("state"))!="normal"):
             raise RuntimeError("Scoped sample GUI did not produce and consume exact preview")
+        receipt=export_sample(export_ready,destination,True)
+        if (receipt is None or destination.read_bytes()!=expected
+                or str(export_button.cget("state"))!="disabled"
+                or "LOCAL CSV EXPORTED" not in output.get("1.0","end")):
+            raise RuntimeError("Scoped sample GUI did not publish and consume exact preview")
         variables["expected_rows"].set("1")
         if "Fields changed" not in output.get("1.0","end"):
             raise RuntimeError("Scoped sample GUI retained stale preview")

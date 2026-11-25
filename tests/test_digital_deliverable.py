@@ -211,6 +211,77 @@ class DigitalDeliverableTests(unittest.TestCase):
         args["source_path"].write_bytes(RAW)
         self.assertEqual(self.guard.preview_scoped_service_files(self.key,**args)["sample"]["artifact"],EXPECTED)
 
+    def test_scoped_export_reproduces_all_four_services(self):
+        from nexus_exchange.operator_capabilities import CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        for raw,specification,capability,right,expected in (
+                (RAW,spec(),CSV_ID,None,EXPECTED),
+                (JSON_RAW,spec(JSON_RAW),JSON_ID,None,EXPECTED),
+                (PROFILE_RAW,spec(PROFILE_RAW,expected_rows=4),PROFILE_ID,None,PROFILE_EXPECTED),
+                (LEFT,spec(LEFT,expected_rows=3,right_input_sha256=sha256(RIGHT).hexdigest(),
+                           right_expected_rows=3),RECONCILE_ID,RIGHT,RECONCILED)):
+            with self.subTest(capability=capability):
+                args=self.scoped_file_args(raw,specification,capability,right_raw=right)
+                preview=self.guard.preview_scoped_service_files(self.key,**args)
+                pins=preview_pins(preview["sample"])
+                destination=self.directory/(capability+".csv")
+                result=self.guard.export_scoped_service_files(self.key,**args,
+                    destination_path=destination,expected_pins=pins)
+                self.assertEqual(destination.read_bytes(),expected)
+                self.assertEqual(result,dict(pins,review_scope_sha256=args["expected_scope"],
+                    exported=True,buyer_accepted=False,external_authority=False))
+                with self.assertRaises(ValueError):
+                    self.guard.export_scoped_service_files(self.key,**args,
+                        destination_path=destination,expected_pins=pins)
+                self.assertEqual(destination.read_bytes(),expected)
+        self.assertFalse((self.directory/"operator-obligations.sqlite3").exists())
+
+    def test_scoped_export_mismatches_never_publish(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        pins=preview_pins(self.guard.preview_scoped_service_files(self.key,**args)["sample"])
+        destination=self.directory/"new.csv"
+        with patch("nexus_exchange.deliverable_files.read_selected_csv") as read:
+            with self.assertRaises(ValueError):
+                self.guard.export_scoped_service_files(self.key,**args,
+                    destination_path=destination,expected_pins={})
+            read.assert_not_called()
+        for key in pins:
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                self.guard.export_scoped_service_files(self.key,**args,
+                    destination_path=destination,expected_pins=dict(pins,**{key:"f"*64}))
+        self.assertFalse(destination.exists())
+        args["source_path"].write_bytes(RAW.replace(b"Alpha",b"Omega"))
+        with self.assertRaises(ValueError):
+            self.guard.export_scoped_service_files(self.key,**args,
+                destination_path=destination,expected_pins=pins)
+        self.assertFalse(destination.exists())
+        args["source_path"].write_bytes(RAW)
+        self.assertTrue(self.guard.export_scoped_service_files(self.key,**args,
+            destination_path=destination,expected_pins=pins)["exported"])
+
+    def test_scoped_export_requires_confirmation_fresh_scope_and_no_halt(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        pins=preview_pins(self.guard.preview_scoped_service_files(self.key,**args)["sample"])
+        destination=self.directory/"new.csv"
+        for confirmed in (None,False,1):
+            with self.subTest(confirmed=confirmed),self.assertRaises(PermissionError):
+                self.guard.export_scoped_service_files(self.key,**dict(args,confirmed=confirmed),
+                    destination_path=destination,expected_pins=pins)
+        self.now+=timedelta(days=2)
+        with self.assertRaises(ValueError):
+            self.guard.export_scoped_service_files(self.key,**args,
+                destination_path=destination,expected_pins=pins)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.export_scoped_service_files(self.key,**args,
+                destination_path=destination,expected_pins=pins)
+        self.assertFalse(destination.exists())
+        self.assertFalse(self.guard._operator_active)
+
     def test_real_saved_plan_produces_exact_artifact_and_qa(self):
         result=self.call()
         self.assertEqual(result["artifact"],EXPECTED)

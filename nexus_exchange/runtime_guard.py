@@ -266,6 +266,31 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def export_scoped_service_files(self,plan_id,*,context,requirements,expected_scope,
+                                    source_path,destination_path,expected_pins,
+                                    right_source_path=None,confirmed=None):
+        """Reproduce the exact reviewed sample and publish one new local CSV."""
+        from .scoped_export import checked_export_pins, require_matching_pins
+        from .deliverable_files import preview_pins, publish_new_csv
+        self._csv_ready(confirmed)
+        pinned=checked_export_pins(expected_pins)
+        self._operator_active=True
+        try:
+            result=self._scoped_service_sample(plan_id,context,requirements,expected_scope,
+                file_paths=(source_path,right_source_path))
+            if result["review_scope_sha256"]!=expected_scope or result["external_authority"] is not False:
+                raise ValueError("SCOPED_PREVIEW_CHANGED")
+            sample=result["sample"]
+            pins=require_matching_pins(pinned,preview_pins(sample))
+            publish_new_csv(destination_path,sample["artifact"],
+                            halted=self.is_set(),halt_check=self.is_set)
+            if self.is_set():
+                raise PermissionError("halt after publication; inspect selected destination")
+            return dict(pins,review_scope_sha256=expected_scope,exported=True,
+                        buyer_accepted=False,external_authority=False)
+        finally:
+            self._operator_active=False
+
     def _scoped_service_sample(self,plan_id,context,requirements,expected_scope,
                                *,raw=None,right_raw=None,file_paths=None):
         from .ranking_workspace import RankingWorkspace
