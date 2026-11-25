@@ -234,3 +234,8 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R05/E14/E18/E27/E31: owner-selected local file fingerprint references tied through the existing checklist scope; reselect and compare saved SHA-256/length; no persistence of raw file or path, no independent factual verification or action authority. Ten regression methods and populated GUI smoke covering save/reload/compare. Exact-head CI/build pending.
 - Prior corrected persistent To Do head 7996aa6cc92bf0b523654954021dec84caeb03c0 passed Windows 45536372110 (artifact 14986998694) and CI 45536372118/45536379549. Existing local profiles and notes remain unchanged; no new dependencies or paid services. Main acceptance 0/42 pending integration.
 - Next: authenticated source evidence, explicit delivery requirements and feasibility/cash exposure scenarios, scoped approvals, durable halt and recovery. See docs/AEGIS_FILE_EVIDENCE.md.
+
+
+## Scout cash feasibility candidate
+- R06/E22/E35: local lead/profile-bound USD scenario, explicit unknown cost categories, conservative pre-payment exposure, expected net with conditional payment, modeled labor and payment timing. Nine regression methods; exact-head CI pending. No verified revenue, cash balance, delivery schedule or commercial authority. See docs/SCOUT_CASH_FEASIBILITY.md. Main accepted gates remain 0/42.
+- Next: independently sourced terms and costs, persistent scenario review/UI, current deadline and delivery checks, durable halt/recovery and branch consolidation.
