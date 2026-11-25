@@ -189,3 +189,30 @@ class CoordinatorTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     coordinator.run_once(self.task,self.artifacts)
             self.assertEqual(store.status("COUNCIL."+SCOPE,halted=False)["state"],"RESERVED")
+
+    def test_report_must_match_actual_artifact_snapshot(self):
+        from nexus_exchange.council_coordinator import _prepare
+        from nexus_exchange.council_criterion_review import review_criteria
+        with CouncilAttemptStore(self.path) as store:
+            coordinator=self.coordinator(store)
+            coordinator.register(self.task)
+            handoff,plan=_prepare(self.task,1)
+            report=review_criteria(handoff,plan,self.artifacts,halted=False)
+            with patch("nexus_exchange.council_coordinator.review_criteria",return_value=report):
+                with self.assertRaises(ValueError):
+                    coordinator.run_once(self.task,{})
+            self.assertEqual(store.status("COUNCIL."+SCOPE,halted=False)["state"],"RESERVED")
+
+    def test_report_rejects_unexpected_fields(self):
+        from nexus_exchange.council_coordinator import _prepare
+        from nexus_exchange.council_criterion_review import review_criteria
+        with CouncilAttemptStore(self.path) as store:
+            coordinator=self.coordinator(store)
+            coordinator.register(self.task)
+            handoff,plan=_prepare(self.task,1)
+            report=review_criteria(handoff,plan,self.artifacts,halted=False)
+            report["arbitrary_payload"]="synthetic unexpected content"
+            with patch("nexus_exchange.council_coordinator.review_criteria",return_value=report):
+                with self.assertRaises(ValueError):
+                    coordinator.run_once(self.task,self.artifacts)
+            self.assertEqual(store.status("COUNCIL."+SCOPE,halted=False)["state"],"RESERVED")
