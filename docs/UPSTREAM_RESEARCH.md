@@ -1,0 +1,7 @@
+# Pinned upstream procurement research
+Reviewed 2026-11-24. No third-party runtime dependency approved.
+- [OCDS release schema](https://github.com/open-contracting/standard/blob/eb57a46e69efead6ae62144fe1b7cefc53d07ff2/schema/release-schema.json), development branch snapshot, not a stable-version certification. [License](https://github.com/open-contracting/standard/blob/eb57a46e69efead6ae62144fe1b7cefc53d07ff2/LICENSE): Apache-2.0 notice inspected; exceptions apply to specified logo. 
+- [OCDSKit](https://github.com/open-contracting/ocdskit/tree/d6e67adbd8ee42a9f12b3bc6cc92f6c4ddb1a17f), BSD-3-Clause metadata; README describes compiling releases and packaging. No code copied.
+## Implementation contract (E10–E12, E18)
+Use publisher-scoped OCID as process identity, release ID as observation identity, tender.id as tender identity. Preserve source URL, fetch time and release date separately. Map tender.title, tender.status, tender.value.amount/currency and tender.tenderPeriod.endDate. Do not infer active eligibility from missing status/deadline. Preserve absent versus null semantics and avoid treating a single incremental release as a complete record. Reject conflicting equal-identity snapshots. Treat publisher content as untrusted data. Validate against a selected stable OCDS release before claiming conformance. 
+Next: offline synthetic release fixtures, normalization adapter, bounded page transport, stale/failure tests, then authorized read-only source pilot. No live outreach or procurement commitments. No gate accepted by this document.

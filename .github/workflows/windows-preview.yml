@@ -1,0 +1,78 @@
+name: Windows preview
+on:
+  push:
+    branches: [review/windows-desktop, review/desktop-opportunity-browser, review/offline-procurement-import, review/desktop-deal-simulator, review/integrated-offline-baseline, review/scout-revenue-pathways, review/scout-sam-readonly-pilot, review/scout-global-trade-registry, review/scout-ted-keyless, review/scout-uk-fts, review/scout-canadabuys, review/scout-unified-lead-memory, review/scout-usaspending-contractors, review/scout-owner-capabilities, review/scout-persistent-todo, review/scout-aegis-file-evidence, main]
+  pull_request:
+    branches: [review/scout-persistent-scenarios, review/scout-review-ranking, review/scout-ranking-matrix, review/scout-assumption-evidence, review/council-durable-audit, review/council-runtime-recovery, review/operator-scenario-scope, review/operator-recipient-evidence, review/browser-offline-transport, review/browser-runtime-diagnostics, review/scout-fixture-process, review/scout-responsive-process, review/public-api-commercial-adoption, review/atlas-sec-counterparty, review/operator-csv-deliverable, review/operator-native-csv, review/operator-obligation-ledger, review/operator-simulated-receivables, review/operator-native-finance, review/operator-cashflow-allocation, review/scout-operator-capabilities, review/genesis-integrated-diagnostic, review/consolidated-offline-rc1, review/rc1-backup-recovery, review/rc1-security-inventory, review/native-cockpit-ui, review/cockpit-accessible-layout, review/operator-json-csv, review/operator-csv-profile, review/operator-csv-reconciliation, review/operator-workflow-planning, review/operator-durable-correspondence, review/genesis-correspondence-recovery, review/operator-native-correspondence, review/operator-native-thread-events, review/consolidated-offline-rc2-followup, review/scout-capability-discovery, review/scout-discovery-history, review/scout-receipt-evidence-resolution, review/scout-discovery-performance, review/consolidated-offline-rc3-scout, main]
+    paths:
+      - 'desktop.py'
+      - 'nexus_exchange/**'
+      - 'tests/**'
+      - 'requirements-build-windows.txt'
+      - '.github/workflows/windows-preview.yml'
+  workflow_dispatch:
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+      - run: python -m unittest discover -s tests -v
+      - run: python desktop.py --self-test
+      - run: python desktop.py --gui-self-test
+      - run: python desktop.py --fixture-process-self-test
+      - run: python desktop.py --genesis-self-test
+      - run: python -m nexus_exchange.release_security source .
+      - run: python -m venv .preview-build-env
+      - shell: pwsh
+        run: |
+          & .\.preview-build-env\Scripts\python.exe -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r requirements-build-windows.txt
+          if ($LASTEXITCODE -ne 0) { throw "Pinned build environment install failed" }
+          & .\.preview-build-env\Scripts\python.exe -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "Build dependency consistency failed" }
+          & .\.preview-build-env\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name NexusExchange desktop.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed" }
+          & .\.preview-build-env\Scripts\python.exe -m nexus_exchange.release_security build --expect-packager --output dist/BUILD-INVENTORY.json
+          if ($LASTEXITCODE -ne 0) { throw "Build package inventory failed" }
+          & .\.preview-build-env\Scripts\python.exe -m nexus_exchange.release_security source . --output dist/SOURCE-REVIEW.json
+          if ($LASTEXITCODE -ne 0) { throw "Source review tripwires failed" }
+      - shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Executable smoke test failed" }
+          $g = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--gui-self-test' -Wait -PassThru
+          if ($g.ExitCode -ne 0) { throw "Executable GUI smoke test failed" }
+          $f = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--fixture-process-self-test' -Wait -PassThru
+          if ($f.ExitCode -ne 0) { throw "Executable fixture process smoke test failed" }
+          $e = Start-Process -FilePath dist/NexusExchange.exe -ArgumentList '--genesis-self-test' -Wait -PassThru
+          if ($e.ExitCode -ne 0) { throw "Executable Genesis lifecycle smoke test failed" }
+          $commit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Cannot resolve checkout commit" }
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Cannot resolve checkout tree" }
+          python -m nexus_exchange.preview_bundle write dist --commit "$commit" --tree "$tree" --run-id "$env:GITHUB_RUN_ID" --attempt "$env:GITHUB_RUN_ATTEMPT" --event "$env:GITHUB_EVENT_NAME" --require-security-reports
+          if ($LASTEXITCODE -ne 0) { throw "Preview bundle generation failed" }
+          python -m nexus_exchange.preview_bundle verify dist --commit "$commit" --tree "$tree" --run-id "$env:GITHUB_RUN_ID" --attempt "$env:GITHUB_RUN_ATTEMPT" --event "$env:GITHUB_EVENT_NAME" --require-security-reports
+          if ($LASTEXITCODE -ne 0) { throw "Preview bundle verification failed" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NexusExchange-Windows-x64-preview
+          path: |
+            dist/NexusExchange.exe
+            dist/SHA256.txt
+            dist/GENESIS.json
+            dist/PREVIEW.json
+            dist/BUILD-INVENTORY.json
+            dist/SOURCE-REVIEW.json
+          if-no-files-found: error
