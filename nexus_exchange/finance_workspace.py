@@ -276,9 +276,11 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     from tkinter.scrolledtext import ScrolledText
 
     workspace=FinanceWorkspace(obligation,action=action,blocked_check=blocked_check)
+    from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
+    install_cockpit(window)
     window.title("Nexus Exchange | Simulated receivables")
-    window.geometry("1040x760")
+    window.geometry(fit_geometry(window,1040,760))
     ttk.Label(window,text="OPERATOR — Simulated receivables",font=("Segoe UI",18)).pack(pady=6)
     ttk.Label(window,text="One saved plan; hypothetical USD only. Never a real invoice, bank balance, or received revenue.",wraplength=980).pack(pady=4)
     ttk.Label(window,text="Obligation: "+obligation["obligation_id"],wraplength=980).pack()
