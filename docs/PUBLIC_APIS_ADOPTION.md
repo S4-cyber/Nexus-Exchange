@@ -47,7 +47,7 @@ preview scope expanded; no live API call in automated CI.
 
 ## Next
 
-Prioritize Freelancer-approved project research and primary official tenders; add SEC
+Freelancer automated access (including API) requires express written permission under User Agreement section 33 (https://www.freelancer.com/about/terms); API terms sections 4–7 also restrict reliance, caching, storage and redistribution. No live adapter until documented provider permission and compatible data lifecycle. Prioritize primary official tenders; add SEC
 CIK-based bounded retrieval after declared contact configuration; integrate FX evidence
 with an explicitly selected saved scenario only after reviewing multi-currency cash-risk
 semantics. Keep branch isolated from parallel correspondence PR #60. No main merge or

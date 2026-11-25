@@ -11,6 +11,7 @@ from .revenue_pathways import CHECKS
 from .sam_search import notice_url as sam_url
 from .ted_search import notice_url as ted_url
 from .fts_search import notice_url as fts_url
+from .cf_search import notice_url as cf_url
 from .canada_search import notice_url as canada_url
 from .usaspending_search import award_url, metadata as award_metadata, CONTRACTOR_TASKS
 from .owner_profile import reported_codes, rank_history, profile_revision
@@ -19,6 +20,7 @@ SOURCES=MappingProxyType({
     "nexus-sam-research-v1":("sam",sam_url),
     "nexus-ted-research-v1":("ted",ted_url),
     "nexus-fts-research-v1":("uk_tender",fts_url),
+    "nexus-cf-research-v1":("uk_contracts",cf_url),
     "nexus-canada-research-v1":("canada",canada_url),
     "nexus-usaspending-research-v1":("usaspending",award_url),
 })
@@ -86,7 +88,7 @@ def _project(fmt,lead,hashes,truncated):
         raise ValueError("required review blockers missing")
     ocid=None
     release_date=None
-    if source=="uk_tender":
+    if source in ("uk_tender","uk_contracts"):
         ocid=lead.get("ocid")
         if type(ocid) is not str or not re.fullmatch("ocds-[A-Za-z0-9-]{1,240}",ocid):
             raise ValueError("invalid UK process identity")

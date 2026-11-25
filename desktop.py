@@ -28,6 +28,7 @@ from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, so
 from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
 from nexus_exchange.ted_search import TedQuery, search as search_ted, notice_url as ted_notice_url
 from nexus_exchange.fts_search import FtsQuery, search as search_fts, notice_url as fts_notice_url
+from nexus_exchange.cf_search import CfQuery, search as search_cf, notice_url as cf_notice_url
 from nexus_exchange.canada_search import CanadaQuery, search as search_canada, notice_url as canada_notice_url
 from nexus_exchange.usaspending_search import SpendingQuery, search as search_spending, award_url
 
@@ -385,6 +386,7 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-sam-research-v1":("SAM",notice_url),
             "nexus-ted-research-v1":("TED",ted_notice_url),
             "nexus-fts-research-v1":("UK Find a Tender",fts_notice_url),
+            "nexus-cf-research-v1":("UK Contracts Finder",cf_notice_url),
             "nexus-canada-research-v1":("CanadaBuys",canada_notice_url),
             "nexus-usaspending-research-v1":("USAspending award intelligence",award_url),
         }[source_format]
@@ -399,7 +401,7 @@ def main(*, data_directory=None, gui_smoke=False):
             ttk.Label(window,text="Historical prime awards, NOT open subcontracting offers. Verify actual demand.").pack()
         if source_format=="nexus-canada-research-v1":
             ttk.Label(window,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
-        if source_format=="nexus-fts-research-v1":
+        if source_format in ("nexus-fts-research-v1","nexus-cf-research-v1"):
             ttk.Label(window,text="Historical releases only. The complete procurement lifecycle is not compiled.").pack()
         tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
         for col,label,width in (("title","Opportunity",510),("deadline","Deadline / reported date",200),("state","Research status",170)):
@@ -654,6 +656,36 @@ def main(*, data_directory=None, gui_smoke=False):
                 return search_spending(request,approved=True,halt_check=stop.is_set)
             run(work,target="USAspending contractor research",scenario=True)
             write_details("Research requested. See the dashboard for results.")
+        def run_cf():
+            source=selected()
+            if source is None or source.id!="uk_contracts":
+                write_details("Select UK Contracts Finder to research official service releases.")
+                return
+            if stop.is_set() or busy():
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            prefix=simpledialog.askstring("Contracts Finder","Local CPV prefix (72 IT services; 79 business services).",initialvalue="72",parent=window)
+            if prefix is None:
+                return
+            hours=simpledialog.askinteger("Contracts Finder","Publication window in hours (1–24). Use a shorter window if capped.",initialvalue=6,minvalue=1,maxvalue=24,parent=window)
+            if hours is None:
+                return
+            now=datetime.now(timezone.utc).replace(microsecond=0)
+            request=CfQuery(now-timedelta(hours=hours),now,prefix)
+            try:
+                request.parameters(now)
+            except ValueError:
+                write_details("Invalid publication window or CPV prefix.")
+                return
+            if not messagebox.askyesno("Authorize one Contracts Finder search",
+                    "Fetch one public release page, up to 50 records and 4 MiB. All stages retained for contrary evidence; CPV filter is local. No bid, account or spending.",parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_cf(request,approved=True,halt_check=stop.is_set)
+            run(work,target="UK Contracts Finder public release discovery",scenario=True)
+            write_details("Search requested. See main dashboard; original notice and terms require review.")
         def run_fx():
             source=selected()
             if source is None or source.id!="frankfurter":
@@ -739,6 +771,7 @@ def main(*, data_directory=None, gui_smoke=False):
         supplemental.pack(pady=4)
         ttk.Button(supplemental,text="Reference FX to USD (keyless)",command=run_fx).pack(side="left",padx=4)
         ttk.Button(supplemental,text="Atlas SEC company lookup",command=run_sec).pack(side="left",padx=4)
+        ttk.Button(supplemental,text="Search UK Contracts Finder",command=run_cf).pack(side="left",padx=4)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -1103,7 +1136,7 @@ def main(*, data_directory=None, gui_smoke=False):
         filters.pack(fill="x",padx=12,pady=8)
         source=tk.StringVar(value="All")
         search=tk.StringVar(value="")
-        ttk.Combobox(filters,textvariable=source,values=["All","sam","ted","uk_tender","canada","usaspending"],
+        ttk.Combobox(filters,textvariable=source,values=["All",*PROFILE_SOURCES],
             state="readonly",width=18).pack(side="left",padx=5)
         ttk.Entry(filters,textvariable=search,width=40).pack(side="left",padx=5)
         summary=ttk.Label(window)

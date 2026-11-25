@@ -318,8 +318,8 @@ _RAW = json.loads(r'''[
     "priority": "high",
     "url": "https://developers.freelancer.com/",
     "evidence": "https://www.freelancer.com/about/apiterms",
-    "scope": "Paid project discovery candidate; restricted API license, no automatic access or bidding approved.",
-    "check": "Confirm permitted use, account and project terms, AI disclosure, fees, escrow and delivery capability."
+    "scope": "Paid project discovery candidate; user agreement requires express written permission for automated access including API use; no live adapter.",
+    "check": "Obtain express written provider permission; review API license, encrypted storage and deletion requirements, AI rules, fees and delivery capability."
   },
   {
     "id": "adzuna",
@@ -471,6 +471,7 @@ def readiness(source_id, *, halted=None):
                           "CanadaBuys CSV adapter; live pilot pending" if source.id=="canada" else
                           "USAspending award intelligence adapter; live pilot pending" if source.id=="usaspending" else
                           "Frankfurter v2 reference FX adapter; live pilot pending" if source.id=="frankfurter" else
-                          "SEC EDGAR CIK metadata adapter; declared business contact and live pilot pending" if source.id=="sec_edgar" else "catalog only"),
+                          "SEC EDGAR CIK metadata adapter; declared business contact and live pilot pending" if source.id=="sec_edgar" else
+                          "Contracts Finder one-page release adapter; live pilot pending" if source.id=="uk_contracts" else "catalog only"),
         "income_kind":source.kind,"cash_exposure":None,"zero_capital_verified":False,
         "external_authority":False,"execution_eligible":False}

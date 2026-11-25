@@ -110,3 +110,12 @@ def decide_sec_read(*, approved=None, halted=None):
     if approved is not True:
         return Decision(False,"SEC_READ_CONSENT_REQUIRED")
     return Decision(True,"SEC_PUBLIC_COMPANY_METADATA_ONLY")
+
+
+def decide_cf_read(*, approved=None, halted=None):
+    """One explicit owner-requested official Contracts Finder public release page."""
+    if halted is not False:
+        return Decision(False,"HALTED_OR_UNKNOWN")
+    if approved is not True:
+        return Decision(False,"CF_READ_CONSENT_REQUIRED")
+    return Decision(True,"CF_PUBLIC_RELEASE_RESEARCH_ONLY")
