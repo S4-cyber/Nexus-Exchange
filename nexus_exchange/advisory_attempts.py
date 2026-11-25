@@ -259,3 +259,41 @@ class AdvisoryAttemptStore:
             if row["state"] != "RESERVED":
                 return _state(record)
             return self._failure(record, row, "INTERRUPTED", now)
+
+    def _runtime_plan_ids(self):
+        rows = self.db.execute("SELECT plan_id FROM advisory_attempts_v1 ORDER BY plan_id LIMIT ?",
+                               (MAX_TASKS + 1,)).fetchall()
+        if len(rows) > MAX_TASKS:
+            raise ValueError("advisory runtime recovery capacity exceeded")
+        return tuple(_pin(row[0]) for row in rows)
+
+    def _runtime_pending(self, *, now):
+        """Private maintenance read; caller must hold the runtime directory lock."""
+        now = _utc(now)
+        with self._transaction(write=False):
+            pending = 0
+            for plan in self._runtime_plan_ids():
+                record = self._require(plan)
+                self._clock(record, now)
+                pending += _state(record)["state"] == "RESERVED"
+            return pending
+
+    def _runtime_recover_all(self, *, now):
+        """Private halted reconciliation, only under exclusive drained ownership.
+
+        Validate all bounded records and commit all transitions or none. Never
+        resume or dispatch a model. Future workers require actual child cleanup.
+        """
+        now = _utc(now)
+        recovered = escalated = 0
+        with self._transaction():
+            for plan in self._runtime_plan_ids():
+                record = self._require(plan)
+                self._clock(record, now)
+                row = record["attempts"][-1]
+                if row["state"] != "RESERVED":
+                    continue
+                self._failure(record, row, "INTERRUPTED", now)
+                recovered += 1
+                escalated += row["state"] == "ESCALATED"
+        return dict(recovered=recovered, escalated=escalated)

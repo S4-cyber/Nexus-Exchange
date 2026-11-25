@@ -499,6 +499,18 @@ def main(*, data_directory=None, gui_smoke=False):
         halt_status.configure(text=f"HALTED — {result['recovered']} Council attempts reconciled, "
             f"{result['escalated']} escalated; Resume offline explicitly.")
         return result
+    def recover_advisory():
+        if busy() or not stop.is_set():
+            halt_status.configure(text="Halt and wait for workers to drain before advisory recovery.")
+            return None
+        try:
+            result=stop.recover_advisory()
+        except Exception:
+            halt_status.configure(text="HALTED — advisory recovery failed; restart and review storage.")
+            return None
+        halt_status.configure(text=f"HALTED — {result['recovered']} advisory attempts reconciled, "
+            f"{result['escalated']} escalated; Resume offline explicitly.")
+        return result
     def resume():
         if busy():
             halt_status.configure(text="Wait for interrupted worker to finish; then resume offline.")
@@ -1691,9 +1703,9 @@ def main(*, data_directory=None, gui_smoke=False):
     # Advanced manual tools can be enabled separately in Settings.
     halt_status = ttk.Label(chrome.safety, text="Ready · Select Engage on Home.")
     halt_status.pack(fill="x", pady=(2, 0))
-    if stop.recovered_count or stop.council_recovered_count:
-        halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks and "
-                              f"{stop.council_recovered_count} Council attempts. Select Engage on Home.")
+    if stop.recovered_count or stop.council_recovered_count or stop.advisory_recovered_count:
+        halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks, "
+                              f"{stop.council_recovered_count} Council and {stop.advisory_recovered_count} advisory attempts. Select Engage on Home.")
     chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
 
     engage_button = ttk.Button(home_actions, text="Engage", command=engage)
@@ -1742,6 +1754,7 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
     ttk.Button(settings, text="Recover interrupted Council attempts", command=recover_council).pack(anchor="w")
+    ttk.Button(settings, text="Recover interrupted advisory attempts", command=recover_advisory).pack(anchor="w")
 
     heading(help_page, "Getting started")
     for line in ("1. Choose Engage on Home. Scout starts immediately and repeats hourly while the application stays open.",
@@ -2005,6 +2018,25 @@ def main(*, data_directory=None, gui_smoke=False):
         history=stop.council_action("history",key)
         if [item["audit_state"] for item in history["attempts"]]!=["RECORDED","INTERRUPTED_NO_REPORT"]:
             raise RuntimeError("Council recovery lost historical audit")
+        # Owned fixture only: reserve reference metadata, not a model call.
+        from nexus_exchange.advisory_attempts import AdvisoryAttemptStore, DB_NAME
+        advisory_snapshot=stop.council_action("inspect",key)
+        with AdvisoryAttemptStore(directory/DB_NAME) as advisory_store:
+            advisory_store.reserve(advisory_snapshot,"d"*64,now=datetime.now(timezone.utc),
+                                   approved=True,halted=stop.is_set())
+        halt()
+        resume()
+        if not stop.is_set():
+            raise RuntimeError("Advisory reservation did not block resume")
+        recovered=recover_advisory()
+        if recovered!=dict(recovered=1,escalated=0) or not stop.is_set():
+            raise RuntimeError("Advisory recovery did not preserve halt")
+        resume()
+        if stop.is_set():
+            raise RuntimeError("Advisory explicit resume failed")
+        with AdvisoryAttemptStore(directory/DB_NAME,existing_only=True) as advisory_store:
+            if advisory_store.status(key,halted=False)["state"]!="INTERRUPTED":
+                raise RuntimeError("Advisory reservation replay or recovery mismatch")
         # Separate synthetic research-candidate fixture: keep earlier source-held
         # scenario and ranking smoke unchanged. Never query a live source.
         operator_stamp=datetime.now(timezone.utc)
