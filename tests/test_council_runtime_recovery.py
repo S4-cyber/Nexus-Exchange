@@ -182,8 +182,10 @@ class RuntimeCouncilTests(unittest.TestCase):
             store.db.execute("UPDATE council_attempts_v1 SET payload=?,digest=?",original)
         with self.guard() as guard:
             self.assertEqual(guard.council_recovered_count,1)
-        with sqlite3.connect(self.path) as db:
-            db.execute("DROP TABLE council_attempts_v1")
+        from contextlib import closing
+        with closing(sqlite3.connect(self.path)) as db:
+            with db:
+                db.execute("DROP TABLE council_attempts_v1")
         with self.assertRaises(ValueError):
             self.guard()
 
