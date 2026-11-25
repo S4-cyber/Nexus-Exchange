@@ -140,7 +140,7 @@ def row_details(row,report):
     ])
 
 
-def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,smoke=False):
+def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_action=None,council_blocked=None,smoke=False):
     """Explicit-refresh Matrix; only opens local, revalidated review workspaces."""
     import tkinter as tk
     from tkinter import ttk
@@ -254,7 +254,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,smoke=Fa
             current=workspace.resolve(row["context"])
             if kind=="tasks":
                 return review_tasks(current,window)
-            return open_scenario_window(window,current,directory=directory,halt_check=halt_check)
+            return open_scenario_window(window,current,directory=directory,halt_check=halt_check,
+                council_action=council_action,council_blocked=council_blocked)
         except (ValueError,PermissionError,OSError,sqlite3.Error) as exc:
             clear("Selected context unavailable or changed; refresh ranking. ("+type(exc).__name__+")")
             return None
