@@ -198,7 +198,11 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
     output=ScrolledText(window,height=9,wrap="word",state="disabled")
     output.pack(fill="both",expand=True,padx=12,pady=6)
 
+    displayed_plan=None
     def write(text):
+        nonlocal displayed_plan
+        if not text:
+            displayed_plan=None
         output.configure(state="normal")
         output.delete("1.0","end")
         output.insert("end",text)
@@ -257,6 +261,7 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
             error(exc)
             return False
     def evaluate():
+        nonlocal displayed_plan
         write("")
         try:
             key=selection()
@@ -264,6 +269,7 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
             populate(workspace.load(key))
             result=workspace.evaluate(key)
             write(summary_text(result))
+            displayed_plan=key
             status.configure(text="Saved plan reassessed at the displayed UTC time. Research only.")
             return result
         except (ValueError,PermissionError,OSError,sqlite3.Error) as exc:
@@ -276,7 +282,12 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
                            ("Load selected",load),("Reassess selected saved plan",evaluate),
                            ("Refresh list",refresh)):
         ttk.Button(buttons,text=label,command=callback).pack(side="left",padx=4)
-    tree.bind("<<TreeviewSelect>>",lambda _event:write(""))
+    def selection_changed(_event):
+        # Delayed Tk selection events must not erase the just-evaluated plan.
+        items=tree.selection()
+        if displayed_plan is not None and (not items or items[0]!=displayed_plan):
+            invalidate()
+    tree.bind("<<TreeviewSelect>>",selection_changed)
     show_records(records)
     if smoke:
         fields=blank_fields()
@@ -299,6 +310,8 @@ def open_scenario_window(parent,row,*,directory,halt_check,smoke=False):
         result=evaluate()
         if result is None or result["external_authority"] or result["cash"]["modeled_expected_net"]!=120:
             raise RuntimeError("scenario GUI failed to reassess")
+        window.update_idletasks()
+        window.update()
         if "UNVERIFIED" not in output.get("1.0","end"):
             raise RuntimeError("scenario GUI result missing research boundary")
     return window
