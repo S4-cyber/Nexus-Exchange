@@ -56,3 +56,7 @@ Read this document and current roadmap again, then inspect current state; do not
 ## Nexus Exchange specialization
 
 Primary: Scout sources and provenance, Council reason codes, Governor authorization, persisted opportunity memory, buyer/supplier matching, draft-only Operator and end-to-end simulated deal. Map evidence to E01–E42 in docs/ROADMAP.md, treating the coordination scaffold as supporting research only, not accepted E13–E16. Use the consolidated candidate as the reference after its checks and review.
+
+
+## Quiet CI submission discipline (user notification concern)
+Perform expected-failure tests in a private local environment whenever available. Submit implementation, regression tests and supporting documentation together in one commit on an isolated review branch; do not deliberately submit red or cancellation-generating intermediate commits. If full local checkout is unavailable, document the exact targeted harness or unverified boundary, then run full hosted CI on the coherent change. Never conceal genuine failures, disable required checks, or claim unobserved test results. Record final CI evidence in the PR body rather than triggering repetitive documentation-only builds.
