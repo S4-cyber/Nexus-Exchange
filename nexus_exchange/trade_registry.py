@@ -4,7 +4,6 @@ Source documentation reviewed 2026-11-24. No live connector implied by catalog.
 """
 from dataclasses import dataclass
 from types import MappingProxyType
-from urllib.parse import urlsplit
 import json
 from .governor import Action, decide
 
@@ -285,6 +284,18 @@ _RAW = json.loads(r'''[
     "evidence": "https://docs.hackerone.com/en/articles/8410373-directory",
     "scope": "Directory of security programs; no automated security testing authorized.",
     "check": "Verify exact program scope, authorization, safe harbor and reward terms before any separate activity."
+  },
+  {
+    "id": "federal_labs",
+    "name": "Federal Laboratory Consortium",
+    "sector": "Intellectual property",
+    "kind": "intelligence",
+    "access": "portal",
+    "priority": "medium",
+    "url": "https://federallabs.org/engage/ways-to-engage/engage-with-flc",
+    "evidence": "https://www.uspto.gov/ip-policy/patent-policy/technology-transfer",
+    "scope": "Federal technology transfer, patent licenses and partnership research; not ready-to-earn contracts.",
+    "check": "Verify ownership, licensing terms, royalties, restrictions and commercialization rights."
   },
   {
     "id": "csl",
