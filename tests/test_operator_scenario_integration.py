@@ -127,3 +127,25 @@ class OperatorRuntimeTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.call('prepare')
+
+    def test_runtime_scoped_history_listing_and_halt(self):
+        self.guard.resume()
+        empty=self.guard.operator_action('history_list',self.key,limit=100)
+        self.assertEqual(empty['rows'],[])
+        self.assertFalse((self.directory/'operator.sqlite3').exists())
+        first=self.call()
+        second=self.call(supplier=self.supplier(identifier='SYNTHETIC-2'))
+        result=self.guard.operator_action('history_list',self.key,limit=1)
+        self.assertTrue(result['truncated'])
+        self.assertEqual(len(result['rows']),1)
+        result=self.guard.operator_action('history_list',self.key,limit=100)
+        self.assertEqual({row['draft']['draft_id'] for row in result['rows']},
+                         {first['draft']['draft_id'],second['draft']['draft_id']})
+        self.assertTrue(result['historical_only'])
+        self.assertFalse(result['current_decision'])
+        with ProfileStore(self.directory/'owner-profile.sqlite3') as store:
+            store.save(profile(hours_per_week=30),halted=False)
+        self.assertEqual(self.guard.operator_action('history_list',self.key,limit=100),result)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action('history_list',self.key,limit=100)

@@ -13,6 +13,7 @@ from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.scenario_workspace import open_scenario_window
+from nexus_exchange.operator_workspace import open_operator_window
 from nexus_exchange.ranking_workspace import open_ranking_window
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
@@ -260,6 +261,14 @@ def main(*, data_directory=None, gui_smoke=False):
         finally:
             if stop.is_set():
                 show_halted("HALTED — Council blocked; recover interrupted attempts before explicit resume.")
+    def operator_action(action,plan_id,**inputs):
+        if council_blocked():
+            raise PermissionError("Operator halted or desktop worker active")
+        try:
+            return stop.operator_action(action,plan_id,**inputs)
+        finally:
+            if stop.is_set():
+                show_halted("HALTED — Operator blocked; review runtime before explicit resume.")
     def recover_council():
         if future is not None or not stop.is_set():
             halt_status.configure(text="Halt and wait for workers to drain before Council recovery.")
@@ -944,7 +953,8 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def ranked_matrix():
         return open_ranking_window(root,directory=directory,halt_check=stop.is_set,review_tasks=checklist_window,
-            council_action=council_action,council_blocked=council_blocked)
+            council_action=council_action,council_blocked=council_blocked,
+            operator_action=operator_action,operator_blocked=council_blocked)
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
@@ -1053,7 +1063,8 @@ def main(*, data_directory=None, gui_smoke=False):
             if row is not None:
                 try:
                     open_scenario_window(window,row,directory=directory,halt_check=stop.is_set,
-                        council_action=council_action,council_blocked=council_blocked)
+                        council_action=council_action,council_blocked=council_blocked,
+                        operator_action=operator_action,operator_blocked=council_blocked)
                 except (ValueError,PermissionError):
                     write("Save an owner profile and refresh Scout history; scenario context changed or research halted.")
                 except Exception:
@@ -1186,9 +1197,11 @@ def main(*, data_directory=None, gui_smoke=False):
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
             scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
         scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,
-            council_action=council_action,council_blocked=council_blocked,smoke=True)
+            council_action=council_action,council_blocked=council_blocked,
+            operator_action=operator_action,operator_blocked=council_blocked,smoke=True)
         ranking_window=open_ranking_window(root,directory=directory,halt_check=stop.is_set,
-            review_tasks=checklist_window,council_action=council_action,council_blocked=council_blocked,smoke=True)
+            review_tasks=checklist_window,council_action=council_action,council_blocked=council_blocked,
+            operator_action=operator_action,operator_blocked=council_blocked,smoke=True)
         # Synthetic saved-plan Council review and owner-drained recovery.
         from nexus_exchange.scenario_store import ScenarioStore
         from nexus_exchange.council_attempts import CouncilAttemptStore
@@ -1220,6 +1233,26 @@ def main(*, data_directory=None, gui_smoke=False):
         history=stop.council_action("history",key)
         if [item["audit_state"] for item in history["attempts"]]!=["RECORDED","INTERRUPTED_NO_REPORT"]:
             raise RuntimeError("Council recovery lost historical audit")
+        # Separate synthetic research-candidate fixture: keep earlier source-held
+        # scenario and ranking smoke unchanged. Never query a live source.
+        operator_stamp=datetime.now(timezone.utc)
+        operator_notice="1"*32
+        operator_fixture=dict(todo_fixture,notice_id=operator_notice,
+            source_url=notice_url(operator_notice),title="Synthetic RFQ opportunity",
+            retrieved_at=operator_stamp.isoformat(),
+            deadline=(operator_stamp+timedelta(days=7)).isoformat(),
+            research_candidate=True,blockers=["CASH_EXPOSURE_UNKNOWN","OWNER_APPROVAL_REQUIRED"])
+        with ScenarioStore(directory/"scout-leads.sqlite3") as fixture_plans:
+            fixture_plans.record(dict(format="nexus-sam-research-v1",returned=1,
+                leads=[operator_fixture],truncated=False,page_sha256=["1"*64]),
+                now=operator_stamp,halted=False)
+            operator_row=next(row for row in fixture_plans.browse(now=operator_stamp,
+                source="sam",profile=declared,halted=False)["leads"] if row["notice_id"]==operator_notice)
+            operator_key=fixture_plans.save(context_for(operator_row),saved[0]["scenario"],
+                saved[0]["plan"],profile=declared,now=operator_stamp,halted=False)
+        operator_window=open_operator_window(root,plan_id=operator_key,action=operator_action,
+            blocked_check=council_blocked,smoke=True)
+        operator_window.destroy()
         root.update_idletasks()
         root.update()
         ranking_window.destroy()
