@@ -470,3 +470,41 @@ failure (matching blob hashes); four integration tests added; exact full
 checkout DNS blocked and hosted candidate checks pending. No new runtime
 dependencies, external actions, cost, Operative changes or formal main
 acceptance (0/42).
+
+
+## Scout archive lifecycle continuity — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. Exact RC3 predecessor
+13c7c1903eb76ad993022f64219ac755d3517a44 passed 819 tests on each Python
+3.10 and 3.13 ([45670690819](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690819))
+and full Windows source/frozen/GUI/Genesis/security verification
+([45670690518](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690518),
+artifact 15047864705).
+
+Archive browse now maintains the maximum known UK release time and
+distinct source/key identities at that time across all validated historical
+observations, not just the latest retrieval for each identity. This avoids
+losing an observed later release when a provider subsequently reports an
+older release date for that identity, and avoids false ties from identical
+re-observations. The local archive remains research-only; no cross-source
+identity equivalence, compiled tender state, current eligibility or source
+authenticity is asserted. Exact receipt review remains same-identity only.
+The bounded archive cursor is streamed and closed even on failure; all
+rows are validated before filtering, with the existing maximum-row gate
+preserved. This reduces retained encoded payloads but is not a measured
+performance claim. Three regression methods cover date regression,
+distinct-event ambiguity, cap enforcement and corruption outside filters.
+
+Reference: OCDS 1.1 branch pinned at
+[1e98b792](https://github.com/open-contracting/standard/tree/1e98b792b2d48dfc806d974b08fccc1c50df5740),
+Apache-2.0 LICENSE and schema/release-schema.json inspected: process ID,
+release ID and publication date have distinct meanings. No upstream code
+or schema copied, no packages installed; full dependency/maintenance audit
+would be needed before adopting ocdskit. Rechecked agency-agents pinned
+handoff template and Operative journal blob 59ee08e7734347897b29af33603dffba783ec9ad
+for scoped evidence and bounded persistence; no Operative changes.
+Full local checkout failed GitHub DNS resolution; local red/green and
+independent review not performed. Superpowers unavailable. Atomic review
+candidate requires exact hosted tests and Windows packaging. Formal main
+acceptance remains 0/42. No new services, provider requests, expenditure,
+or commercial execution.
