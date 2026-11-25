@@ -291,6 +291,48 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def register_scoped_service_files(self,plan_id,*,context,requirements,expected_scope,
+                                      source_path,artifact_path,expected_pins,
+                                      right_source_path=None,confirmed=None):
+        """Register one selected matching artifact with immutable Scout provenance."""
+        from .scoped_export import checked_export_pins, require_matching_pins
+        from .deliverable_files import preview_pins
+        from .deliverable_obligations import ObligationStore, artifact_reference
+        from .evidence import verify_reference
+        from .ranking_workspace import RankingWorkspace
+        from .service_handoff import checked_review_route
+        from .scoped_provenance import build_provenance
+        from .digital_deliverable import build_contract
+        self._csv_ready(confirmed)
+        pinned=checked_export_pins(expected_pins)
+        self._operator_active=True
+        try:
+            result=self._scoped_service_sample(plan_id,context,requirements,expected_scope,
+                file_paths=(source_path,right_source_path))
+            if result["review_scope_sha256"]!=expected_scope or result["external_authority"] is not False:
+                raise ValueError("SCOPED_PREVIEW_CHANGED")
+            sample=result["sample"]
+            require_matching_pins(pinned,preview_pins(sample))
+            match=verify_reference(artifact_path,artifact_reference(sample),
+                                   halted=self.is_set(),halt_check=self.is_set)
+            if match["byte_match"] is not True:
+                raise ValueError("selected artifact does not match reviewed deliverable")
+            # Revalidate after the artifact read. Do not store caller-supplied
+            # review material or infer current authority from a historical pin.
+            snapshot=self._csv_snapshot(plan_id)
+            review=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock).review_requirements(context,requirements)
+            source,operation=checked_review_route(review,expected_scope,snapshot["context"])
+            if build_contract(snapshot,sample["contract"]["specification"],halted=self.is_set(),
+                    source_format=source,operation=operation)!=sample["contract"]:
+                raise ValueError("deliverable scenario scope changed")
+            provenance=build_provenance(review,expected_scope,sample["contract"],sample["report"])
+            path=self._directory/"operator-obligations.sqlite3"
+            with ObligationStore(path,existing_only=os.path.lexists(path)) as store:
+                return store.register(sample,now=self._clock(),confirmed=True,
+                    halted=self.is_set(),halt_check=self.is_set,scout_review=provenance)
+        finally:
+            self._operator_active=False
+
     def _scoped_service_sample(self,plan_id,context,requirements,expected_scope,
                                *,raw=None,right_raw=None,file_paths=None):
         from .ranking_workspace import RankingWorkspace

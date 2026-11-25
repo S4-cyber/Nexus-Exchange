@@ -282,6 +282,119 @@ class DigitalDeliverableTests(unittest.TestCase):
         self.assertFalse(destination.exists())
         self.assertFalse(self.guard._operator_active)
 
+    def test_scoped_registration_retains_review_across_history_and_simulation(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        from nexus_exchange.obligation_workspace import validate_record,record_text
+        from nexus_exchange.deliverable_obligations import ObligationStore
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        preview=self.guard.preview_scoped_service_files(self.key,**args)
+        pins=preview_pins(preview["sample"])
+        destination=self.directory/"scoped-output.csv"
+        self.guard.export_scoped_service_files(self.key,**args,destination_path=destination,expected_pins=pins)
+        record=self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        provenance=record["scout_review"]
+        self.assertEqual(provenance["review_scope_sha256"],args["expected_scope"])
+        self.assertEqual(provenance["review"]["requirements_assessment"]["declared_input"]["specification"],spec())
+        self.assertEqual(validate_record(record,self.key),record)
+        self.assertIn(args["expected_scope"],record_text(record))
+        self.assertFalse(record["buyer_accepted"])
+        self.assertFalse(record["revenue_realized"])
+        self.assertNotIn(str(destination),repr(record))
+        self.assertNotIn(str(args["source_path"]),repr(record))
+        self.now+=timedelta(seconds=1)
+        again=self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        self.assertEqual(again,record)
+        self.assertEqual(self.guard.csv_obligation_action("list",self.key,limit=100)["rows"],[record])
+        # Legacy registration returns the same identity without stripping provenance.
+        legacy=self.guard.csv_file_action("register",self.key,confirmed=True,source_path=args["source_path"],
+            artifact_path=destination,columns=spec()["columns"],key_column="id",expected_rows=2,**pins)
+        self.assertEqual(legacy,record)
+        changed=self.scoped_args(RAW,spec(),CSV_ID,cell_chars=40)
+        changed.pop("raw"); changed.pop("right_raw")
+        changed["source_path"]=args["source_path"]
+        with self.assertRaises(ValueError):
+            self.guard.register_scoped_service_files(self.key,**changed,artifact_path=destination,expected_pins=pins)
+        evidence=self.directory/"synthetic-acceptance.txt"
+        evidence.write_bytes(b"Owned synthetic claim, not buyer acceptance")
+        noted=self.guard.csv_obligation_action("note",self.key,confirmed=True,
+            obligation_id=record["obligation_id"],expected_head=record["head_sha256"],
+            kind="acceptance_claim_noted",evidence_path=evidence)
+        self.assertEqual(noted["scout_review"],provenance)
+        self.assertEqual(noted["notes"][0]["previous_sha256"],record["registration_sha256"])
+        invoice=self.guard.simulated_invoice_action("preview",self.key,
+            obligation_id=record["obligation_id"],expected_obligation_head=noted["head_sha256"],
+            issue_date=self.now.date().isoformat())
+        self.assertEqual(invoice["obligation_head_sha256"],noted["head_sha256"])
+        self.assertEqual(invoice["mode"],"SIMULATION_ONLY")
+        self.assertFalse(noted["buyer_accepted"])
+        with ObligationStore(self.directory/"operator-obligations.sqlite3",existing_only=True) as store:
+            self.assertEqual(store.history(self.key,record["obligation_id"],now=self.now,halted=False),noted)
+
+    def test_scoped_registration_never_rewrites_legacy_obligation(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        sample=self.guard.preview_scoped_service_files(self.key,**args)["sample"]
+        pins=preview_pins(sample)
+        destination=self.directory/"existing.csv"
+        destination.write_bytes(sample["artifact"])
+        legacy=self.guard.csv_file_action("register",self.key,confirmed=True,source_path=args["source_path"],
+            artifact_path=destination,columns=spec()["columns"],key_column="id",expected_rows=2,**pins)
+        self.assertNotIn("scout_review",legacy)
+        with self.assertRaises(ValueError):
+            self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        self.assertEqual(self.guard.csv_obligation_action("list",self.key,limit=100)["rows"],[legacy])
+
+    def test_scoped_registration_denies_bad_artifact_or_expired_review_before_storage(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        sample=self.guard.preview_scoped_service_files(self.key,**args)["sample"]
+        pins=preview_pins(sample)
+        destination=self.directory/"wrong.csv"
+        destination.write_bytes(b"wrong")
+        db=self.directory/"operator-obligations.sqlite3"
+        with self.assertRaises(ValueError):
+            self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        self.assertFalse(db.exists())
+        destination.write_bytes(sample["artifact"])
+        with self.assertRaises(PermissionError):
+            self.guard.register_scoped_service_files(self.key,**dict(args,confirmed=False),
+                artifact_path=destination,expected_pins=pins)
+        self.now+=timedelta(days=2)
+        with self.assertRaises(ValueError):
+            self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        self.assertFalse(db.exists())
+        self.assertFalse(self.guard._operator_active)
+
+    def test_scoped_registration_tampered_provenance_rejected(self):
+        import json
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        from nexus_exchange.deliverable_obligations import ObligationStore
+        from nexus_exchange.obligation_workspace import validate_record
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        sample=self.guard.preview_scoped_service_files(self.key,**args)["sample"]
+        pins=preview_pins(sample)
+        destination=self.directory/"sample.csv"
+        destination.write_bytes(sample["artifact"])
+        record=self.guard.register_scoped_service_files(self.key,**args,artifact_path=destination,expected_pins=pins)
+        forged=copy.deepcopy(record)
+        forged["scout_review"]["review_scope_sha256"]="0"*64
+        with self.assertRaises(ValueError):
+            validate_record(forged,self.key)
+        with ObligationStore(self.directory/"operator-obligations.sqlite3",existing_only=True) as store:
+            encoded,=store.db.execute("SELECT payload FROM csv_obligations_v1 WHERE obligation_id=?",
+                (record["obligation_id"],)).fetchone()
+            data=json.loads(encoded)
+            data["scout_review"]["review"]["external_authority"]=True
+            payload=_json(data)
+            store.db.execute("UPDATE csv_obligations_v1 SET payload=?,digest=? WHERE obligation_id=?",
+                (payload,_digest(payload),record["obligation_id"]))
+        with self.assertRaises(ValueError):
+            self.guard.csv_obligation_action("history",self.key,obligation_id=record["obligation_id"])
+
     def test_real_saved_plan_produces_exact_artifact_and_qa(self):
         result=self.call()
         self.assertEqual(result["artifact"],EXPECTED)

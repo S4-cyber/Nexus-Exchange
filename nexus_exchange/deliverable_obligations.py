@@ -16,6 +16,7 @@ from .deliverable_files import preview_pins
 from .evidence import parse_reference
 from .lead_store import _digest, _json, _now
 from .scout import _timestamp
+from .scoped_provenance import validate_provenance
 
 FORMAT="nexus-local-csv-obligation-v1"
 NOTE_KINDS=("acceptance_claim_noted","revision_request_noted","rejection_claim_noted")
@@ -104,7 +105,7 @@ def _decode(raw,digest):
 def _record(row,now):
     key,plan,created,encoded,digest=row
     data=_decode(encoded,digest)
-    _shape(data,{"binding","created_at"})
+    _shape(data,{"binding","created_at","scout_review"} if "scout_review" in data else {"binding","created_at"})
     binding=data["binding"]
     if type(binding) is not dict:
         raise ValueError("invalid obligation binding")
@@ -115,8 +116,12 @@ def _record(row,now):
             or _timestamp(stamp)<_timestamp(canonical["contract"]["context"]["retrieved_at"])
             or _timestamp(stamp)>now):
         raise ValueError("obligation identity or timestamp mismatch")
-    return dict(obligation_id=key,plan_id=plan,created_at=stamp,binding=canonical,
+    record=dict(obligation_id=key,plan_id=plan,created_at=stamp,binding=canonical,
                 registration_sha256=digest)
+    if "scout_review" in data:
+        record["scout_review"]=validate_provenance(data["scout_review"],canonical["contract"],
+                                                    canonical["qa_report"],stamp)
+    return record
 
 
 def _note(row,record,previous,sequence,seen,now):
@@ -214,8 +219,8 @@ class ObligationStore:
                     state="LOCAL_EVIDENCE_NOTED" if notes else "LOCAL_ARTIFACT_RECORDED",
                     historical_only=True,**dict.fromkeys(_FLAGS_EXTRA,False))
 
-    def register(self,result,*,now,confirmed=None,halted=None,halt_check=None):
-        """Trusted caller has matched the actual selected artifact bytes."""
+    def register(self,result,*,now,confirmed=None,halted=None,halt_check=None,scout_review=None):
+        """Trusted caller matched selected bytes; optional freshly derived Scout provenance."""
         _permit(halted,halt_check)
         if confirmed is not True:
             raise PermissionError("explicit obligation registration required")
@@ -226,7 +231,11 @@ class ObligationStore:
         stamp=_stamp(now)
         if now<_timestamp(binding["contract"]["context"]["retrieved_at"]):
             raise ValueError("obligation predates source")
-        payload=_json(dict(binding=binding,created_at=stamp))
+        data=dict(binding=binding,created_at=stamp)
+        if scout_review is not None:
+            data["scout_review"]=validate_provenance(scout_review,binding["contract"],
+                                                     binding["qa_report"],stamp)
+        payload=_json(data)
         if len(payload)>MAX_PAYLOAD:
             raise ValueError("obligation payload too large")
         with self._transaction(write=True,halted=halted,halt_check=halt_check):
@@ -239,6 +248,13 @@ class ObligationStore:
             record=self._read(plan_id,key,now)
             if _json(record["binding"])!=_json(binding):
                 raise ValueError("conflicting obligation identity")
+            if scout_review is not None:
+                # The existing content-addressed obligation ID stays unchanged.
+                # Never rewrite a legacy registration, create a duplicate, or
+                # change the provenance (and therefore its evidence-note head).
+                stored=record.get("scout_review")
+                if stored is None or stored["review_scope_sha256"]!=data["scout_review"]["review_scope_sha256"]:
+                    raise ValueError("existing obligation has different or absent Scout provenance")
         return record
 
     def history(self,plan_id,key,*,now,halted=None,halt_check=None):

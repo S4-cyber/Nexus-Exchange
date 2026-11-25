@@ -8,6 +8,7 @@ from .deliverable_obligations import (
 )
 from .lead_store import _digest, _json
 from .scout import _timestamp
+from .scoped_provenance import validate_provenance
 
 _RECORD_FIELDS={"obligation_id","plan_id","created_at","binding","registration_sha256",
                 "head_sha256","notes","state","historical_only",*_FLAGS_EXTRA}
@@ -24,7 +25,7 @@ _LABELS={
 def validate_record(raw,plan_id,expected_id=None):
     """Validate the bounded historical projection and its exact identity chain."""
     _hash(plan_id)
-    if (type(raw) is not dict or set(raw)!=_RECORD_FIELDS or
+    if (type(raw) is not dict or set(raw) not in (_RECORD_FIELDS,_RECORD_FIELDS|{"scout_review"}) or
             raw["plan_id"]!=plan_id or raw["historical_only"] is not True or
             any(raw[k] is not False for k in _FLAGS_EXTRA)):
         raise ValueError("invalid local obligation projection")
@@ -42,7 +43,11 @@ def validate_record(raw,plan_id,expected_id=None):
     prior=_timestamp(created)
     if prior<_timestamp(checked["contract"]["context"]["retrieved_at"]):
         raise ValueError("invalid obligation registration time")
-    head=_digest(_json(dict(binding=checked,created_at=created)))
+    registration=dict(binding=checked,created_at=created)
+    if "scout_review" in raw:
+        registration["scout_review"]=validate_provenance(raw["scout_review"],checked["contract"],
+                                                          checked["qa_report"],created)
+    head=_digest(_json(registration))
     if head!=raw["registration_sha256"]:
         raise ValueError("invalid obligation registration digest")
     notes=raw["notes"]
@@ -155,6 +160,13 @@ def record_text(record):
            "Local checks: "+", ".join(qa["checks"]),
            "Evidence head: "+record["head_sha256"],"",
            "Evidence notes (owner declarations; file fingerprints only)"]
+    provenance=record.get("scout_review")
+    if provenance is not None:
+        lines[2:2]=["Scout review scope: "+provenance["review_scope_sha256"],
+                    "Scout review UTC: "+provenance["review"]["evaluated_at"],
+                    "Declared service: "+provenance["review"]["requirements_assessment"]["capability_id"]]
+    else:
+        lines[2:2]=["Scout review provenance: not recorded in this legacy obligation"]
     if not record["notes"]:
         lines.append("No evidence notes recorded.")
     for event in record["notes"]:
