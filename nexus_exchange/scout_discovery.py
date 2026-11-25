@@ -26,7 +26,7 @@ _SERVICES={
     PROFILE_ID:("CSV quality report","csv quality report"),
     RECONCILE_ID:("Two-file CSV reconciliation","csv reconciliation"),
 }
-_SOURCES={"sam":"SAM.gov","ted":"EU TED","uk_tender":"UK Find a Tender",
+SOURCE_LABELS={"sam":"SAM.gov","ted":"EU TED","uk_tender":"UK Find a Tender",
           "uk_contracts":"UK Contracts Finder","canada":"CanadaBuys",
           "usaspending":"USAspending (historical awards)"}
 _FLAGS=("external_authority","execution_eligible","commercial_dispatch_enabled",
@@ -45,16 +45,20 @@ def _live(halt_check):
         raise PermissionError("HALTED_OR_UNKNOWN")
 
 
+class NoSavedProfile(ValueError):
+    """The local profile has never been saved or was explicitly cleared."""
+
+
 def load_profile(directory,*,halt_check):
     _live(halt_check)
     path=Path(directory)/"owner-profile.sqlite3"
-    if not path.is_file():
-        raise ValueError("Save a declared owner profile before planning searches.")
+    if not path.exists():
+        raise NoSavedProfile("Save a declared owner profile before planning searches.")
     with ProfileStore(path) as store:
         profile=store.load(halted=False)
     _live(halt_check)
     if profile is None:
-        raise ValueError("Save a declared owner profile before planning searches.")
+        raise NoSavedProfile("Save a declared owner profile before planning searches.")
     return normalize_profile(profile)
 
 
@@ -78,7 +82,7 @@ def build_plan(profile,capability_id,*,now,halted=None):
             state=READY,detail=""):
         if state==READY and profile["hours_per_week"]==0:
             state="NO_DECLARED_AVAILABILITY"
-        row=dict(source=source,source_label=_SOURCES[source],filter_kind=kind,
+        row=dict(source=source,source_label=SOURCE_LABELS[source],filter_kind=kind,
                  filter_value=value,window_start=start,window_end=end,
                  procurement_type=ptype,max_requests=requests,max_response_bytes=maximum,
                  key_required=source=="sam",state=state,detail=detail,
@@ -204,6 +208,14 @@ def execute_discovery(plan,option_id,profile,*,now,approved=None,halt_check=None
     return result
 
 
+STATE_LABELS = {
+    READY: "Ready for review",
+    "NO_DECLARED_AVAILABILITY": "Set weekly hours in Search settings",
+    "CPV_DECLARATION_REQUIRED": "Add a CPV code in Search settings",
+    "CONTRACTOR_INTELLIGENCE_ONLY": "Historical awards only",
+}
+
+
 def option_text(plan,row):
     return "\n".join([
         "PUBLIC RESEARCH ONLY — "+plan["service_label"],
@@ -213,13 +225,13 @@ def option_text(plan,row):
         "Window: "+(row["window_start"] or "Daily dataset / not applicable")+" to "+(row["window_end"] or "not applicable"),
         "Maximum requests: "+str(row["max_requests"]),
         "Maximum response bytes per request: "+str(row["max_response_bytes"]),
-        "State: "+row["state"],row["detail"],
+        "Status: "+STATE_LABELS[row["state"]],row["detail"],
         "Expires UTC: "+plan["expires_at"],
         "Plan: "+plan["plan_sha256"],
         "A search is not a buyer requirement, eligibility, authority or income. No automatic search."])
 
 
-def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smoke=False):
+def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,edit_profile=None,smoke=False):
     """Show one local plan; only an explicit current row may be launched."""
     import tkinter as tk
     from tkinter import ttk, messagebox, simpledialog
@@ -232,8 +244,10 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     content=install_cockpit(window).content
     window.title("Nexus Exchange | Capability search planner")
     window.geometry(fit_geometry(window,1000,660))
-    ttk.Label(content,text="SCOUT — Capability search planner",font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(content,text="Choose an implemented service. Plans use only selected profile sources and declared CPV prefixes. One explicitly approved public search at a time.",wraplength=900).pack(padx=12)
+    ttk.Label(content,text="Plan a search",font=("Segoe UI",18)).pack(pady=6)
+    instructions = "Choose the service you can provide, then select a source to review the search before it runs."
+    guidance = ttk.Label(content, text=instructions, wraplength=840, justify="left")
+    guidance.pack(anchor="w", padx=12)
     controls=ttk.Frame(content); controls.pack(fill="x",padx=12,pady=5)
     labels={label:key for key,(label,_) in _SERVICES.items()}
     service=tk.StringVar(master=window,value=next(iter(labels)))
@@ -263,7 +277,9 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         for item in tree.get_children():
             tree.delete(item)
         search_button.configure(state="disabled")
-        write(message)
+        tree.pack_forget()
+        guidance.configure(text=message)
+        write("")
 
     def selected():
         selection=tree.selection()
@@ -277,6 +293,17 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         if plan is not None and row is not None:
             write(option_text(plan,row)+"\n\n"+hint_text(recent_hint(row,search_history,now=datetime.now(timezone.utc)))
                   +"\n\n"+option_performance_text(priorities[row["option_id"]]))
+
+    editor = None
+    def open_settings():
+        nonlocal editor
+        if halt_check() is not False:
+            clear("Select Resume offline in the main window, then refresh this plan.")
+            return
+        if editor is not None and editor.winfo_exists():
+            editor.lift()
+            return
+        editor = edit_profile(parent=window, on_changed=refresh)
 
     def refresh():
         nonlocal plan,search_history,performance
@@ -297,13 +324,19 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
                 value=row["filter_value"] or row["filter_kind"]
                 if row["procurement_type"]:
                     value+=" / "+row["procurement_type"]
-                tree.insert("","end",iid=key,values=(row["source_label"],value,row["state"],row["max_requests"],priority_label(priority)))
+                tree.insert("","end",iid=key,values=(row["source_label"],value,STATE_LABELS[row["state"]],row["max_requests"],priority_label(priority)))
             if rows:
+                tree.pack(before=output, fill="x", padx=12, pady=6)
+                guidance.configure(text=instructions)
                 tree.selection_set(next(iter(rows)));display()
             else:
-                write("No selected public sources. Update the declared owner profile.")
-        except (ValueError,PermissionError,OSError,sqlite3.Error,KeyError):
-            clear("Plan unavailable. Save a valid owner profile and resume offline.")
+                guidance.configure(text="Choose at least one source in Search settings, then save your preferences.")
+        except NoSavedProfile:
+            clear("Open Search settings, enter your available hours and choose a source. Save to see search options.")
+        except PermissionError:
+            clear("Select Resume offline in the main window, then refresh this plan.")
+        except (ValueError,OSError,sqlite3.Error,KeyError):
+            clear("The saved profile or search history could not be read. Check local storage, then refresh the plan.")
 
     def search_selected():
         row=selected();current=plan
@@ -328,9 +361,9 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         try:
             if launch(current,row["option_id"],approved=True,api_key=key) is not True:
                 raise ValueError("Search was not launched.")
-            write("One search requested. Results and archive updates appear in the dashboard. Refresh before another search.")
+            guidance.configure(text="Search requested. Results will appear on Home. Refresh here to plan another search.")
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError):
-            write("Search not launched or selection changed. Refresh the plan.")
+            guidance.configure(text="Search could not start. Refresh the plan to review current options.")
 
     def show_history():
         try:
@@ -407,6 +440,8 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     search_button.pack(side="left",padx=4)
     history_controls=ttk.Frame(content)
     history_controls.pack(fill="x",padx=12,pady=2,before=tree)
+    if edit_profile is not None:
+        ttk.Button(history_controls,text="Search settings",command=open_settings).pack(side="left",padx=4)
     ttk.Button(history_controls,text="Search history",command=show_history).pack(side="left",padx=4)
     ttk.Button(history_controls,text="Review receipt",command=show_receipt).pack(side="left",padx=4)
     ttk.Button(history_controls,text="Search performance",command=show_performance).pack(side="left",padx=4)

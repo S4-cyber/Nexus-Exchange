@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import sqlite3
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -10,13 +11,13 @@ from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.runtime_guard import RuntimeGuard
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
-from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
+from nexus_exchange.owner_profile import ProfileChangedError, ProfileStore, PROFILE_SOURCES, profile_revision
 from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.scenario_workspace import open_scenario_window
 from nexus_exchange.operator_workspace import open_operator_window
 from nexus_exchange.csv_workspace import open_csv_window
 from nexus_exchange.ranking_workspace import open_ranking_window
-from nexus_exchange.scout_discovery import open_discovery_window, load_profile, resolve_query, execute_discovery
+from nexus_exchange.scout_discovery import SOURCE_LABELS, open_discovery_window, load_profile, resolve_query, execute_discovery
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project, search_history
@@ -1015,36 +1016,48 @@ def main(*, data_directory=None, gui_smoke=False):
         return True
     def discovery_window(*,smoke=False):
         return open_discovery_window(root,directory=directory,halt_check=stop.is_set,
-            blocked_check=council_blocked,launch=planned_discovery,smoke=smoke)
-    def owner_profile_window():
-        window = tk.Toplevel(root)
+            blocked_check=council_blocked,launch=planned_discovery,edit_profile=owner_profile_window,smoke=smoke)
+    def owner_profile_window(*, parent=root, on_changed=None):
+        window = tk.Toplevel(parent)
+        if on_changed is not None:
+            window.transient(parent)
         content=install_cockpit(window).content
-        window.title("Nexus Exchange | Owner capability profile")
-        window.geometry(fit_geometry(window,880,690))
-        ttk.Label(content,text="OWNER — Declared research capabilities",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(content,text="Local planning only. No identity verification, credentials, bank details or authority.",wraplength=820).pack(pady=6)
-        form=ttk.Frame(content)
-        form.pack(fill="x",padx=20,pady=12)
-        values={"mode":tk.StringVar(value="genesis"),"budget":tk.StringVar(value="0"),
-            "hours_per_week":tk.StringVar(value="0"),"naics":tk.StringVar(value=""),
-            "cpv":tk.StringVar(value=""),"keywords":tk.StringVar(value="")}
-        fields=(("Operating pathway","mode"),("USD planning budget (not balance)","budget"),
-            ("Declared weekly availability, hours","hours_per_week"),("NAICS six-digit codes, comma separated","naics"),
-            ("CPV prefixes, comma separated","cpv"),("Service keywords, comma separated","keywords"))
-        for i,(label,key) in enumerate(fields):
-            ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=5)
-            widget=(ttk.Combobox(form,textvariable=values[key],values=["genesis","catalyst"],state="readonly")
-                if key=="mode" else ttk.Entry(form,textvariable=values[key],width=42))
-            widget.grid(row=i,column=1,sticky="ew",padx=8)
-        form.columnconfigure(1,weight=1)
-        ttk.Label(content,text="Only declare services you can actually deliver. Examples: NAICS 541511, CPV 72, keyword software. No private or sensitive information.",wraplength=810).pack(padx=20,pady=8)
-        source_box=ttk.LabelFrame(content,text="Sources to prioritize")
-        source_box.pack(fill="x",padx=20,pady=8)
-        flags={source:tk.BooleanVar(value=False) for source in PROFILE_SOURCES}
-        for source,flag in flags.items():
-            ttk.Checkbutton(source_box,text=source,variable=flag).pack(side="left",padx=7,pady=8)
-        message=ttk.Label(content,wraplength=810)
-        message.pack(fill="x",padx=20,pady=8)
+        window.title("Nexus Exchange | Search settings")
+        window.geometry(fit_geometry(window,720,490))
+        heading(content, "Search settings")
+        buttons = action_row(content)
+        message = ttk.Label(content, wraplength=600, justify="left")
+        message.pack(fill="x", pady=4)
+        sections = ttk.Notebook(content)
+        sections.pack(fill="both", expand=True, padx=6, pady=5)
+        basics = ttk.Frame(sections, padding=10)
+        advanced = ttk.Frame(sections, padding=10)
+        sections.add(basics, text="Hours and sources")
+        sections.add(advanced, text="Budget and filters")
+        sections.enable_traversal()
+        values = {key: tk.StringVar(master=window) for key in
+                  ("mode", "budget", "hours_per_week", "naics", "cpv", "keywords")}
+        ttk.Label(basics, text="Available hours per week (0–168)").pack(anchor="w")
+        ttk.Entry(basics, name="hours", textvariable=values["hours_per_week"], width=8).pack(anchor="w", pady=4)
+        source_box = ttk.LabelFrame(basics, text="Sources to include", padding=8)
+        source_box.pack(fill="x", pady=6)
+        flags = {source: tk.BooleanVar(master=window) for source in PROFILE_SOURCES}
+        for i, (source, flag) in enumerate(flags.items()):
+            ttk.Checkbutton(source_box, text=SOURCE_LABELS[source], variable=flag).grid(
+                row=i//2, column=i%2, sticky="w", padx=4, pady=2)
+        ttk.Label(basics, text="SAM.gov asks for your API key when you run a search. EU TED and UK Contracts Finder use the CPV codes you enter under Budget and filters.",
+                  wraplength=500, justify="left").pack(anchor="w", pady=4)
+        fields = (("Operating pathway", "mode"), ("Planning budget in USD", "budget"),
+                  ("NAICS industry codes (6 digits)", "naics"), ("CPV procurement codes (2–8 digits)", "cpv"),
+                  ("Service keywords", "keywords"))
+        for i, (label, key) in enumerate(fields):
+            ttk.Label(advanced, text=label).grid(row=i, column=0, sticky="w", pady=4)
+            widget = (ttk.Combobox(advanced, textvariable=values[key], values=["genesis","catalyst"],
+                                   state="readonly") if key == "mode" else ttk.Entry(advanced, textvariable=values[key]))
+            widget.grid(row=i, column=1, sticky="ew", padx=6)
+        advanced.columnconfigure(1, weight=1)
+        ttk.Label(advanced, text="Genesis uses a zero planning budget. Separate multiple codes or keywords with commas.",
+                  wraplength=460, justify="left").grid(row=len(fields), columnspan=2, sticky="w", pady=5)
         def split(key):
             return [v.strip() for v in values[key].get().split(",") if v.strip()]
         def populate(profile):
@@ -1055,41 +1068,89 @@ def main(*, data_directory=None, gui_smoke=False):
                 var.set(", ".join(v) if type(v) is list else str(v))
             for source,flag in flags.items():
                 flag.set(source in profile["sources"])
+        loaded_revision = None
         def load():
+            nonlocal loaded_revision
+            save_button.state(["disabled"])
+            clear_button.state(["disabled"])
             try:
+                if stop.is_set():
+                    raise PermissionError
                 with ProfileStore(directory / "owner-profile.sqlite3") as store:
-                    profile=store.load(halted=stop.is_set())
+                    profile = store.load(halted=stop.is_set())
+                loaded_revision = profile_revision(profile) if profile is not None else None
                 populate(profile)
-                message.configure(text="Saved profile loaded." if profile else "No profile saved. Defaults grant no permissions.")
-            except (ValueError,PermissionError,OSError):
-                message.configure(text="Profile unavailable or research halted.")
+                save_button.state(["!disabled"])
+                if profile is not None:
+                    clear_button.state(["!disabled"])
+                message.configure(text="Preferences loaded." if profile else "Enter your available hours and select the sources you want to search.")
+            except PermissionError:
+                message.configure(text="Select Resume offline in the main window, then Reload.")
+            except (ValueError, OSError, sqlite3.Error):
+                message.configure(text="Preferences could not be read. Check local storage, then Reload.")
+
+        def finish_change():
+            if on_changed is not None:
+                window.destroy()
+                on_changed()
+
         def save():
+            nonlocal loaded_revision
             if stop.is_set():
-                message.configure(text="Research halted.")
+                message.configure(text="Select Resume offline in the main window before saving.")
                 return
             try:
-                profile=dict(mode=values["mode"].get(),budget=values["budget"].get(),
-                    hours_per_week=int(values["hours_per_week"].get()),
-                    naics=split("naics"),cpv=split("cpv"),keywords=[x.casefold() for x in split("keywords")],
-                    sources=[s for s,v in flags.items() if v.get()])
+                hours = int(values["hours_per_week"].get())
+                if not 0 <= hours <= 168:
+                    raise ValueError
+            except ValueError:
+                sections.select(basics)
+                message.configure(text="Enter a whole number of hours between 0 and 168.")
+                return
+            try:
+                profile = dict(mode=values["mode"].get(), budget=values["budget"].get(), hours_per_week=hours,
+                    naics=split("naics"), cpv=split("cpv"), keywords=[x.casefold() for x in split("keywords")],
+                    sources=[source for source, flag in flags.items() if flag.get()])
                 with ProfileStore(directory / "owner-profile.sqlite3") as store:
-                    revision=store.save(profile,halted=stop.is_set())
-                message.configure(text="Saved declared profile "+revision[:12]+". Refresh Scout history to apply priorities.")
-            except (ValueError,PermissionError,OSError):
-                message.configure(text="Invalid profile. Check codes, hours, budget and duplicate entries.")
+                    loaded_revision = store.save(profile, halted=stop.is_set(), expected_revision=loaded_revision)
+            except ProfileChangedError:
+                message.configure(text="Saved preferences have changed or could not be verified. Reload before saving.")
+                return
+            except ValueError:
+                sections.select(advanced)
+                message.configure(text="Check the planning budget, code lengths and duplicate entries under Budget and filters.")
+                return
+            except (PermissionError, OSError, sqlite3.Error):
+                message.configure(text="Preferences could not be saved. Check local storage and the halt status.")
+                return
+            clear_button.state(["!disabled"])
+            message.configure(text="Preferences saved.")
+            finish_change()
+
         def clear():
             if stop.is_set():
-                message.configure(text="Research halted.")
+                message.configure(text="Select Resume offline in the main window before clearing preferences.")
                 return
             if messagebox.askyesno("Clear local profile","Remove saved planning preferences?",parent=window):
-                with ProfileStore(directory / "owner-profile.sqlite3") as store:
-                    store.clear(halted=stop.is_set())
+                try:
+                    with ProfileStore(directory / "owner-profile.sqlite3") as store:
+                        store.clear(halted=stop.is_set(), expected_revision=loaded_revision)
+                except ProfileChangedError:
+                    message.configure(text="Saved preferences have changed or could not be verified. Reload before clearing.")
+                    return
+                except ValueError:
+                    message.configure(text="Saved preferences could not be read. Check local storage.")
+                    return
+                except (PermissionError, OSError, sqlite3.Error):
+                    message.configure(text="Preferences could not be cleared. Check local storage and the halt status.")
+                    return
                 load()
-        buttons=ttk.Frame(content)
-        buttons.pack(before=form, anchor="w", padx=20, pady=4)
-        ttk.Button(buttons,text="Save local profile",command=save).pack(side="left",padx=6)
-        ttk.Button(buttons,text="Reload",command=load).pack(side="left",padx=6)
-        ttk.Button(buttons,text="Clear profile",command=clear).pack(side="left",padx=6)
+                finish_change()
+        save_button = ttk.Button(buttons, text="Save and return" if on_changed else "Save preferences", command=save)
+        save_button.pack(side="left", padx=4)
+        ttk.Button(buttons, text="Reload", command=load).pack(side="left", padx=4)
+        clear_button = ttk.Button(buttons, text="Clear profile", command=clear)
+        clear_button.pack(side="left", padx=4)
         load()
         return window
     def checklist_window(row,parent,*,smoke=False):
@@ -1467,7 +1528,7 @@ def main(*, data_directory=None, gui_smoke=False):
     exporter.pack(side="left", padx=5)
 
     heading(settings, "Research preferences")
-    ttk.Button(settings, text="Edit owner profile", command=owner_profile_window).pack(anchor="w")
+    ttk.Button(settings, text="Search settings", command=owner_profile_window).pack(anchor="w")
     heading(settings, "Appearance")
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
@@ -1475,7 +1536,7 @@ def main(*, data_directory=None, gui_smoke=False):
 
     heading(help_page, "Getting started")
     for line in ("1. On Home, select Resume offline and then Run example. The result appears below.",
-                 "2. To find leads, open Research. Use Explore sources to browse or Plan a search to choose a service.",
+                 "2. In Research, choose Plan a search. Use Search settings to add your available hours and preferred sources.",
                  "3. In Reports, search by target, status, date or task ID. Open the archive to review saved opportunities."):
         ttk.Label(help_page, text=line, wraplength=440, justify="left").pack(anchor="w", pady=2)
     heading(help_page, "Check the local research tools")
@@ -1606,9 +1667,32 @@ def main(*, data_directory=None, gui_smoke=False):
                 truncated=False,page_sha256=["0"*64]),now=stamp,halted=False)
             todo_row=fixture_store.browse(now=stamp,source="sam",halted=False)["leads"][0]
         todo_window=checklist_window(todo_row,root,smoke=True)
-        with ProfileStore(directory / "owner-profile.sqlite3") as fixture_profiles:
-            declared=dict(mode="genesis",budget="0",hours_per_week=20,sources=["sam"],naics=[],cpv=[],keywords=[])
-            fixture_profiles.save(declared,halted=False)
+        # Use the first-run workflow to set up the profile needed by the receipt smoke.
+        def descendants(parent):
+            for child in parent.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        def control(parent, kind, label):
+            return next(widget for widget in descendants(parent)
+                        if isinstance(widget, kind) and widget.cget("text") == label)
+
+        setup = discovery_window()
+        start_search = control(setup, ttk.Button, "Search selected plan")
+        if not start_search.instate(["disabled"]):
+            raise RuntimeError("A fresh planner must wait for search settings")
+        control(setup, ttk.Button, "Search settings").invoke()
+        editor = next(widget for widget in setup.winfo_children() if isinstance(widget, tk.Toplevel))
+        hours = next(widget for widget in descendants(editor) if widget.winfo_name() == "hours")
+        hours.delete(0, "end")
+        hours.insert(0, "20")
+        control(editor, ttk.Checkbutton, "SAM.gov").invoke()
+        control(editor, ttk.Button, "Save and return").invoke()
+        declared = load_profile(directory, halt_check=stop.is_set)
+        if (editor.winfo_exists() or start_search.instate(["disabled"])
+                or declared["sources"] != ["sam"] or declared["hours_per_week"] != 20 or busy()):
+            raise RuntimeError("Saving search settings must return to a ready, idle planner")
+        setup.destroy()
         # Bind the existing owned synthetic observation to an exact search receipt.
         # No provider call, key, or additional observation is needed.
         from nexus_exchange.scout_discovery import build_plan

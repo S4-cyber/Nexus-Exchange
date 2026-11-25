@@ -9,7 +9,7 @@ from nexus_exchange import sam_search, ted_search, fts_search, cf_search, canada
 from nexus_exchange.lead_store import _digest,_json
 from nexus_exchange.owner_profile import ProfileStore
 from nexus_exchange.operator_capabilities import CSV_ID,JSON_ID,PROFILE_ID,RECONCILE_ID
-from nexus_exchange.scout_discovery import build_plan,resolve_query,execute_discovery,load_profile,READY,MAX_OPTIONS,TTL
+from nexus_exchange.scout_discovery import build_plan,resolve_query,execute_discovery,load_profile,NoSavedProfile,READY,MAX_OPTIONS,TTL
 
 NOW=datetime(2026,11,25,12,34,56,123456,tzinfo=timezone.utc)
 
@@ -152,10 +152,12 @@ class DiscoveryTests(unittest.TestCase):
     def test_load_missing_profile_does_not_create_database(self):
         with TemporaryDirectory() as tmp:
             directory=Path(tmp)
-            with self.assertRaises(ValueError):
+            with self.assertRaises(NoSavedProfile):
                 load_profile(directory,halt_check=lambda:False)
             self.assertFalse((directory/"owner-profile.sqlite3").exists())
             with ProfileStore(directory/"owner-profile.sqlite3") as store:
+                with self.assertRaises(NoSavedProfile):
+                    load_profile(directory,halt_check=lambda:False)
                 store.save(profile(),halted=False)
             self.assertEqual(load_profile(directory,halt_check=lambda:False)["budget"],"0.00")
             with self.assertRaises(PermissionError):

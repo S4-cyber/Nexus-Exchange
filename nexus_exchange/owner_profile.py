@@ -61,6 +61,13 @@ def normalize_profile(raw):
 def profile_revision(profile):
     return _digest(_json(normalize_profile(profile)))
 
+_ANY_REVISION = object()
+
+
+class ProfileChangedError(ValueError):
+    """The saved preferences changed since the editor loaded them."""
+
+
 class ProfileStore:
     """One explicit owner-declared local profile, no credentials or personal data."""
     def __init__(self,path):
@@ -93,13 +100,25 @@ class ProfileStore:
             raise ValueError("noncanonical stored profile")
         return value
 
-    def save(self,profile,*,halted=None):
+    def _check_revision(self, expected, halted):
+        if expected is _ANY_REVISION:
+            return
+        try:
+            current = self.load(halted=halted)
+        except ValueError as exc:
+            raise ProfileChangedError("Saved preferences could not be verified.") from exc
+        revision = profile_revision(current) if current is not None else None
+        if revision != expected:
+            raise ProfileChangedError("Preferences changed. Reload before editing.")
+
+    def save(self,profile,*,halted=None,expected_revision=_ANY_REVISION):
         _permit(halted)
         profile=normalize_profile(profile)
         encoded=_json(profile)
         digest=_digest(encoded)
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._check_revision(expected_revision, halted)
             self.db.execute("""INSERT INTO owner_profile_v1 VALUES (1,?,?)
                 ON CONFLICT(slot) DO UPDATE SET payload=excluded.payload,digest=excluded.digest""",
                 (encoded,digest))
@@ -110,9 +129,12 @@ class ProfileStore:
             raise
         return digest
 
-    def clear(self,*,halted=None):
+    def clear(self,*,halted=None,expected_revision=_ANY_REVISION):
         _permit(halted)
-        self.db.execute("DELETE FROM owner_profile_v1 WHERE slot=1")
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            self._check_revision(expected_revision, halted)
+            self.db.execute("DELETE FROM owner_profile_v1 WHERE slot=1")
 
 def reported_codes(source,lead):
     """Retain only explicitly reported codes, never the search filter as evidence."""
