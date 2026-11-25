@@ -5,12 +5,14 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from pathlib import Path
+from functools import partial
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
+from nexus_exchange.local_import import evaluate_file
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -21,10 +23,10 @@ def demo(*, halted=False):
         value=dict(amount=1000,currency="USD")))
     return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=halted)
 
-def run_logged(store, stop=None, archive=None):
+def run_logged(store, stop=None, archive=None, *, work=None, target="Offline screening"):
     task = uuid4().hex
     def record(state):
-        store.append(dict(task_id=task,target="Offline screening",state=state,
+        store.append(dict(task_id=task,target=target,state=state,
             timestamp=datetime.now(timezone.utc).isoformat()))
     record("queued")
     if stop is not None and stop.is_set():
@@ -32,7 +34,7 @@ def run_logged(store, stop=None, archive=None):
         return ()
     record("running")
     try:
-        result = demo(halted=stop.is_set() if stop is not None else False)
+        result = (demo if work is None else work)(halted=stop.is_set() if stop is not None else False)
         if stop is not None and stop.is_set():
             record("cancelled")
             return ()
@@ -97,7 +99,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
     ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
-    ttk.Label(root,text="OFFLINE DEMONSTRATION — External actions disabled").pack()
+    ttk.Label(root,text="OFFLINE RESEARCH — External actions disabled").pack()
     tasks = ttk.LabelFrame(root,text="Active tasks")
     tasks.pack(fill="x",padx=20,pady=8)
     slots = []
@@ -142,19 +144,20 @@ def main(*, data_directory=None, gui_smoke=False):
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
-    def worker():
+    def worker(work=None, target="Offline screening"):
         local = EventStore(directory / "events.sqlite3")
         try:
             with OpportunityArchive(directory / "archive.sqlite3") as archive:
-                return run_logged(local, stop, archive)
+                return run_logged(local, stop, archive, work=work, target=target)
         finally:
             local.close()
-    def run():
+    def run(work=None, target="Offline screening"):
         nonlocal future
         if stop.is_set() or future is not None:
             return
         launch.configure(state="disabled")
-        future = executor.submit(worker)
+        importer.configure(state="disabled")
+        future = executor.submit(worker, work, target)
         poll()
     def poll():
         nonlocal future
@@ -167,7 +170,7 @@ def main(*, data_directory=None, gui_smoke=False):
         try:
             for item in future.result():
                 o=item.observation.opportunity
-                output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nSynthetic data only.\n")
+                output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nHistorical observation; source assertions are unverified.\n")
         except Exception as exc:
             output.insert("end",f"Screening failed: {type(exc).__name__}")
         finally:
@@ -176,15 +179,24 @@ def main(*, data_directory=None, gui_smoke=False):
             future = None
             if not stop.is_set():
                 launch.configure(state="normal")
+                importer.configure(state="normal")
     def halt():
         stop.set()
         launch.configure(state="disabled")
+        importer.configure(state="disabled")
         halt_status.configure(text="HALTED — new tasks blocked")
     def resume():
         if future is None:
             stop.clear()
             launch.configure(state="normal")
+            importer.configure(state="normal")
             halt_status.configure(text="Offline ready")
+    def import_file():
+        if stop.is_set() or future is not None:
+            return
+        path = filedialog.askopenfilename(parent=root,filetypes=[("Compiled snapshot manifest","*.json")])
+        if path:
+            run(partial(evaluate_file,path),target="Local compiled snapshot import")
     def browse_archive():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Historical opportunities")
@@ -228,6 +240,8 @@ def main(*, data_directory=None, gui_smoke=False):
     controls.pack(pady=10)
     launch = ttk.Button(controls,text="Run offline demonstration",command=run)
     launch.pack(side="left")
+    importer = ttk.Button(controls,text="Import compiled JSON",command=import_file)
+    importer.pack(side="left")
     ttk.Button(controls,text="Emergency halt",command=halt).pack(side="left")
     ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
     ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
