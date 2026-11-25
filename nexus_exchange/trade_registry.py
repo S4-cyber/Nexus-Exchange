@@ -308,6 +308,114 @@ _RAW = json.loads(r'''[
     "evidence": "https://developer.trade.gov/apis",
     "scope": "Official export screening API; potential matches require official-list confirmation.",
     "check": "No automatic compliance clearance; check authoritative sanctions/export lists."
+  },
+  {
+    "id": "freelancer",
+    "name": "Freelancer",
+    "sector": "Digital services",
+    "kind": "earned",
+    "access": "approved_api",
+    "priority": "high",
+    "url": "https://developers.freelancer.com/",
+    "evidence": "https://www.freelancer.com/about/apiterms",
+    "scope": "Paid project discovery candidate; restricted API license, no automatic access or bidding approved.",
+    "check": "Confirm permitted use, account and project terms, AI disclosure, fees, escrow and delivery capability."
+  },
+  {
+    "id": "adzuna",
+    "name": "Adzuna",
+    "sector": "Employment research",
+    "kind": "intelligence",
+    "access": "restricted_research",
+    "priority": "later",
+    "url": "https://developer.adzuna.com/",
+    "evidence": "https://developer.adzuna.com/docs/terms_of_service",
+    "scope": "Employment listings are not independent commercial contracts; written agreement required for commercial prospecting or lead generation.",
+    "check": "Do not automate commercial discovery without written permission; employment requires human applicant."
+  },
+  {
+    "id": "tenders_guru",
+    "name": "Tenders.guru",
+    "sector": "Third-party tender research",
+    "kind": "intelligence",
+    "access": "api_review",
+    "priority": "medium",
+    "url": "https://tenders.guru/",
+    "evidence": "https://tenders.guru/pl/api",
+    "scope": "Directory lists procurement feeds for five European countries; secondary source, freshness, coverage and current terms not independently verified.",
+    "check": "Review current provider access and authoritative procurement portal before considering an adapter; never treat third-party listing as confirmed open tender."
+  },
+  {
+    "id": "frankfurter",
+    "name": "Frankfurter FX",
+    "sector": "Cross-border deal economics",
+    "kind": "intelligence",
+    "access": "public_api",
+    "priority": "high",
+    "url": "https://frankfurter.dev/",
+    "evidence": "https://frankfurter.dev/license/",
+    "scope": "Keyless reference-rate API v2; bounded currency conversion adapter for indicative USD comparisons, not executable rates.",
+    "check": "Check source rate date, provider terms, fees and settlement separately. No use as official accounting, tax, payment or executable market price."
+  },
+  {
+    "id": "sec_edgar",
+    "name": "SEC EDGAR",
+    "sector": "Counterparty research",
+    "kind": "compliance",
+    "access": "public_api",
+    "priority": "high",
+    "url": "https://data.sec.gov/",
+    "evidence": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+    "scope": "Public company filings and submissions data; fair access and declared contact user agent required. No filing or identity clearance.",
+    "check": "Verify CIK, reporting entity, date and relevant primary filings; never equate public filing with supplier capacity, solvency or authorization."
+  },
+  {
+    "id": "companies_house",
+    "name": "UK Companies House",
+    "sector": "Counterparty research",
+    "kind": "compliance",
+    "access": "key_api",
+    "priority": "high",
+    "url": "https://developer.company-information.service.gov.uk/",
+    "evidence": "https://developer.company-information.service.gov.uk/authentication/",
+    "scope": "Official UK company records, API authentication required. Read-only organization lookup candidate.",
+    "check": "Check exact company number, status, filing freshness and separate authority/beneficial ownership where legally required."
+  },
+  {
+    "id": "census",
+    "name": "US Economic Census",
+    "sector": "Market intelligence",
+    "kind": "intelligence",
+    "access": "key_api",
+    "priority": "medium",
+    "url": "https://www.census.gov/data/developers.html",
+    "evidence": "https://www.census.gov/data/developers/guidance/api-user-guide.Query_Limits.html",
+    "scope": "Official business and industry statistics; API key required for all data queries under updated 2026 guidance.",
+    "check": "Use aggregate industry data with date and geography; market size is not verified buyer demand."
+  },
+  {
+    "id": "world_bank_indicators",
+    "name": "World Bank Indicators",
+    "sector": "Market intelligence",
+    "kind": "intelligence",
+    "access": "public_api",
+    "priority": "medium",
+    "url": "https://data.worldbank.org/",
+    "evidence": "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392-about-the-indicators-api-documentation",
+    "scope": "Keyless v2 macro and development statistics; distinct from World Bank procurement opportunities.",
+    "check": "Record indicator, coverage, vintage and source terms. Macro trends do not establish current commercial demand."
+  },
+  {
+    "id": "uk_bank_holidays",
+    "name": "UK Bank Holidays",
+    "sector": "Delivery planning",
+    "kind": "intelligence",
+    "access": "public_api",
+    "priority": "medium",
+    "url": "https://www.gov.uk/bank-holidays",
+    "evidence": "https://www.gov.uk/help/reuse-govuk-content",
+    "scope": "Official regional holiday JSON, planning candidate under applicable Open Government Licence.",
+    "check": "Verify delivery location, local deadlines, payment provider schedules and contractual business-day definition separately."
   }
 ]''')
 SOURCES = tuple(TradeSource(**row) for row in _RAW)
@@ -361,6 +469,7 @@ def readiness(source_id, *, halted=None):
                           "TED adapter; live pilot pending" if source.id=="ted" else
                           "UK FTS release adapter; live pilot pending" if source.id=="uk_tender" else
                           "CanadaBuys CSV adapter; live pilot pending" if source.id=="canada" else
-                          "USAspending award intelligence adapter; live pilot pending" if source.id=="usaspending" else "catalog only"),
+                          "USAspending award intelligence adapter; live pilot pending" if source.id=="usaspending" else
+                          "Frankfurter v2 reference FX adapter; live pilot pending" if source.id=="frankfurter" else "catalog only"),
         "income_kind":source.kind,"cash_exposure":None,"zero_capital_verified":False,
         "external_authority":False,"execution_eligible":False}
