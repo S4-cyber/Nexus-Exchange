@@ -111,9 +111,11 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     from tkinter.scrolledtext import ScrolledText
 
     workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check)
+    from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
+    install_cockpit(window)
     window.title("Nexus Exchange | Operator CSV deliverable")
-    window.geometry("1000x650")
+    window.geometry(fit_geometry(window,1000,650))
     ttk.Label(window,text="OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(window,text="Saved plan: "+plan_id,wraplength=950).pack()
     ttk.Label(window,text="Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment.",wraplength=950).pack(pady=4)

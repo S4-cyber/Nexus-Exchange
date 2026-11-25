@@ -129,9 +129,11 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
     from tkinter.scrolledtext import ScrolledText
 
     workspace=OperatorWorkspace(plan_id,action=action,blocked_check=blocked_check)
+    from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
+    install_cockpit(window)
     window.title('Nexus Exchange | Operator quotation drafts')
-    window.geometry('1160x850')
+    window.geometry(fit_geometry(window,1160,850))
     window.minsize(850,680)
     ttk.Label(window,text='OPERATOR — Local quotation requests',font=('Segoe UI',18)).pack(pady=5)
     ttk.Label(window,text='Saved plan: '+plan_id,wraplength=1080).pack(padx=12)

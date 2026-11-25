@@ -102,9 +102,10 @@ def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
+    from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
-    root.geometry("1080x820")
+    root.geometry(fit_geometry(root,1120,820))
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     if gui_smoke:
         root.withdraw()
@@ -137,7 +138,8 @@ def main(*, data_directory=None, gui_smoke=False):
         finally:
             root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
-    ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
+    install_cockpit(root)
+    ttk.Label(root,text="NEXUS EXCHANGE",foreground="#39ff70",font=("Segoe UI",22,"bold")).pack(pady=6)
     ttk.Label(root,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
     tasks = ttk.LabelFrame(root,text="Active tasks")
     tasks.pack(fill="x",padx=20,pady=8)
@@ -153,7 +155,7 @@ def main(*, data_directory=None, gui_smoke=False):
         history.column(key,width=220 if key=="time" else 160)
     history.pack(fill="both",padx=20,pady=8)
     output = ScrolledText(root,height=8,wrap="word")
-    output.pack(fill="both",expand=True,padx=20,pady=16)
+    output.pack(fill="both",expand=True,padx=14,pady=6)
     output.configure(state="disabled")
     status = ttk.Label(root)
     status.pack()
@@ -394,6 +396,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
     def show_source_results(report):
         window = tk.Toplevel(root)
+        install_cockpit(window)
         source_format=report.get("format","nexus-sam-research-v1")
         label,link_for={
             "nexus-sam-research-v1":("SAM",notice_url),
@@ -404,7 +407,7 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-usaspending-research-v1":("USAspending award intelligence",award_url),
         }[source_format]
         window.title("Nexus Exchange | "+label+" research leads")
-        window.geometry("1050x700")
+        window.geometry(fit_geometry(window,1050,700))
         count = sum(lead["research_candidate"] for lead in report["leads"])
         ttk.Label(window,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
         ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
@@ -457,9 +460,10 @@ def main(*, data_directory=None, gui_smoke=False):
             display()
         return window
     def trade_routes_window():
-        window=tk.Toplevel(root)
+        window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Commercial routes")
-        window.geometry("1050x700")
+        window.geometry(fit_geometry(window,1050,700))
         ttk.Label(window,text="Commercial routes — research and compliance only",font=("Segoe UI",16)).pack(pady=8)
         ttk.Label(window,text="No route grants authority or establishes zero cash exposure.").pack()
         tree=ttk.Treeview(window,columns=("route","model","capital","gate"),show="headings",height=12)
@@ -496,8 +500,9 @@ def main(*, data_directory=None, gui_smoke=False):
         from nexus_exchange.fx_reference import CURRENCIES, fetch_reference
         from nexus_exchange.sec_company import fetch_company, normalize_cik, _declared_agent
         window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Scout global trade catalog")
-        window.geometry("1050x760")
+        window.geometry(fit_geometry(window,1050,760))
         ttk.Label(window,text="SCOUT — Global trade sources",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(window,text="Documented sources, not connected accounts or verified revenue. SAM pilot is separate.").pack()
         filters=ttk.Frame(window)
@@ -790,8 +795,9 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def revenue_workspace():
         window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Scout revenue pathways")
-        window.geometry("900x760")
+        window.geometry(fit_geometry(window,900,760))
         ttk.Label(window,text="SCOUT — Revenue pathways",font=("Segoe UI",18)).pack(pady=10)
         ttk.Label(window,text="Planning only. Budget entries do not connect a bank or authorize spending.").pack()
         settings = ttk.Frame(window)
@@ -893,9 +899,10 @@ def main(*, data_directory=None, gui_smoke=False):
         refresh_plan()
         return window
     def owner_profile_window():
-        window=tk.Toplevel(root)
+        window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Owner capability profile")
-        window.geometry("880x690")
+        window.geometry(fit_geometry(window,880,690))
         ttk.Label(window,text="OWNER — Declared research capabilities",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(window,text="Local planning only. No identity verification, credentials, bank details or authority.",wraplength=820).pack(pady=6)
         form=ttk.Frame(window)
@@ -981,9 +988,10 @@ def main(*, data_directory=None, gui_smoke=False):
                 raise ValueError("Observation or profile changed. Refresh Scout history.")
             return initial
         current_context()
-        window=tk.Toplevel(parent)
+        window = tk.Toplevel(parent)
+        install_cockpit(window)
         window.title("Nexus Exchange | Persistent To Do")
-        window.geometry("1000x720")
+        window.geometry(fit_geometry(window,1000,720))
         ttk.Label(window,text="TO DO — Owner review notes",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(window,text=row["title"],wraplength=940).pack(padx=12)
         ttk.Label(window,text="Evidence noted means an owner assertion, NOT verification or authorization.",
@@ -1140,9 +1148,10 @@ def main(*, data_directory=None, gui_smoke=False):
             council_action=council_action,council_blocked=council_blocked,
             operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action)
     def browse_leads():
-        window=tk.Toplevel(root)
+        window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Unified Scout history")
-        window.geometry("1050x720")
+        window.geometry(fit_geometry(window,1050,720))
         ttk.Label(window,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(window,text="Saved observations only. Owner profile changes review order, never eligibility.").pack()
         filters=ttk.Frame(window)
@@ -1262,8 +1271,9 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def browse_archive():
         window = tk.Toplevel(root)
+        install_cockpit(window)
         window.title("Nexus Exchange | Historical opportunities")
-        window.geometry("850x600")
+        window.geometry(fit_geometry(window,850,600))
         ttk.Label(window,text="Historical observations — newest 100, re-screened on refresh; not live offers").pack(pady=8)
         search = ttk.Entry(window)
         search.pack(fill="x",padx=12,pady=4)
@@ -1302,12 +1312,13 @@ def main(*, data_directory=None, gui_smoke=False):
         reload()
         return window
     controls = ttk.Frame(root)
-    controls.pack(pady=10)
+    controls.pack(pady=4)
     launch = ttk.Button(controls,text="Run offline demonstration",command=run)
     launch.pack(side="left")
     importer = ttk.Button(controls,text="Import compiled JSON",command=import_file)
     importer.pack(side="left")
-    ttk.Button(controls,text="Emergency halt",command=halt).pack(side="left")
+    halt_button=ttk.Button(controls,text="Emergency halt",command=halt,style="Halt.TButton")
+    halt_button.pack(side="left",padx=4)
     ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
     ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
     simulation_controls = ttk.Frame(root)
@@ -1316,10 +1327,12 @@ def main(*, data_directory=None, gui_smoke=False):
     simulator.pack(side="left")
     exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
     exporter.pack(side="left")
-    ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
-    ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
-    ttk.Button(simulation_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
-    ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
+    scout_controls=ttk.Frame(root)
+    scout_controls.pack(pady=3)
+    ttk.Button(scout_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
+    ttk.Button(scout_controls,text="Scout lead history",command=browse_leads).pack(side="left")
+    ttk.Button(scout_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
+    ttk.Button(scout_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
     diagnostics=ttk.LabelFrame(root,text="Scout browser diagnostics (offline synthetic fixtures)")
     diagnostics.pack(pady=4)
     diagnostic_buttons=[]
@@ -1334,6 +1347,11 @@ def main(*, data_directory=None, gui_smoke=False):
     for button in (launch,importer,simulator,*diagnostic_buttons):
         button.configure(state="disabled")
     if gui_smoke:
+        try:
+            smoke_cockpit(root,halt_button)
+        except BaseException:
+            close()
+            raise
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
             raise RuntimeError("desktop did not start halted")
         resume()

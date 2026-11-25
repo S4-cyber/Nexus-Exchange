@@ -165,9 +165,11 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
     from tkinter.scrolledtext import ScrolledText
 
     workspace=ObligationWorkspace(plan_id,action=action,blocked_check=blocked_check)
+    from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
+    install_cockpit(window)
     window.title("Nexus Exchange | Local deliverable obligations")
-    window.geometry("1050x700")
+    window.geometry(fit_geometry(window,1050,700))
     ttk.Label(window,text="OPERATOR — Historical deliverable obligations",font=("Segoe UI",18)).pack(pady=6)
     ttk.Label(window,text="Saved plan: "+plan_id,wraplength=1000).pack()
     ttk.Label(window,text="File fingerprints and declared notes only. No verified acceptance, invoicing or revenue.",wraplength=1000).pack(pady=4)
