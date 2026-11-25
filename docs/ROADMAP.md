@@ -228,3 +228,11 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - Next: independently verifiable evidence and scoped approval records, cash-exposure and delivery-feasibility evaluation, durable halt/recovery, live source validation and branch consolidation. See docs/PERSISTENT_TODO.md.
 
 - Verification: exact head ea8e6e4a4b07b68f7a8cfc8fa68b0b88025c2f91 passed 198 unit tests on Python 3.10/3.13 (45536283675), and Windows unit tests passed, but Windows GUI smoke 45536283733 failed during cleanup because the synthetic fixture shadowed the event-store variable. Corrected fixture variable and strengthened GUI smoke to save/reload an evidence reference. Replacement exact-head build pending.
+
+
+## Aegis evidence fingerprint candidate
+- R05/E14/E18/E27/E31: owner-selected local file fingerprint references tied through the existing checklist scope; reselect and compare saved SHA-256/length; no persistence of raw file or path, no independent factual verification or action authority. Ten regression methods and populated GUI smoke covering save/reload/compare. Exact-head CI/build pending.
+- Prior corrected persistent To Do head 7996aa6cc92bf0b523654954021dec84caeb03c0 passed Windows 45536372110 (artifact 14986998694) and CI 45536372118/45536379549. Existing local profiles and notes remain unchanged; no new dependencies or paid services. Main acceptance 0/42 pending integration.
+- Next: authenticated source evidence, explicit delivery requirements and feasibility/cash exposure scenarios, scoped approvals, durable halt and recovery. See docs/AEGIS_FILE_EVIDENCE.md.
+
+- Verification: Linux Python 3.13 passed 208 tests at 96a64366c8a10e59fa0cfb7865f7feacbf09db64 (45536623922). Windows 45536623953 failed a fingerprint test because path and handle metadata comparisons differed after file modification. Revised cross-API comparison to stable identity/size, with before/after metadata checks within each API. Added regression methods for metadata precision and filesystem permission error redaction; replacement CI and GUI build pending.
