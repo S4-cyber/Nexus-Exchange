@@ -1,6 +1,8 @@
 """Windows desktop preview; no external operations."""
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
@@ -8,16 +10,16 @@ from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 
-def demo():
+def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     stamp = now.isoformat()
     release = dict(ocid="ocds-demo-1", id="demo-1", date=stamp,
         tender=dict(status="active", title="Synthetic procurement opportunity",
         tenderPeriod=dict(endDate=(now+timedelta(days=7)).isoformat()),
         value=dict(amount=1000,currency="USD")))
-    return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=False)
+    return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=halted)
 
-def run_logged(store):
+def run_logged(store, stop=None):
     task = uuid4().hex
     def record(state):
         store.append(dict(task_id=task,target="Offline screening",state=state,
@@ -25,7 +27,10 @@ def run_logged(store):
     record("queued")
     record("running")
     try:
-        result = demo()
+        result = demo(halted=stop.is_set() if stop is not None else False)
+        if stop is not None and stop.is_set():
+            record("cancelled")
+            return ()
     except Exception:
         record("failed")
         raise
@@ -41,7 +46,15 @@ def main():
     directory = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     directory.mkdir(parents=True, exist_ok=True)
     store = EventStore(directory / "events.sqlite3")
-    root.protocol("WM_DELETE_WINDOW", lambda: (store.close(), root.destroy()))
+    executor = ThreadPoolExecutor(max_workers=1)
+    stop = Event()
+    future = None
+    def close():
+        stop.set()
+        executor.shutdown(wait=True, cancel_futures=True)
+        store.close()
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", close)
     ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
     ttk.Label(root,text="OFFLINE DEMONSTRATION — External actions disabled").pack()
     tasks = ttk.LabelFrame(root,text="Active tasks")
@@ -88,11 +101,29 @@ def main():
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
+    def worker():
+        local = EventStore(directory / "events.sqlite3")
+        try:
+            return run_logged(local, stop)
+        finally:
+            local.close()
     def run():
+        nonlocal future
+        if stop.is_set() or future is not None:
+            return
+        launch.configure(state="disabled")
+        future = executor.submit(worker)
+        poll()
+    def poll():
+        nonlocal future
+        refresh()
+        if not future.done():
+            root.after(100,poll)
+            return
         output.configure(state="normal")
         output.delete("1.0","end")
         try:
-            for item in run_logged(store):
+            for item in future.result():
                 o=item.observation.opportunity
                 output.insert("end",f"{o.title}\nValue: {o.currency} {o.amount}\nReview eligible: {item.screening.eligible_for_review}\nReasons: {item.screening.reasons}\nSynthetic data only.\n")
         except Exception as exc:
@@ -100,7 +131,26 @@ def main():
         finally:
             refresh()
             output.configure(state="disabled")
-    ttk.Button(root,text="Run offline demonstration",command=run).pack(pady=10)
+            future = None
+            if not stop.is_set():
+                launch.configure(state="normal")
+    def halt():
+        stop.set()
+        launch.configure(state="disabled")
+        halt_status.configure(text="HALTED — new tasks blocked")
+    def resume():
+        if future is None:
+            stop.clear()
+            launch.configure(state="normal")
+            halt_status.configure(text="Offline ready")
+    controls = ttk.Frame(root)
+    controls.pack(pady=10)
+    launch = ttk.Button(controls,text="Run offline demonstration",command=run)
+    launch.pack(side="left")
+    ttk.Button(controls,text="Emergency halt",command=halt).pack(side="left")
+    ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
+    halt_status = ttk.Label(root,text="Offline ready")
+    halt_status.pack()
     root.mainloop()
 
 if __name__ == "__main__":
