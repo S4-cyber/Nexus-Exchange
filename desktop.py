@@ -1325,6 +1325,17 @@ def main(*, data_directory=None, gui_smoke=False):
     root.mainloop()
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()
+    if "--fixture-process-self-test" in sys.argv:
+        from nexus_exchange.browser_process import run_isolated_fixture
+        for fixture_id in ("procurement","digital_services"):
+            result=run_isolated_fixture(fixture_id,halted=False)
+            if (result["fixture_id"]!=fixture_id or result["worker_pid"]==os.getpid()
+                    or not result["child_process_completed"]
+                    or result["network_enabled"] or result["browser_executed"]):
+                sys.exit(1)
+        sys.exit(0)
     if "--gui-self-test" in sys.argv:
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as directory:
