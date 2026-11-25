@@ -138,10 +138,11 @@ def main(*, data_directory=None, gui_smoke=False):
         finally:
             root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
-    install_cockpit(root)
-    ttk.Label(root,text="NEXUS EXCHANGE",foreground="#39ff70",font=("Segoe UI",22,"bold")).pack(pady=6)
-    ttk.Label(root,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
-    tasks = ttk.LabelFrame(root,text="Active tasks")
+    chrome=install_cockpit(root,command_deck=True)
+    content=chrome.content
+    ttk.Label(content,text="NEXUS EXCHANGE",foreground="#39ff70",font=("Segoe UI",22,"bold")).pack(pady=6)
+    ttk.Label(content,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
+    tasks = ttk.LabelFrame(content,text="Active tasks")
     tasks.pack(fill="x",padx=20,pady=8)
     slots = []
     for i in range(10):
@@ -149,15 +150,15 @@ def main(*, data_directory=None, gui_smoke=False):
         cell.grid(row=i//5,column=i%5,sticky="ew",padx=3,pady=4)
         tasks.columnconfigure(i%5,weight=1)
         slots.append(cell)
-    history = ttk.Treeview(root,columns=("time","target","state"),show="headings",height=7)
+    history = ttk.Treeview(content,columns=("time","target","state"),show="headings",height=7)
     for key,label in (("time","UTC timestamp"),("target","Target"),("state","Status")):
         history.heading(key,text=label)
         history.column(key,width=220 if key=="time" else 160)
     history.pack(fill="both",padx=20,pady=8)
-    output = ScrolledText(root,height=8,wrap="word")
+    output = ScrolledText(content,height=8,wrap="word")
     output.pack(fill="both",expand=True,padx=14,pady=6)
     output.configure(state="disabled")
-    status = ttk.Label(root)
+    status = ttk.Label(content)
     status.pack()
     page = 1
     def refresh():
@@ -174,7 +175,7 @@ def main(*, data_directory=None, gui_smoke=False):
         for event in reversed(view["history"][-100:]):
             history.insert("","end",values=(event.timestamp,event.target,event.state))
         status.configure(text=f"Successful tasks: {view['successful_tasks']} | Recorded events: {len(view['history'])}")
-    navigation = ttk.Frame(root)
+    navigation = ttk.Frame(content)
     navigation.pack()
     def move(delta):
         nonlocal page
@@ -396,7 +397,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
     def show_source_results(report):
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         source_format=report.get("format","nexus-sam-research-v1")
         label,link_for={
             "nexus-sam-research-v1":("SAM",notice_url),
@@ -409,17 +410,17 @@ def main(*, data_directory=None, gui_smoke=False):
         window.title("Nexus Exchange | "+label+" research leads")
         window.geometry(fit_geometry(window,1050,700))
         count = sum(lead["research_candidate"] for lead in report["leads"])
-        ttk.Label(window,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
-        ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
+        ttk.Label(content,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
+        ttk.Label(content,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
         if report.get("truncated"):
-            ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
+            ttk.Label(content,text="Search capped by request budget; additional notices not retrieved.").pack()
         if source_format=="nexus-usaspending-research-v1":
-            ttk.Label(window,text="Historical prime awards, NOT open subcontracting offers. Verify actual demand.").pack()
+            ttk.Label(content,text="Historical prime awards, NOT open subcontracting offers. Verify actual demand.").pack()
         if source_format=="nexus-canada-research-v1":
-            ttk.Label(window,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
+            ttk.Label(content,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
         if source_format in ("nexus-fts-research-v1","nexus-cf-research-v1"):
-            ttk.Label(window,text="Historical releases only. The complete procurement lifecycle is not compiled.").pack()
-        tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
+            ttk.Label(content,text="Historical releases only. The complete procurement lifecycle is not compiled.").pack()
+        tree=ttk.Treeview(content,columns=("title","deadline","state"),show="headings",height=8)
         for col,label,width in (("title","Opportunity",510),("deadline","Deadline / reported date",200),("state","Research status",170)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
@@ -428,7 +429,7 @@ def main(*, data_directory=None, gui_smoke=False):
         for key,lead in leads.items():
             tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or lead.get("earliest_deadline_date") or "Unverified",
                 "Award intelligence" if source_format=="nexus-usaspending-research-v1" else "Review candidate" if lead["research_candidate"] else "Blocked"))
-        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details=ScrolledText(content,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
         def selected():
             selection=tree.selection()
@@ -454,24 +455,24 @@ def main(*, data_directory=None, gui_smoke=False):
                 except (ValueError,OSError):
                     messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
         tree.bind("<<TreeviewSelect>>",display)
-        ttk.Button(window,text="Open selected official notice",command=open_notice).pack(pady=8)
+        ttk.Button(content,text="Open selected official notice",command=open_notice).pack(pady=8)
         if leads:
             tree.selection_set(next(iter(leads)))
             display()
         return window
     def trade_routes_window():
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Commercial routes")
         window.geometry(fit_geometry(window,1050,700))
-        ttk.Label(window,text="Commercial routes — research and compliance only",font=("Segoe UI",16)).pack(pady=8)
-        ttk.Label(window,text="No route grants authority or establishes zero cash exposure.").pack()
-        tree=ttk.Treeview(window,columns=("route","model","capital","gate"),show="headings",height=12)
+        ttk.Label(content,text="Commercial routes — research and compliance only",font=("Segoe UI",16)).pack(pady=8)
+        ttk.Label(content,text="No route grants authority or establishes zero cash exposure.").pack()
+        tree=ttk.Treeview(content,columns=("route","model","capital","gate"),show="headings",height=12)
         for key,label,width in (("route","Commercial route",300),("model","Revenue model",265),("capital","Capital status",145),("gate","Review gate",160)):
             tree.heading(key,text=label)
             tree.column(key,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=8)
-        view=ScrolledText(window,height=10,wrap="word",state="disabled")
+        view=ScrolledText(content,height=10,wrap="word",state="disabled")
         view.pack(fill="both",expand=True,padx=12,pady=8)
         if not stop.is_set():
             for route in ROUTES:
@@ -500,25 +501,25 @@ def main(*, data_directory=None, gui_smoke=False):
         from nexus_exchange.fx_reference import CURRENCIES, fetch_reference
         from nexus_exchange.sec_company import fetch_company, normalize_cik, _declared_agent
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Scout global trade catalog")
         window.geometry(fit_geometry(window,1050,760))
-        ttk.Label(window,text="SCOUT — Global trade sources",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(window,text="Documented sources, not connected accounts or verified revenue. SAM pilot is separate.").pack()
-        filters=ttk.Frame(window)
+        ttk.Label(content,text="SCOUT — Global trade sources",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(content,text="Documented sources, not connected accounts or verified revenue. SAM pilot is separate.").pack()
+        filters=ttk.Frame(content)
         filters.pack(fill="x",padx=12,pady=8)
         kind=tk.StringVar(value="All")
         query=tk.StringVar(value="")
         ttk.Label(filters,text="Income type").pack(side="left")
         ttk.Combobox(filters,textvariable=kind,values=["All",*KINDS],state="readonly",width=18).pack(side="left",padx=6)
         ttk.Entry(filters,textvariable=query,width=40).pack(side="left",padx=6)
-        tree=ttk.Treeview(window,columns=("name","sector","access","priority"),show="headings",height=10)
+        tree=ttk.Treeview(content,columns=("name","sector","access","priority"),show="headings",height=10)
         for col,label,width in (("name","Source",265),("sector","Market",210),
                 ("access","Access pathway",170),("priority","Integration priority",120)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=6)
-        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details=ScrolledText(content,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
         rows={}
         def write_details(value):
@@ -776,7 +777,7 @@ def main(*, data_directory=None, gui_smoke=False):
             run(work,target="Atlas SEC public company metadata research",scenario=True)
             write_details("Company research requested. See main dashboard; no identity or counterparty clearance.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
-        buttons=ttk.Frame(window)
+        buttons=ttk.Frame(content)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Open official source",command=open_selected).pack(side="left")
         ttk.Button(buttons,text="Open integration documentation",command=lambda:open_selected(True)).pack(side="left",padx=5)
@@ -785,7 +786,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
         ttk.Button(buttons,text="Research USAspending",command=run_spending).pack(side="left",padx=5)
-        supplemental=ttk.Frame(window)
+        supplemental=ttk.Frame(content)
         supplemental.pack(pady=4)
         ttk.Button(supplemental,text="Reference FX to USD (keyless)",command=run_fx).pack(side="left",padx=4)
         ttk.Button(supplemental,text="Atlas SEC company lookup",command=run_sec).pack(side="left",padx=4)
@@ -795,12 +796,12 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def revenue_workspace():
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Scout revenue pathways")
         window.geometry(fit_geometry(window,900,760))
-        ttk.Label(window,text="SCOUT — Revenue pathways",font=("Segoe UI",18)).pack(pady=10)
-        ttk.Label(window,text="Planning only. Budget entries do not connect a bank or authorize spending.").pack()
-        settings = ttk.Frame(window)
+        ttk.Label(content,text="SCOUT — Revenue pathways",font=("Segoe UI",18)).pack(pady=10)
+        ttk.Label(content,text="Planning only. Budget entries do not connect a bank or authorize spending.").pack()
+        settings = ttk.Frame(content)
         settings.pack(fill="x",padx=15,pady=10)
         mode = tk.StringVar(value=Mode.GENESIS.value)
         source = tk.StringVar(value=SOURCES[0].key)
@@ -815,14 +816,14 @@ def main(*, data_directory=None, gui_smoke=False):
             widget=ttk.Combobox(settings,textvariable=var,values=values,state="readonly") if values else ttk.Entry(settings,textvariable=var)
             widget.grid(row=i,column=1,sticky="ew",padx=8)
         settings.columnconfigure(1,weight=1)
-        prerequisites = ttk.Label(window,wraplength=850,justify="left")
+        prerequisites = ttk.Label(content,wraplength=850,justify="left")
         prerequisites.pack(fill="x",padx=15,pady=6)
         flags={key:tk.BooleanVar(value=False) for key,_ in CHECKS}
-        checklist=ttk.LabelFrame(window,text="To do — owner assertions only, independent verification required")
+        checklist=ttk.LabelFrame(content,text="To do — owner assertions only, independent verification required")
         checklist.pack(fill="x",padx=15,pady=8)
         for key,instruction in CHECKS:
             ttk.Checkbutton(checklist,text=instruction,variable=flags[key]).pack(anchor="w",padx=6,pady=3)
-        result=ttk.Label(window,wraplength=850,justify="left")
+        result=ttk.Label(content,wraplength=850,justify="left")
         result.pack(fill="x",padx=15,pady=8)
         def refresh_plan():
             try:
@@ -836,7 +837,7 @@ def main(*, data_directory=None, gui_smoke=False):
             except (ValueError,PermissionError) as exc:
                 result.configure(text="Blocked: "+str(exc))
         procurement_type = tk.StringVar(value="Combined synopsis/solicitation")
-        selector = ttk.Frame(window)
+        selector = ttk.Frame(content)
         selector.pack(fill="x",padx=15,pady=4)
         ttk.Label(selector,text="SAM notice type").pack(side="left")
         ttk.Combobox(selector,textvariable=procurement_type,values=["Combined synopsis/solicitation","Solicitation"],state="readonly",width=32).pack(side="left",padx=8)
@@ -890,7 +891,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 return search_sam(query,key,approved=True,halt_check=stop.is_set)
             run(work,target="SAM read-only notice discovery",scenario=True)
             result.configure(text="Search requested. See the main dashboard for results.")
-        buttons=ttk.Frame(window)
+        buttons=ttk.Frame(content)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
         ttk.Button(buttons,text="Search SAM (read only)",command=run_sam).pack(side="left")
@@ -900,12 +901,12 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def owner_profile_window():
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Owner capability profile")
         window.geometry(fit_geometry(window,880,690))
-        ttk.Label(window,text="OWNER — Declared research capabilities",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(window,text="Local planning only. No identity verification, credentials, bank details or authority.",wraplength=820).pack(pady=6)
-        form=ttk.Frame(window)
+        ttk.Label(content,text="OWNER — Declared research capabilities",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(content,text="Local planning only. No identity verification, credentials, bank details or authority.",wraplength=820).pack(pady=6)
+        form=ttk.Frame(content)
         form.pack(fill="x",padx=20,pady=12)
         values={"mode":tk.StringVar(value="genesis"),"budget":tk.StringVar(value="0"),
             "hours_per_week":tk.StringVar(value="0"),"naics":tk.StringVar(value=""),
@@ -919,13 +920,13 @@ def main(*, data_directory=None, gui_smoke=False):
                 if key=="mode" else ttk.Entry(form,textvariable=values[key],width=42))
             widget.grid(row=i,column=1,sticky="ew",padx=8)
         form.columnconfigure(1,weight=1)
-        ttk.Label(window,text="Only declare services you can actually deliver. Examples: NAICS 541511, CPV 72, keyword software. No private or sensitive information.",wraplength=810).pack(padx=20,pady=8)
-        source_box=ttk.LabelFrame(window,text="Sources to prioritize")
+        ttk.Label(content,text="Only declare services you can actually deliver. Examples: NAICS 541511, CPV 72, keyword software. No private or sensitive information.",wraplength=810).pack(padx=20,pady=8)
+        source_box=ttk.LabelFrame(content,text="Sources to prioritize")
         source_box.pack(fill="x",padx=20,pady=8)
         flags={source:tk.BooleanVar(value=False) for source in PROFILE_SOURCES}
         for source,flag in flags.items():
             ttk.Checkbutton(source_box,text=source,variable=flag).pack(side="left",padx=7,pady=8)
-        message=ttk.Label(window,wraplength=810)
+        message=ttk.Label(content,wraplength=810)
         message.pack(fill="x",padx=20,pady=8)
         def split(key):
             return [v.strip() for v in values[key].get().split(",") if v.strip()]
@@ -967,7 +968,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 with ProfileStore(directory / "owner-profile.sqlite3") as store:
                     store.clear(halted=stop.is_set())
                 load()
-        buttons=ttk.Frame(window)
+        buttons=ttk.Frame(content)
         buttons.pack(pady=10)
         ttk.Button(buttons,text="Save local profile",command=save).pack(side="left",padx=6)
         ttk.Button(buttons,text="Reload",command=load).pack(side="left",padx=6)
@@ -989,24 +990,24 @@ def main(*, data_directory=None, gui_smoke=False):
             return initial
         current_context()
         window = tk.Toplevel(parent)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Persistent To Do")
         window.geometry(fit_geometry(window,1000,720))
-        ttk.Label(window,text="TO DO — Owner review notes",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(window,text=row["title"],wraplength=940).pack(padx=12)
-        ttk.Label(window,text="Evidence noted means an owner assertion, NOT verification or authorization.",
+        ttk.Label(content,text="TO DO — Owner review notes",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(content,text=row["title"],wraplength=940).pack(padx=12)
+        ttk.Label(content,text="Evidence noted means an owner assertion, NOT verification or authorization.",
             wraplength=940).pack(pady=4)
-        summary=ttk.Label(window)
+        summary=ttk.Label(content)
         summary.pack()
-        tree=ttk.Treeview(window,columns=("instruction","state"),show="headings",height=9)
+        tree=ttk.Treeview(content,columns=("instruction","state"),show="headings",height=9)
         tree.heading("instruction",text="Required check")
         tree.heading("state",text="Owner review state")
         tree.column("instruction",width=730,anchor="w")
         tree.column("state",width=180,anchor="w")
         tree.pack(fill="x",padx=12,pady=8)
-        instruction=ttk.Label(window,wraplength=940,justify="left")
+        instruction=ttk.Label(content,wraplength=940,justify="left")
         instruction.pack(fill="x",padx=12,pady=4)
-        editor=ttk.Frame(window)
+        editor=ttk.Frame(content)
         editor.pack(fill="x",padx=12,pady=8)
         labels={"pending":"Pending","needs_followup":"Needs follow-up","evidence_noted":"Evidence noted"}
         values={v:k for k,v in labels.items()}
@@ -1017,7 +1018,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Label(editor,text="Evidence reference (no credentials or personal data)").grid(row=1,column=0,sticky="w",pady=6)
         ttk.Entry(editor,textvariable=reference).grid(row=1,column=1,sticky="ew",padx=8)
         editor.columnconfigure(1,weight=1)
-        message=ttk.Label(window,wraplength=940,justify="left")
+        message=ttk.Label(content,wraplength=940,justify="left")
         message.pack(fill="x",padx=12,pady=6)
         data=None
         tasks={}
@@ -1117,7 +1118,7 @@ def main(*, data_directory=None, gui_smoke=False):
             except Exception:
                 message.configure(text="Unable to check local evidence.")
                 return None
-        buttons=ttk.Frame(window)
+        buttons=ttk.Frame(content)
         buttons.pack(pady=6)
         ttk.Button(buttons,text="Fingerprint evidence file",command=pick_evidence).pack(side="left",padx=5)
         ttk.Button(buttons,text="Check saved fingerprint",command=check_evidence).pack(side="left",padx=5)
@@ -1149,27 +1150,27 @@ def main(*, data_directory=None, gui_smoke=False):
             operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action)
     def browse_leads():
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Unified Scout history")
         window.geometry(fit_geometry(window,1050,720))
-        ttk.Label(window,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
-        ttk.Label(window,text="Saved observations only. Owner profile changes review order, never eligibility.").pack()
-        filters=ttk.Frame(window)
+        ttk.Label(content,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(content,text="Saved observations only. Owner profile changes review order, never eligibility.").pack()
+        filters=ttk.Frame(content)
         filters.pack(fill="x",padx=12,pady=8)
         source=tk.StringVar(value="All")
         search=tk.StringVar(value="")
         ttk.Combobox(filters,textvariable=source,values=["All",*PROFILE_SOURCES],
             state="readonly",width=18).pack(side="left",padx=5)
         ttk.Entry(filters,textvariable=search,width=40).pack(side="left",padx=5)
-        summary=ttk.Label(window)
+        summary=ttk.Label(content)
         summary.pack()
-        tree=ttk.Treeview(window,columns=("source","title","fit","deadline"),show="headings",height=10)
+        tree=ttk.Treeview(content,columns=("source","title","fit","deadline"),show="headings",height=10)
         for col,label,width in (("source","Source",105),("title","Notice",420),
                 ("fit","Review priority",235),("deadline","Reported deadline",175)):
             tree.heading(col,text=label)
             tree.column(col,width=width,anchor="w")
         tree.pack(fill="x",padx=12,pady=6)
-        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details=ScrolledText(content,height=15,wrap="word",state="disabled")
         details.pack(fill="both",expand=True,padx=12,pady=8)
         report=None
         rows={}
@@ -1238,7 +1239,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 except OSError as exc:
                     messagebox.showerror("Export failed",type(exc).__name__,parent=window)
         ttk.Button(filters,text="Filter / refresh",command=reload).pack(side="left",padx=5)
-        buttons=ttk.Frame(window)
+        buttons=ttk.Frame(content)
         buttons.pack(pady=6)
         ttk.Button(buttons,text="Open official notice",command=open_selected).pack(side="left")
         def review_tasks():
@@ -1271,13 +1272,13 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def browse_archive():
         window = tk.Toplevel(root)
-        install_cockpit(window)
+        content=install_cockpit(window).content
         window.title("Nexus Exchange | Historical opportunities")
         window.geometry(fit_geometry(window,850,600))
-        ttk.Label(window,text="Historical observations — newest 100, re-screened on refresh; not live offers").pack(pady=8)
-        search = ttk.Entry(window)
+        ttk.Label(content,text="Historical observations — newest 100, re-screened on refresh; not live offers").pack(pady=8)
+        search = ttk.Entry(content)
         search.pack(fill="x",padx=12,pady=4)
-        view = ScrolledText(window,wrap="word")
+        view = ScrolledText(content,wrap="word")
         view.pack(fill="both",expand=True,padx=12,pady=8)
         report = None
         def reload():
@@ -1305,45 +1306,48 @@ def main(*, data_directory=None, gui_smoke=False):
                     export_report(path, report)
                 except OSError as exc:
                     messagebox.showerror("Export failed",type(exc).__name__,parent=window)
-        buttons = ttk.Frame(window)
+        buttons = ttk.Frame(content)
         buttons.pack(pady=8)
         ttk.Button(buttons,text="Search / refresh",command=reload).pack(side="left")
         ttk.Button(buttons,text="Export displayed JSON",command=export).pack(side="left")
         reload()
         return window
-    controls = ttk.Frame(root)
+    controls = ttk.Frame(content)
     controls.pack(pady=4)
     launch = ttk.Button(controls,text="Run offline demonstration",command=run)
     launch.pack(side="left")
     importer = ttk.Button(controls,text="Import compiled JSON",command=import_file)
     importer.pack(side="left")
-    halt_button=ttk.Button(controls,text="Emergency halt",command=halt,style="Halt.TButton")
+    safety_buttons=ttk.Frame(chrome.safety)
+    safety_buttons.pack(anchor="w")
+    halt_button=ttk.Button(safety_buttons,text="Emergency halt",command=halt,style="Halt.TButton")
     halt_button.pack(side="left",padx=4)
-    ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
+    ttk.Button(safety_buttons,text="Resume offline",command=resume).pack(side="left")
     ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
-    simulation_controls = ttk.Frame(root)
+    simulation_controls = ttk.Frame(content)
     simulation_controls.pack(pady=5)
     simulator = ttk.Button(simulation_controls,text="Evaluate deal scenario JSON",command=import_scenario)
     simulator.pack(side="left")
     exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
     exporter.pack(side="left")
-    scout_controls=ttk.Frame(root)
+    scout_controls=ttk.Frame(content)
     scout_controls.pack(pady=3)
     ttk.Button(scout_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     ttk.Button(scout_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     ttk.Button(scout_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(scout_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
-    diagnostics=ttk.LabelFrame(root,text="Scout browser diagnostics (offline synthetic fixtures)")
+    diagnostics=ttk.LabelFrame(content,text="Scout browser diagnostics (offline synthetic fixtures)")
     diagnostics.pack(pady=4)
     diagnostic_buttons=[]
     for fixture_id,label in (("procurement","Run procurement fixture"),("digital_services","Run digital services fixture")):
         button=ttk.Button(diagnostics,text=label,command=partial(browser_diagnostic,fixture_id))
         button.pack(side="left",padx=4)
         diagnostic_buttons.append(button)
-    ttk.Button(root,text="Recover interrupted Council attempts",command=recover_council).pack(pady=2)
-    halt_status = ttk.Label(root,text=f"HALTED — {stop.recovered_count} journal tasks, "
+    ttk.Button(chrome.safety,text="Recover interrupted Council attempts",command=recover_council).pack(anchor="w",padx=4,pady=2)
+    halt_status = ttk.Label(chrome.safety,text=f"HALTED — {stop.recovered_count} journal tasks, "
         f"{stop.council_recovered_count} Council attempts reconciled; Resume offline to begin",wraplength=1040)
-    halt_status.pack()
+    halt_status.pack(anchor="w",padx=4,fill="x")
+    chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
     for button in (launch,importer,simulator,*diagnostic_buttons):
         button.configure(state="disabled")
     if gui_smoke:

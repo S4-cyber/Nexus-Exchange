@@ -146,19 +146,19 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     workspace=CouncilWorkspace(plan_id,action=action,blocked_check=blocked_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Council review and audit")
     window.geometry(fit_geometry(window,1160,810))
     window.minsize(850,650)
-    ttk.Label(window,text="COUNCIL — Local scenario review",font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(window,text="Saved plan: "+plan_id,wraplength=1080).pack(padx=12)
-    ttk.Label(window,text="Explicit reviews consume one of three attempts. No independent factual verification or external authority.",
+    ttk.Label(content,text="COUNCIL — Local scenario review",font=("Segoe UI",18)).pack(pady=6)
+    ttk.Label(content,text="Saved plan: "+plan_id,wraplength=1080).pack(padx=12)
+    ttk.Label(content,text="Explicit reviews consume one of three attempts. No independent factual verification or external authority.",
               wraplength=1050).pack(pady=5)
-    status=ttk.Label(window,text="Inspect a saved plan; register explicitly before reviewing.",wraplength=1050)
+    status=ttk.Label(content,text="Inspect a saved plan; register explicitly before reviewing.",wraplength=1050)
     status.pack(fill="x",padx=12,pady=3)
-    controls=ttk.Frame(window)
+    controls=ttk.Frame(content)
     controls.pack(pady=5)
-    tabs=ttk.Notebook(window)
+    tabs=ttk.Notebook(content)
     tabs.pack(fill="both",expand=True,padx=12,pady=6)
     local=ttk.Frame(tabs)
     past=ttk.Frame(tabs)

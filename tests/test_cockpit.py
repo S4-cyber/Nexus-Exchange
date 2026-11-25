@@ -1,5 +1,5 @@
 import unittest
-from nexus_exchange.cockpit import help_for,drift,HELPS,fit_geometry,GREEN,PURPLE,BLACK
+from nexus_exchange.cockpit import help_for,drift,HELPS,fit_geometry,reveal_fraction,GREEN,PURPLE,BLACK
 
 
 class CockpitTests(unittest.TestCase):
@@ -33,6 +33,21 @@ class CockpitTests(unittest.TestCase):
             def winfo_screenwidth(self):return 1280
             def winfo_screenheight(self):return 800
         self.assertEqual(fit_geometry(Screen(),1080,820),"1114x700")
+
+    def test_focus_reveal_scrolls_only_when_needed(self):
+        self.assertIsNone(reveal_fraction(20,30,0,100,300))
+        self.assertAlmostEqual(reveal_fraction(240,30,0,100,300),170/300)
+        self.assertAlmostEqual(reveal_fraction(25,20,100,100,300),25/300)
+        self.assertIsNone(reveal_fraction(20,30,0,300,300))
+
+    def test_focus_reveal_large_control_and_edges(self):
+        self.assertAlmostEqual(reveal_fraction(180,180,0,100,300),180/300)
+        self.assertAlmostEqual(reveal_fraction(280,50,0,100,300),200/300)
+        self.assertIsNone(reveal_fraction(0,20,0,0,300))
+
+    def test_context_help_names_match_workspace(self):
+        self.assertIn("conclusions",help_for("Review","TButton"))
+        self.assertIn("references",help_for("Evidence","TButton"))
 
     def test_palette_distinct_and_high_contrast(self):
         def luminance(hexcolor):

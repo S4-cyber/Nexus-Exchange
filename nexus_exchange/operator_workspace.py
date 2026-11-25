@@ -131,14 +131,14 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
     workspace=OperatorWorkspace(plan_id,action=action,blocked_check=blocked_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title('Nexus Exchange | Operator quotation drafts')
     window.geometry(fit_geometry(window,1160,850))
     window.minsize(850,680)
-    ttk.Label(window,text='OPERATOR — Local quotation requests',font=('Segoe UI',18)).pack(pady=5)
-    ttk.Label(window,text='Saved plan: '+plan_id,wraplength=1080).pack(padx=12)
-    ttk.Label(window,text='Declared supplier only. No verified recipient, sending or purchase. Reenter the same declaration to acknowledge a saved draft.',wraplength=1050).pack(pady=4)
-    form=ttk.LabelFrame(window,text='Explicit supplier declaration (USD)')
+    ttk.Label(content,text='OPERATOR — Local quotation requests',font=('Segoe UI',18)).pack(pady=5)
+    ttk.Label(content,text='Saved plan: '+plan_id,wraplength=1080).pack(padx=12)
+    ttk.Label(content,text='Declared supplier only. No verified recipient, sending or purchase. Reenter the same declaration to acknowledge a saved draft.',wraplength=1050).pack(pady=4)
+    form=ttk.LabelFrame(content,text='Explicit supplier declaration (USD)')
     form.pack(fill='x',padx=12,pady=4)
     values={key:tk.StringVar(master=window) for key,_ in SUPPLIER_FIELDS}
     for i,(key,label) in enumerate(SUPPLIER_FIELDS):
@@ -147,9 +147,9 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
         ttk.Entry(form,textvariable=values[key],width=30).grid(row=row,column=col*2+1,sticky='ew',padx=3)
     form.columnconfigure(1,weight=1)
     form.columnconfigure(3,weight=1)
-    status=ttk.Label(window,text='Enter declaration and explicit line items; opening does not save anything.',wraplength=1050)
+    status=ttk.Label(content,text='Enter declaration and explicit line items; opening does not save anything.',wraplength=1050)
     status.pack(fill='x',padx=12,pady=4)
-    tabs=ttk.Notebook(window)
+    tabs=ttk.Notebook(content)
     tabs.pack(fill='both',expand=True,padx=12,pady=4)
     compose=ttk.Frame(tabs); history=ttk.Frame(tabs)
     tabs.add(compose,text='Compose draft'); tabs.add(history,text='Saved draft history')
@@ -269,7 +269,7 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
                 try: window.after_cancel(timer)
                 except tk.TclError: pass
 
-    buttons=ttk.Frame(window); buttons.pack(pady=5)
+    buttons=ttk.Frame(content); buttons.pack(pady=5)
     for label,callback in (('Preview draft',prepare),('Save immutable draft',save),('Refresh saved drafts',refresh)):
         ttk.Button(buttons,text=label,command=callback).pack(side='left',padx=4)
     ack_button=ttk.Button(buttons,text='Acknowledge selected locally',command=acknowledge,state='disabled'); ack_button.pack(side='left',padx=4)

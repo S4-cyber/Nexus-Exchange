@@ -170,17 +170,17 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
     records=workspace.list()
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Scout scenario planning")
     window.geometry(fit_geometry(window,1100,850))
     window.minsize(850,650)
-    ttk.Label(window,text="SCOUT — Hypothetical financial and delivery plan",
+    ttk.Label(content,text="SCOUT — Hypothetical financial and delivery plan",
               font=("Segoe UI",18)).pack(pady=6)
-    ttk.Label(window,text=row["title"],wraplength=1020).pack(padx=12)
-    ttk.Label(window,text="Blank = unknown, not zero. All values are owner assumptions; no income, budget or authorization is verified.",
+    ttk.Label(content,text=row["title"],wraplength=1020).pack(padx=12)
+    ttk.Label(content,text="Blank = unknown, not zero. All values are owner assumptions; no income, budget or authorization is verified.",
               wraplength=1020).pack(pady=4)
     values={key:tk.StringVar(master=window,value="") for key in KEYS}
-    body=ttk.Frame(window)
+    body=ttk.Frame(content)
     body.pack(fill="x",padx=10,pady=4)
     for col,(title,fields) in enumerate((("Financial assumptions",FINANCE_FIELDS),("Preparation and delivery",TIMING_FIELDS))):
         panel=ttk.LabelFrame(body,text=title)
@@ -193,16 +193,16 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
         if col==1:
             ttk.Label(panel,text="Timestamp format: YYYY-MM-DDTHH:MM:SSZ (or explicit offset).\nThe notice cutoff is for submission, not a delivery due date.",
                       wraplength=400,justify="left").grid(row=len(fields),column=0,columnspan=2,sticky="w",padx=5,pady=8)
-    tree=ttk.Treeview(window,columns=("created","id","compensation"),show="headings",height=4,selectmode="browse")
+    tree=ttk.Treeview(content,columns=("created","id","compensation"),show="headings",height=4,selectmode="browse")
     for key,label,width in (("created","Created UTC",250),("id","Saved plan fingerprint",430),("compensation","Hypothetical USD",160)):
         tree.heading(key,text=label)
         tree.column(key,width=width,anchor="w")
     tree.pack(fill="x",padx=12,pady=4)
-    status=ttk.Label(window,wraplength=1020)
+    status=ttk.Label(content,wraplength=1020)
     status.pack(fill="x",padx=12)
-    buttons=ttk.Frame(window)
+    buttons=ttk.Frame(content)
     buttons.pack(pady=5)
-    output=ScrolledText(window,height=9,wrap="word",state="disabled")
+    output=ScrolledText(content,height=9,wrap="word",state="disabled")
     output.pack(fill="both",expand=True,padx=12,pady=6)
 
     displayed_plan=None
@@ -330,7 +330,7 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
     if operator_action is not None:
         ttk.Button(buttons,text="Operator RFQ",command=operator).pack(side="left",padx=4)
     if csv_action is not None:
-        ttk.Button(window,text="Operator CSV work sample",command=csv_deliverable).pack(pady=3)
+        ttk.Button(content,text="Operator CSV work sample",command=csv_deliverable).pack(pady=3)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
         items=tree.selection()

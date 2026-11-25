@@ -113,13 +113,13 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check)
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
-    install_cockpit(window)
+    content=install_cockpit(window).content
     window.title("Nexus Exchange | Operator CSV deliverable")
     window.geometry(fit_geometry(window,1000,650))
-    ttk.Label(window,text="OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
-    ttk.Label(window,text="Saved plan: "+plan_id,wraplength=950).pack()
-    ttk.Label(window,text="Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment.",wraplength=950).pack(pady=4)
-    form=ttk.Frame(window); form.pack(fill="x",padx=12,pady=5)
+    ttk.Label(content,text="OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
+    ttk.Label(content,text="Saved plan: "+plan_id,wraplength=950).pack()
+    ttk.Label(content,text="Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment.",wraplength=950).pack(pady=4)
+    form=ttk.Frame(content); form.pack(fill="x",padx=12,pady=5)
     source=tk.StringVar(master=window)
     columns=tk.StringVar(master=window)
     key=tk.StringVar(master=window)
@@ -129,10 +129,10 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=4)
         ttk.Entry(form,textvariable=var,width=66,state="readonly" if i==0 else "normal").grid(row=i,column=1,sticky="ew",padx=6)
     form.columnconfigure(1,weight=1)
-    status=ttk.Label(window,wraplength=950); status.pack(fill="x",padx=12,pady=4)
-    output=ScrolledText(window,state="disabled",wrap="word")
+    status=ttk.Label(content,wraplength=950); status.pack(fill="x",padx=12,pady=4)
+    output=ScrolledText(content,state="disabled",wrap="word")
     output.pack(fill="both",expand=True,padx=12,pady=6)
-    bar=ttk.Frame(window); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(pady=7)
     timer=None
 
     def write(text):
