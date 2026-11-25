@@ -98,3 +98,13 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - E04: workflow added; hosted execution not yet observed.
 - Verified main implementation gates: 0/42 until integration. Candidate locally supported gates: E01, E03, E05–E09 (7/42).
 - Next: CI evidence, review source identity and malformed inputs, then authorized read-only procurement adapter E10–E12.
+
+
+## Sprint 02 — Governor offline policy (review branch, 2026-11-24)
+
+- Prior Scout head 874595bbf0d6d6c1be357a641c9b8570e9b51f0d: [CI run 45506712076](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45506712076), Python 3.10 and 3.13 unit steps successful.
+- Separate handoff head 64b1790b1f01c5a69eaf4e65518393bdb0be0e64: [CI run 45507767681](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45507767681), both Python jobs successful. E15 remains a candidate; independent evidence verification and integration are outstanding.
+- E16 candidate: new pure policy permits only explicitly enumerated local research, evaluation, draft creation and simulation when halt state is exactly False. Unknown action/state and all external actions deny; no approvals, live connectors, custody or inventory paths. E17 only partially covered: snapshot halt precedence and offline restart tested; trusted persisted halt state, authenticated restart and dispatch enforcement remain unimplemented.
+- Local Python 3.13: six new unit tests passed after initial missing-module failure; exact local and remote source/test blob IDs verified (119a2cc295d6d6fb0333684fa830683836f332dd, 6da477ba5a523a54c055a5df27f6fc35839aa16f). Combined hosted CI for this branch remains pending at documentation time.
+- Reuse: inspected pinned Operative risk_gate.py (6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11) for default-deny concepts. No source copied and no trading code imported; E02 remains pending.
+- Review-only stack on Scout PR #1; no merge, no external actions, no new cloud resources. Vercel returned no teams; Supabase no projects. Main verified gate count remains 0/42 pending integration; Scout branch has eight evidence-supported candidates E01, E03–E09, and this increment adds E16 as a local candidate only. Next: review source identity/URL redaction, finish authorized procurement adapter E10–E12, then wire Governor at a trusted boundary before enabling any external tool.
