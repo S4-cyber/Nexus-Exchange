@@ -195,6 +195,8 @@ def main(*, data_directory=None, gui_smoke=False):
         launch.configure(state="disabled")
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
+        for button in diagnostic_buttons:
+            button.configure(state="disabled")
         scenario_report = None
         exporter.configure(state="disabled")
         future = executor.submit(worker, work, target, scenario)
@@ -233,6 +235,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 launch.configure(state="normal")
                 importer.configure(state="normal")
                 simulator.configure(state="normal")
+                for button in diagnostic_buttons:
+                    button.configure(state="normal")
     def show_halted(message):
         nonlocal scenario_report
         scenario_report=None
@@ -243,6 +247,8 @@ def main(*, data_directory=None, gui_smoke=False):
         launch.configure(state="disabled")
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
+        for button in diagnostic_buttons:
+            button.configure(state="disabled")
         halt_status.configure(text=message)
     def halt():
         message="HALTED — new tasks blocked"
@@ -269,6 +275,28 @@ def main(*, data_directory=None, gui_smoke=False):
         finally:
             if stop.is_set():
                 show_halted("HALTED — Operator blocked; review runtime before explicit resume.")
+    def browser_diagnostic(fixture_id):
+        nonlocal scenario_report
+        if council_blocked():
+            return None
+        scenario_report=None
+        exporter.configure(state="disabled")
+        output.configure(state="normal")
+        output.delete("1.0","end")
+        try:
+            report=stop.browser_fixture(fixture_id,confirmed=True)
+            if stop.is_set():
+                return None
+            output.insert("end","SCOUT OFFLINE DIAGNOSTIC — synthetic data, no browser or network.\n"+json.dumps(report,ensure_ascii=True,indent=2))
+            return report
+        except Exception as exc:
+            if not stop.is_set():
+                output.insert("end","Diagnostic blocked: "+type(exc).__name__)
+            return None
+        finally:
+            output.configure(state="disabled")
+            if stop.is_set():
+                show_halted("HALTED — Scout diagnostic stopped; review runtime before explicit resume.")
     def recover_council():
         if future is not None or not stop.is_set():
             halt_status.configure(text="Halt and wait for workers to drain before Council recovery.")
@@ -293,6 +321,8 @@ def main(*, data_directory=None, gui_smoke=False):
         launch.configure(state="normal")
         importer.configure(state="normal")
         simulator.configure(state="normal")
+        for button in diagnostic_buttons:
+            button.configure(state="normal")
         halt_status.configure(text="Offline ready — commercial actions disabled")
     def import_file():
         if stop.is_set() or future is not None:
@@ -1136,11 +1166,18 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     ttk.Button(simulation_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
+    diagnostics=ttk.LabelFrame(root,text="Scout browser diagnostics (offline synthetic fixtures)")
+    diagnostics.pack(pady=4)
+    diagnostic_buttons=[]
+    for fixture_id,label in (("procurement","Run procurement fixture"),("digital_services","Run digital services fixture")):
+        button=ttk.Button(diagnostics,text=label,command=partial(browser_diagnostic,fixture_id))
+        button.pack(side="left",padx=4)
+        diagnostic_buttons.append(button)
     ttk.Button(root,text="Recover interrupted Council attempts",command=recover_council).pack(pady=2)
     halt_status = ttk.Label(root,text=f"HALTED — {stop.recovered_count} journal tasks, "
         f"{stop.council_recovered_count} Council attempts reconciled; Resume offline to begin",wraplength=1040)
     halt_status.pack()
-    for button in (launch,importer,simulator):
+    for button in (launch,importer,simulator,*diagnostic_buttons):
         button.configure(state="disabled")
     if gui_smoke:
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
@@ -1154,6 +1191,20 @@ def main(*, data_directory=None, gui_smoke=False):
         resume()
         if stop.is_set():
             raise RuntimeError("desktop smoke resume failed")
+        if any(str(button.cget("state"))!="normal" for button in diagnostic_buttons):
+            raise RuntimeError("Scout diagnostic did not enable after resume")
+        for fixture_id in ("procurement","digital_services"):
+            report=browser_diagnostic(fixture_id)
+            if (report is None or report["fixture_id"]!=fixture_id or report["attempts"]!=2
+                    or report["network_enabled"] or report["browser_executed"]
+                    or "OWNED_FIXTURE_COMPLETED" not in output.get("1.0","end")):
+                raise RuntimeError("Scout native diagnostic smoke failed")
+        halt()
+        if (any(str(button.cget("state"))!="disabled" for button in diagnostic_buttons)
+                or browser_diagnostic("procurement") is not None
+                or output.get("1.0","end").strip()):
+            raise RuntimeError("Scout diagnostic halt suppression failed")
+        resume()
         window = browse_archive()
         leads_window = browse_leads()
         profile_window = owner_profile_window()

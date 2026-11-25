@@ -48,6 +48,7 @@ class RuntimeGuard:
         self._owner_thread=get_ident()
         self._council_active=False
         self._operator_active=False
+        self._browser_active=False
         self.council_recovered_count=0
         self.council_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
@@ -91,8 +92,9 @@ class RuntimeGuard:
 
     def _require_idle(self):
         self._require_owner()
-        if self._council_active or self._operator_active or project(self.events.read())["tasks"]:
-            raise PermissionError("active worker must drain before Council maintenance")
+        if (self._council_active or self._operator_active or self._browser_active
+                or project(self.events.read())["tasks"]):
+            raise PermissionError("active worker must drain before local maintenance")
 
     def _council_path(self):
         path=self._directory/"council.sqlite3"
@@ -198,6 +200,36 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def browser_fixture(self,fixture_id,*,confirmed=None):
+        """Fixed, explicit local diagnostics; no caller URL, plan, clock or callback."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Scout diagnostics unavailable while halted or faulted")
+        if confirmed is not True:
+            raise PermissionError("explicit local fixture confirmation required")
+        from .browser_contract import plan_fixture
+        from .browser_fixture_runner import _run_fixture
+        plan=plan_fixture(fixture_id,request_limit=2,timeout_ms=5000,halted=self.is_set())
+        self._browser_active=True
+        try:
+            if self._council_pending():
+                self.set()
+                raise PermissionError("outstanding Council reservation requires halted recovery")
+            result=_run_fixture(plan,halted=self.is_set(),halt_check=self.is_set)
+            if self.is_set():
+                raise PermissionError("Scout diagnostic result withheld after halt")
+            return result
+        except BaseException:
+            if not self.is_set():
+                try:
+                    self.set()
+                except BaseException:
+                    self._stop.set()
+                    self._faulted=True
+            raise
+        finally:
+            self._browser_active=False
+
     def _read(self):
         rows=self.events.db.execute(
             "SELECT slot,state,reason,revision,changed_at FROM runtime_guard_v1").fetchall()
@@ -283,8 +315,8 @@ class RuntimeGuard:
         if self._closed:
             return
         self._require_owner()
-        if self._council_active or self._operator_active:
-            raise PermissionError("Local Council or Operator action must drain before close")
+        if self._council_active or self._operator_active or self._browser_active:
+            raise PermissionError("Local Council, Operator or Scout action must drain before close")
         self._stop.set()
         try:
             self._persist("halted","shutdown")
