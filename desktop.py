@@ -13,6 +13,7 @@ from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.scenario_workspace import open_scenario_window
+from nexus_exchange.ranking_workspace import open_ranking_window
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
@@ -884,6 +885,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 raise RuntimeError("evidence GUI failed to compare saved fingerprint")
             synthetic.unlink()
         return window
+    def ranked_matrix():
+        return open_ranking_window(root,directory=directory,halt_check=stop.is_set,review_tasks=checklist_window)
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
@@ -997,6 +1000,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 except Exception:
                     write("Scenario workspace unavailable.")
         ttk.Button(buttons,text="Plan scenario",command=review_scenarios).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Ranked Matrix",command=ranked_matrix).pack(side="left",padx=5)
         ttk.Button(buttons,text="Export history JSON",command=export).pack(side="left",padx=5)
         ttk.Button(buttons,text="Owner profile",command=owner_profile_window).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
@@ -1058,6 +1062,7 @@ def main(*, data_directory=None, gui_smoke=False):
     exporter.pack(side="left")
     ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
     ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
+    ttk.Button(simulation_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
@@ -1105,8 +1110,11 @@ def main(*, data_directory=None, gui_smoke=False):
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
             scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
         scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,smoke=True)
+        ranking_window=open_ranking_window(root,directory=directory,halt_check=stop.is_set,
+            review_tasks=checklist_window,smoke=True)
         root.update_idletasks()
         root.update()
+        ranking_window.destroy()
         scenario_window.destroy()
         todo_window.destroy()
         spending_window.destroy()
