@@ -1,0 +1,9 @@
+# Scout cash and delivery feasibility (review-only)
+
+R06/E22/E35 candidate. The pure local model accepts a historical lead and exact declared owner profile revision, explicit USD compensation, seven complete cost buckets (null means unknown), delivery and conditional collection probabilities in basis points, elapsed delivery/payment days and labor hours. It reserves all modeled costs before any payment, even if delivery or collection fails; this is a conservative model, not a guarantee that unmodeled liabilities are absent. No source tender/award value is interpreted as compensation. Availability is a simple average, not a schedule or deadline check. No automatic ranking, provider call, verification or action authorization.
+
+The output binds canonical assumptions to the checklist observation/profile context using SHA-256. It does not authenticate the source, owner or facts and is not a signature. Unknown inputs propagate to affected outputs. No budget or hourly fit is inferred from unknown data. No storage, UI, FX or evidence interpretation is introduced. All execution/verification flags remain false.
+
+Reuse: read-only Nexus Operative PR #116 head ada0ffaf72cb971b3469ca34ef097a213acb7730 risk_gate.py inspected; retained fail-closed idea, no trading code copied. OCDS standard pinned eb57a46e69efead6ae62144fe1b7cefc53d07ff2, Apache-2.0 license, schema/release-schema.json award and contract value definitions inspected: contract/award value is not our compensation. No upstream code or dependencies imported; full upstream dependency security audit not needed for this non-integration, remains required before adoption. Python standard library only.
+
+Next: independent evidence for each assumption, delivery deadline calendar, persisted versioned scenario and GUI, conservative review ordering, durable halt/recovery. No external authority or formal release gate accepted.

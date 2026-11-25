@@ -236,3 +236,8 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - Next: authenticated source evidence, explicit delivery requirements and feasibility/cash exposure scenarios, scoped approvals, durable halt and recovery. See docs/AEGIS_FILE_EVIDENCE.md.
 
 - Verification: Linux Python 3.13 passed 208 tests at 96a64366c8a10e59fa0cfb7865f7feacbf09db64 (45536623922). Windows 45536623953 failed a fingerprint test because path and handle metadata comparisons differed after file modification. Revised cross-API comparison to stable identity/size, with before/after metadata checks within each API. Added regression methods for metadata precision and filesystem permission error redaction; replacement CI and GUI build pending.
+
+
+## Scout cash feasibility candidate
+- R06/E22/E35: local lead/profile-bound USD scenario, explicit unknown cost categories, conservative pre-payment exposure, expected net with conditional payment, modeled labor and payment timing. Nine regression methods; exact-head CI pending. No verified revenue, cash balance, delivery schedule or commercial authority. See docs/SCOUT_CASH_FEASIBILITY.md. Main accepted gates remain 0/42.
+- Next: independently sourced terms and costs, persistent scenario review/UI, current deadline and delivery checks, durable halt/recovery and branch consolidation.
