@@ -174,3 +174,26 @@ candidate. No provider calls, new dependencies, live authority or
 financial commitments. Full local checkout failed with GitHub DNS
 resolution; local red/green and independent QA not performed. No formal
 main acceptance (0/42).
+
+
+## RC3 security evidence binding — 2026-11-25
+
+Verified #95 predecessor e2abf03adb7127c3da46595fd745ecb12b2ec33b:
+both Python 3.10 and 3.13 logs report 806 tests OK
+(45652532839); full Windows source, native receipt GUI, fixture process,
+Genesis, security and frozen executable verification succeeded (45652532806,
+artifact 15041332928). Development checks authorized by owner; independent
+release approval is separate.
+
+E02/E37/E38/E39/E40, H06/H07: bind both existing security review reports to
+a v2 preview manifest by exact file SHA-256, byte count and internal report
+digest. Strict canonical bounded schemas, pinned distributions, no findings,
+false authority flags. Existing v1 bundles remain verifiable as legacy
+only. CI explicitly requires v2 with --require-security-reports on write
+and verify; v1 cannot meet that policy. No signature, independent
+attestation, full SBOM, advisory/license clearance or authentication.
+Five isolated helper tests passed locally after expected missing-module
+failure (matching blob hashes); four integration tests added; exact full
+checkout DNS blocked and hosted candidate checks pending. No new runtime
+dependencies, external actions, cost, Operative changes or formal main
+acceptance (0/42).

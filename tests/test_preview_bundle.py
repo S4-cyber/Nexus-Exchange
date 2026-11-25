@@ -154,5 +154,60 @@ class PreviewBundleTests(unittest.TestCase):
             self.write()
 
 
+    def security_files(self):
+        from test_preview_security import reports, seal
+        from nexus_exchange.release_security import PACKAGER
+        from nexus_exchange.preview_security import BUILD_REPORT, SOURCE_REPORT
+        build,source=reports()
+        build["distributions"]=[dict(name=k,version=v,license_expression_hint=None,
+                                      license_metadata_hint=None) for k,v in sorted(PACKAGER.items())]
+        (self.path/BUILD_REPORT).write_bytes(seal(build))
+        (self.path/SOURCE_REPORT).write_bytes(seal(source))
+        return build,source
+
+    def test_security_bound_bundle_and_required_policy(self):
+        from nexus_exchange.preview_security import BUILD_REPORT, SOURCE_REPORT
+        self.security_files()
+        value=self.write(require_security_reports=True)
+        self.assertEqual(value["format"],"nexus-windows-preview-bundle-v2")
+        for name in (BUILD_REPORT,SOURCE_REPORT):
+            raw=(self.path/name).read_bytes()
+            self.assertEqual(value["security_reports"][name]["sha256"],sha256(raw).hexdigest())
+        self.assertEqual(value,verify_bundle(self.path,require_security_reports=True))
+        self.assertFalse(value["publisher_authenticated"])
+
+    def test_security_report_resealed_tamper_and_missing_file_denied(self):
+        from nexus_exchange.preview_security import SOURCE_REPORT
+        from test_preview_security import seal
+        _,source=self.security_files()
+        self.write(require_security_reports=True)
+        source["files"][0]["sha256"]="b"*64
+        (self.path/SOURCE_REPORT).write_bytes(seal(source))
+        with self.assertRaises(ValueError):
+            verify_bundle(self.path)
+        (self.path/SOURCE_REPORT).unlink()
+        with self.assertRaises(ValueError):
+            verify_bundle(self.path)
+
+    def test_security_required_writer_rejects_missing_pair_before_writes(self):
+        from nexus_exchange.preview_security import SOURCE_REPORT
+        with self.assertRaises(ValueError):
+            self.write(require_security_reports=True)
+        self.security_files()
+        (self.path/SOURCE_REPORT).unlink()
+        with self.assertRaises(ValueError):
+            self.write()
+        self.assertFalse((self.path/MANIFEST).exists())
+        self.assertFalse((self.path/GENESIS).exists())
+
+    def test_legacy_verification_explicitly_cannot_meet_security_policy(self):
+        old=self.write()
+        self.assertEqual(old,verify_bundle(self.path))
+        self.security_files()
+        self.assertEqual(old,verify_bundle(self.path))
+        with self.assertRaises(ValueError):
+            verify_bundle(self.path,require_security_reports=True)
+
+
 if __name__=="__main__":
     unittest.main()

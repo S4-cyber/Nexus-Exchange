@@ -12,7 +12,11 @@ from pathlib import Path
 import re
 import stat
 
+from .preview_security import BUILD_REPORT, SOURCE_REPORT, MAX_SECURITY_REPORT_BYTES, security_report_refs
+from .release_security import PACKAGER
+
 FORMAT="nexus-windows-preview-bundle-v1"
+SECURITY_FORMAT="nexus-windows-preview-bundle-v2"
 MAX_EXE_BYTES=128*1024*1024
 MAX_JSON_BYTES=65536
 EXE="NexusExchange.exe"
@@ -213,16 +217,24 @@ def _build_identity(commit,tree,run_id,attempt,event):
                 run_id=_positive(run_id),run_attempt=_positive(attempt),event=event)
 
 
-def _manifest(identity,exe,genesis,report_sha):
-    payload=dict(format=FORMAT,kind="UNSIGNED_PORTABLE_PREVIEW",platform="windows-x64",
+def _security(path):
+    _,build=_read(path/BUILD_REPORT,MAX_SECURITY_REPORT_BYTES,retain=True)
+    _,source=_read(path/SOURCE_REPORT,MAX_SECURITY_REPORT_BYTES,retain=True)
+    return security_report_refs(build,source,packager_versions=PACKAGER)
+
+
+def _manifest(identity,exe,genesis,report_sha,security=None):
+    payload=dict(format=FORMAT if security is None else SECURITY_FORMAT,kind="UNSIGNED_PORTABLE_PREVIEW",platform="windows-x64",
         build=identity,executable=dict(name=EXE,**exe),
         source_diagnostic=dict(name=GENESIS,**genesis,report_sha256=report_sha),
         packaged_smoke_steps=list(_SMOKES),
         **dict.fromkeys(_FLAGS,False))
+    if security is not None:
+        payload["security_reports"]=security
     return dict(payload,manifest_sha256=_digest(_json(payload).encode("ascii")))
 
 
-def write_bundle(directory,*,commit,tree,run_id,attempt,event,diagnostic):
+def write_bundle(directory,*,commit,tree,run_id,attempt,event,diagnostic,require_security_reports=False):
     """Called only after the CI smoke commands succeeded; do not overwrite metadata."""
     path=_directory(directory)
     identity=_build_identity(commit,tree,run_id,attempt,event)
@@ -232,21 +244,34 @@ def write_bundle(directory,*,commit,tree,run_id,attempt,event,diagnostic):
     raw=_canonical(diagnostic)
     report_sha=_diagnostic(raw)
     exe,_=_read(path/EXE,MAX_EXE_BYTES,pe=True)
-    manifest=_manifest(identity,exe,dict(sha256=_digest(raw),bytes=len(raw)),report_sha)
+    if type(require_security_reports) is not bool:
+        raise ValueError("explicit security report policy required")
+    has_security=any(os.path.lexists(path/name) for name in (BUILD_REPORT,SOURCE_REPORT))
+    security=_security(path) if require_security_reports or has_security else None
+    manifest=_manifest(identity,exe,dict(sha256=_digest(raw),bytes=len(raw)),report_sha,security)
     for name,content in ((CHECKSUM,(exe["sha256"]+"\n").encode("ascii")),
                          (GENESIS,raw),(MANIFEST,_canonical(manifest))):
         with (path/name).open("xb") as handle:
             handle.write(content)
     return verify_bundle(path,expected_commit=commit,expected_tree=tree,expected_run=run_id,
-                         expected_attempt=attempt,expected_event=event)
+                         expected_attempt=attempt,expected_event=event,
+                         require_security_reports=require_security_reports)
 
 
 def verify_bundle(directory,*,expected_commit=None,expected_tree=None,expected_run=None,
-                  expected_attempt=None,expected_event=None):
+                  expected_attempt=None,expected_event=None,require_security_reports=False):
     """Validate exact bundle content and optional externally supplied build pins."""
     path=_directory(directory)
     _,raw_manifest=_read(path/MANIFEST,MAX_JSON_BYTES,retain=True)
     actual=_decode(raw_manifest)
+    if type(require_security_reports) is not bool:
+        raise ValueError("explicit security report policy required")
+    if actual.get("format")==SECURITY_FORMAT:
+        security=_security(path)
+    elif actual.get("format")==FORMAT and not require_security_reports:
+        security=None
+    else:
+        raise ValueError("security-bound preview required or unknown preview format")
     identity=actual.get("build")
     if type(identity) is not dict or set(identity)!={"checkout_commit","checkout_tree","run_id","run_attempt","event"}:
         raise ValueError("invalid preview build identity")
@@ -269,7 +294,7 @@ def verify_bundle(directory,*,expected_commit=None,expected_tree=None,expected_r
         raise ValueError("executable checksum mismatch")
     genesis,raw_genesis=_read(path/GENESIS,MAX_JSON_BYTES,retain=True)
     report_sha=_diagnostic(raw_genesis)
-    expected=_manifest(identity,exe,genesis,report_sha)
+    expected=_manifest(identity,exe,genesis,report_sha,security)
     if _canonical(actual)!=_canonical(expected):
         raise ValueError("preview manifest mismatch")
     return expected
@@ -287,15 +312,18 @@ def main():
         command.add_argument("--run-id",type=int,required=command is create)
         command.add_argument("--attempt",type=int,required=command is create)
         command.add_argument("--event",choices=_EVENTS,required=command is create)
+        command.add_argument("--require-security-reports",action="store_true")
     args=parser.parse_args()
     if args.operation=="write":
         from .genesis_diagnostic import run_diagnostic
         result=write_bundle(args.directory,commit=args.commit,tree=args.tree,run_id=args.run_id,
-                            attempt=args.attempt,event=args.event,diagnostic=run_diagnostic(confirmed=True))
+                            attempt=args.attempt,event=args.event,diagnostic=run_diagnostic(confirmed=True),
+                            require_security_reports=args.require_security_reports)
     else:
         result=verify_bundle(args.directory,expected_commit=args.commit,
                              expected_tree=args.tree,expected_run=args.run_id,
-                             expected_attempt=args.attempt,expected_event=args.event)
+                             expected_attempt=args.attempt,expected_event=args.event,
+                             require_security_reports=args.require_security_reports)
     print(_json(result))
 
 
