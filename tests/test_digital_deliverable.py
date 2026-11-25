@@ -331,6 +331,44 @@ class DigitalDeliverableTests(unittest.TestCase):
         with ObligationStore(self.directory/"operator-obligations.sqlite3",existing_only=True) as store:
             self.assertEqual(store.history(self.key,record["obligation_id"],now=self.now,halted=False),noted)
 
+    def test_native_scoped_registration_checks_exact_returned_provenance_and_pins(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        from nexus_exchange.scout_requirements_form import validate_scoped_registration
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        sample=self.guard.preview_scoped_service_files(self.key,**args)["sample"]
+        pins=preview_pins(sample)
+        target=self.directory/"native-reviewed.csv"
+        target.write_bytes(sample["artifact"])
+        record=self.guard.register_scoped_service_files(self.key,**args,artifact_path=target,expected_pins=pins)
+        self.assertEqual(validate_scoped_registration(record,self.key,args["context"],
+            args["expected_scope"],pins),record)
+        for changed_context,scope,changed_pins in (
+                (dict(args["context"],lead_key="0"*64),args["expected_scope"],pins),
+                (args["context"],"0"*64,pins),
+                (args["context"],args["expected_scope"],dict(pins,expected_report="0"*64))):
+            with self.subTest(scope=scope),self.assertRaises(ValueError):
+                validate_scoped_registration(record,self.key,changed_context,scope,changed_pins)
+        altered=copy.deepcopy(record)
+        altered["external_authority"]=True
+        with self.assertRaises(ValueError):
+            validate_scoped_registration(altered,self.key,args["context"],args["expected_scope"],pins)
+
+    def test_native_scoped_registration_does_not_infer_legacy_provenance(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import preview_pins
+        from nexus_exchange.scout_requirements_form import validate_scoped_registration
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        sample=self.guard.preview_scoped_service_files(self.key,**args)["sample"]
+        pins=preview_pins(sample)
+        target=self.directory/"legacy-native.csv"
+        target.write_bytes(sample["artifact"])
+        legacy=self.guard.csv_file_action("register",self.key,confirmed=True,
+            source_path=args["source_path"],artifact_path=target,columns=spec()["columns"],
+            key_column="id",expected_rows=2,**pins)
+        with self.assertRaises(ValueError):
+            validate_scoped_registration(legacy,self.key,args["context"],args["expected_scope"],pins)
+
     def test_scoped_registration_never_rewrites_legacy_obligation(self):
         from nexus_exchange.operator_capabilities import CSV_ID
         from nexus_exchange.deliverable_files import preview_pins

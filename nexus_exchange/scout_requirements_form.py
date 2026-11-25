@@ -1,4 +1,4 @@
-"""Explicit native Scout requirements review and local-only sample preview."""
+"""Explicit native Scout requirements review, local sample and registration."""
 import re
 
 
@@ -55,6 +55,25 @@ def declaration_from_fields(fields):
     return result
 
 
+def validate_scoped_registration(record,plan_id,context,expected_scope,pins):
+    """Check the returned historical identity and exact reviewed provenance."""
+    from .obligation_workspace import validate_record
+    from .scoped_export import require_matching_pins
+    from .checklist_store import _hash
+    checked=validate_record(record,plan_id)
+    provenance=checked.get("scout_review")
+    binding=checked["binding"]
+    if (type(provenance) is not dict
+            or provenance["review_scope_sha256"]!=_hash(expected_scope)
+            or binding["contract"]["context"]!=context
+            or provenance["review"]["context"]!=context):
+        raise ValueError("SCOPED_REGISTRATION_PROVENANCE_MISMATCH")
+    require_matching_pins(pins,dict(expected_contract=binding["contract"]["contract_sha256"],
+        expected_report=binding["qa_report"]["report_sha256"],
+        expected_artifact=binding["qa_report"]["artifact_sha256"]))
+    return checked
+
+
 def open_service_requirements_window(parent, workspace, context, title, *, plan_id=None,
                                      sample_action=None, blocked_check=None, smoke=False,
                                      smoke_sample=None):
@@ -71,6 +90,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
     from .service_handoff import checked_review_route
     from .deliverable_files import preview_pins
     from .scoped_export import require_matching_pins
+    from .obligation_workspace import record_text
 
     workspace.resolve(context)
     context = dict(context)
@@ -125,6 +145,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         export_ready = None
         sample_button.configure(state="disabled")
         export_button.configure(state="disabled")
+        register_button.configure(state="disabled")
         write(message)
 
     def available():
@@ -187,8 +208,9 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
             text = preview_text(sample)
             export_ready = (declaration,pin,source_path,right_path,preview_pins(sample))
             export_button.configure(state="normal")
+            register_button.configure(state="normal")
             write("EXACT SCOUT SCOPE — TRANSIENT LOCAL SAMPLE\nScope: " + pin + "\n" + text
-                  + "\nExport requires a separate confirmation and exact reproduction. No registration, customer acceptance or revenue.")
+                  + "\nExport or register requires separate confirmation and exact reproduction. Registration records local history only; no customer acceptance or revenue.")
             return result
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError, KeyError, TypeError):
             invalidate("Local sample unavailable or changed. Check requirements, selected files, saved plan and halt state; review again.")
@@ -261,6 +283,45 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         if confirmed:
             export_sample(selected,destination,confirmed)
 
+    def register_sample(selected, artifact_path, confirmed):
+        if selected is None or selected is not export_ready or not available() or confirmed is not True:
+            invalidate("Preview changed or registration not confirmed. Review and preview again.")
+            return None
+        declaration,pin,source_path,right_path,pins=selected
+        invalidate("Reproducing exact reviewed sample and checking selected artifact...")
+        try:
+            result=sample_action("scoped_register",plan_id,context=context,requirements=declaration,
+                expected_scope=pin,source_path=source_path,right_source_path=right_path,
+                artifact_path=artifact_path,expected_pins=pins,confirmed=True)
+            if not available():
+                raise PermissionError("Scoped registration display unavailable.")
+            record=validate_scoped_registration(result,plan_id,context,pin,pins)
+            write("EXACT SCOUT SCOPE — LOCAL OBLIGATION REGISTERED\nScope: "+pin
+                  +"\n"+record_text(record)
+                  +"\nRegistration is not delivery, buyer acceptance, invoicing or revenue.")
+            return record
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError, KeyError, TypeError):
+            invalidate("Local registration unavailable or changed. Inspect obligation history before retrying; review and preview again.")
+            return None
+
+    def choose_registration():
+        selected=export_ready
+        if selected is None or not available():
+            invalidate("Registration unavailable. Review and preview again.")
+            return
+        artifact=filedialog.askopenfilename(parent=window,title="Select exact matching local CSV",
+            filetypes=[("CSV","*.csv")])
+        if not artifact:
+            return
+        if selected is not export_ready or not available():
+            invalidate("Preview changed while selecting artifact. Review again.")
+            return
+        confirmed=messagebox.askyesno("Register exact scoped local artifact",
+            "Reproduce the reviewed sample, check this selected CSV and record the exact Scout review in local obligation history? No external delivery, buyer acceptance or real invoice.",
+            parent=window)
+        if confirmed:
+            register_sample(selected,artifact,confirmed)
+
     bar = ttk.Frame(content)
     bar.pack(pady=4)
     ttk.Button(bar, text="Review declared requirements", command=evaluate).pack(side="left",padx=4)
@@ -268,6 +329,8 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
     sample_button.pack(side="left",padx=4)
     export_button=ttk.Button(bar,text="Export exact sample",command=choose_export,state="disabled")
     export_button.pack(side="left",padx=4)
+    register_button=ttk.Button(bar,text="Register exact sample",command=choose_registration,state="disabled")
+    register_button.pack(side="left",padx=4)
     for var in variables.values():
         var.trace_add("write", lambda *_: invalidate("Fields changed. Review again."))
     timer = None
@@ -298,6 +361,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         review = evaluate()
         if (review is None or review["state"] != "SOURCE_HELD" or review["external_authority"]
                 or str(sample_button.cget("state")) != "disabled"
+                or str(register_button.cget("state")) != "disabled"
                 or "NO EXECUTION OR AUTHORITY" not in output.get("1.0", "end")):
             raise RuntimeError("Scout requirements GUI lost source hold or boundary")
         variables["input_bytes"].set("200")
@@ -317,14 +381,27 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
         if (result is None or result["sample"]["artifact"]!=expected
                 or "EXACT SCOUT SCOPE" not in output.get("1.0","end")
                 or str(sample_button.cget("state"))!="disabled"
-                or str(export_button.cget("state"))!="normal"):
+                or str(export_button.cget("state"))!="normal"
+                or str(register_button.cget("state"))!="normal"):
             raise RuntimeError("Scoped sample GUI did not produce and consume exact preview")
         receipt=export_sample(export_ready,destination,True)
         if (receipt is None or destination.read_bytes()!=expected
                 or str(export_button.cget("state"))!="disabled"
+                or str(register_button.cget("state"))!="disabled"
                 or "LOCAL CSV EXPORTED" not in output.get("1.0","end")):
             raise RuntimeError("Scoped sample GUI did not publish and consume exact preview")
+        review=evaluate()
+        if review is None or reviewed is None or produce_sample(reviewed,path,None,True) is None:
+            raise RuntimeError("Scoped registration GUI could not reproduce exported sample")
+        registration=register_sample(export_ready,destination,True)
+        if (registration is None or registration["external_authority"]
+                or registration["scout_review"]["review_scope_sha256"]!=review_scope(review)
+                or str(register_button.cget("state"))!="disabled"
+                or str(export_button.cget("state"))!="disabled"
+                or "LOCAL OBLIGATION REGISTERED" not in output.get("1.0","end")):
+            raise RuntimeError("Scoped registration GUI did not preserve review provenance")
         variables["expected_rows"].set("1")
-        if "Fields changed" not in output.get("1.0","end"):
+        if ("Fields changed" not in output.get("1.0","end")
+                or str(register_button.cget("state"))!="disabled"):
             raise RuntimeError("Scoped sample GUI retained stale preview")
     return window

@@ -295,6 +295,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 return stop.preview_scoped_service_files(plan_id,**inputs)
             if action=="scoped_export":
                 return stop.export_scoped_service_files(plan_id,**inputs)
+            if action=="scoped_register":
+                return stop.register_scoped_service_files(plan_id,**inputs)
             return stop.csv_file_action(action,plan_id,**inputs)
         finally:
             if stop.is_set():

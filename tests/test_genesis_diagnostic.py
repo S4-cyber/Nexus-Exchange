@@ -28,6 +28,11 @@ class GenesisDiagnosticTests(unittest.TestCase):
                      "CORRESPONDENCE_BACKUP_INVENTORY","DURABLE_CORRESPONDENCE_HISTORY",
                      "RESTORED_CORRESPONDENCE_HISTORICAL_ONLY"):
             self.assertIn(step,first["checks"])
+        self.assertRegex(first["scout_review_scope_sha256"],r"^[0-9a-f]{64}$")
+        self.assertRegex(first["scout_review_sha256"],r"^[0-9a-f]{64}$")
+        for step in ("SCOPED_REVIEW_BOUND","SCOPED_LOCAL_EXPORT","SCOPED_OBLIGATION_PROVENANCE",
+                     "SCOPED_PROVENANCE_RECOVERED","RESTORED_SCOPED_REVIEW_HISTORICAL_ONLY"):
+            self.assertIn(step,first["checks"])
         self.assertEqual(first["modeled_pre_payment_exposure_cents"],0)
         self.assertEqual(first["modeled_probability_adjusted_net_cents"],12000)
         self.assertEqual(first["hypothetical_received_cents"],20000)

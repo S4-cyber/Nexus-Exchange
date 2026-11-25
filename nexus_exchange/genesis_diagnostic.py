@@ -14,6 +14,7 @@ from .cash_feasibility import COSTS
 from .database_backup import create_backup, restore_backup, verify_backup
 from .checklist_store import context_for
 from .csv_workspace import CsvWorkspace
+from .deliverable_files import preview_pins
 from .finance_workspace import FinanceWorkspace
 from .evidence import fingerprint
 from .lead_store import _digest, _json
@@ -21,6 +22,8 @@ from .obligation_workspace import ObligationWorkspace
 from .operator_capabilities import CSV_ID, assess_requirements
 from .owner_profile import ProfileStore
 from .review_ranking import RankingStore
+from .ranking_workspace import RankingWorkspace
+from .service_handoff import review_scope
 from .runtime_guard import RuntimeGuard
 from .scenario_evidence import ScenarioEvidenceStore, ASSUMPTION_FIELDS
 
@@ -140,10 +143,11 @@ def run_diagnostic(*,confirmed=None):
                     and model["cash"]["modeled_budget_fit"] is True
                     and model["schedule"]["modeled_schedule_fit"] is True
                     and model["genesis_verified"] is False)
-            declared=assess_requirements(dict(capability_id=CSV_ID,input_format="UTF8_CSV",
+            requirements=dict(capability_id=CSV_ID,input_format="UTF8_CSV",
                 input_bytes=len(_RAW),max_cell_chars=8,preserve_all_fields=True,
                 requires_deduplication=False,requires_inference=False,requires_formulas=False,
-                specification=spec),halted=guard.is_set())
+                specification=spec)
+            declared=assess_requirements(requirements,halted=guard.is_set())
             pass_check("DECLARED_STRUCTURE_ONLY",declared["declared_structure_fits"] is True
                 and declared["requirements_verified"] is False and declared["source_bytes_checked"] is False)
             guard.council_action("register",plan_id)
@@ -214,8 +218,26 @@ def run_diagnostic(*,confirmed=None):
             csv.preview(source,"id,name,category","id","2")
             _denied(lambda:csv.export(output,confirmed=True),ValueError)
             pass_check("NO_OVERWRITE",output.read_bytes()==_EXPECTED)
-            csv.preview(source,"id,name,category","id","2")
-            obligation=csv.register(output,confirmed=True)
+            service_review=RankingWorkspace(directory,halt_check=guard.is_set,clock=clock).review_requirements(ctx,requirements)
+            service_scope=review_scope(service_review)
+            scoped_args=dict(context=ctx,requirements=requirements,expected_scope=service_scope,
+                             source_path=source,right_source_path=None,confirmed=True)
+            scoped=guard.preview_scoped_service_files(plan_id,**scoped_args)
+            pass_check("SCOPED_REVIEW_BOUND",scoped["review_scope_sha256"]==service_scope
+                and scoped["sample"]==preview and scoped["external_authority"] is False)
+            scoped_pins=preview_pins(scoped["sample"])
+            scoped_output=directory/"owned-scoped-output.csv"
+            receipt=guard.export_scoped_service_files(plan_id,**scoped_args,
+                destination_path=scoped_output,expected_pins=scoped_pins)
+            pass_check("SCOPED_LOCAL_EXPORT",receipt["review_scope_sha256"]==service_scope
+                and receipt["exported"] is True and scoped_output.read_bytes()==_EXPECTED)
+            obligation=guard.register_scoped_service_files(plan_id,**scoped_args,
+                artifact_path=scoped_output,expected_pins=scoped_pins)
+            provenance=obligation["scout_review"]
+            pass_check("SCOPED_OBLIGATION_PROVENANCE",provenance["review_scope_sha256"]==service_scope
+                and provenance["review"]["requirements_assessment"]["declared_input"]["specification"]==spec
+                and guard.register_scoped_service_files(plan_id,**scoped_args,
+                    artifact_path=scoped_output,expected_pins=scoped_pins)==obligation)
             pass_check("OBLIGATION_BOUND",obligation["binding"]["qa_report"]==preview["report"]
                 and obligation["buyer_accepted"] is False)
             # Advance the fixture clock to the modeled delivery date. No
@@ -259,7 +281,8 @@ def run_diagnostic(*,confirmed=None):
             and recovery["runtime_state"]["state"]=="halted"
             and recovery["automatic_resume"] is False
             and not (restored/"owned-input.csv").exists()
-            and not (restored/"owned-output.csv").exists())
+            and not (restored/"owned-output.csv").exists()
+            and not (restored/"owned-scoped-output.csv").exists())
         now[0]+=timedelta(seconds=1)
         with RuntimeGuard(restored,clock=clock) as reopened:
             pass_check("RESTART_REQUIRES_RESUME",reopened.is_set())
@@ -285,6 +308,12 @@ def run_diagnostic(*,confirmed=None):
             recovered=reopened.csv_obligation_action("history",plan_id,obligation_id=obligation["obligation_id"])
             finance=FinanceWorkspace(recovered,action=reopened.simulated_invoice_action,blocked_check=reopened.is_set)
             pass_check("DURABLE_OBLIGATION_AND_RECEIPTS",recovered==obligation and finance.refresh()==partial)
+            pass_check("SCOPED_PROVENANCE_RECOVERED",recovered["scout_review"]==provenance
+                and recovered["scout_review"]["review_scope_sha256"]==service_scope)
+            _denied(lambda:reopened.register_scoped_service_files(plan_id,**scoped_args,
+                artifact_path=scoped_output,expected_pins=scoped_pins),ValueError)
+            pass_check("RESTORED_SCOPED_REVIEW_HISTORICAL_ONLY",reopened.csv_obligation_action(
+                "history",plan_id,obligation_id=obligation["obligation_id"])==obligation)
             now[0]=_START+timedelta(days=53)
             final=finance.payment("SIM-OWNEDFINAL","124.87",final_day.isoformat(),confirmed=True)
             pass_check("EXACT_SETTLEMENT",final["state"]=="SIMULATED_SETTLED"
@@ -314,6 +343,8 @@ def run_diagnostic(*,confirmed=None):
                 independently_verified_assumptions=0,artifact_sha256=preview["report"]["artifact_sha256"],
                 qa_report_sha256=preview["report"]["report_sha256"],
                 obligation_id=obligation["obligation_id"],obligation_head_sha256=obligation["head_sha256"],
+                scout_review_scope_sha256=service_scope,
+                scout_review_sha256=provenance["review"]["review_sha256"],
                 invoice_id=invoice["invoice_id"],receipt_head_sha256=final["head_sha256"],
                 allocation_sha256=allocation["projection_sha256"],
                 modeled_pre_payment_exposure_cents=0,modeled_probability_adjusted_net_cents=12000,

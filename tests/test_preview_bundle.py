@@ -15,6 +15,7 @@ def report(**changes):
     # own integration suite and runs in CI during bundle creation.
     result=dict(format="nexus-owned-genesis-diagnostic-v1",mode="OWNED_OFFLINE_FIXTURE_ONLY",
         checks=list(_REQUIRED_CHECKS),external_requests=0,fixture_transport_calls=1,
+        scout_review_scope_sha256="c"*64,scout_review_sha256="d"*64,
         council_attempts=2,assumption_references=17,independently_verified_assumptions=0,
         modeled_pre_payment_exposure_cents=0,modeled_probability_adjusted_net_cents=12000,
         hypothetical_gross_cents=20000,hypothetical_received_cents=20000,
@@ -58,6 +59,13 @@ class PreviewBundleTests(unittest.TestCase):
         (self.path/CHECKSUM).write_text(sha256(altered).hexdigest()+"\n",encoding="ascii",newline="")
         with self.assertRaises(ValueError):
             verify_bundle(self.path)
+
+    def test_scoped_diagnostic_evidence_is_required(self):
+        for diagnostic in (report(scout_review_scope_sha256="invalid"),
+                           report(checks=[x for x in _REQUIRED_CHECKS if x!="SCOPED_PROVENANCE_RECOVERED"])):
+            with self.subTest(diagnostic=diagnostic),self.assertRaises(ValueError):
+                self.write(diagnostic=diagnostic)
+        self.assertFalse((self.path/MANIFEST).exists())
 
     def test_diagnostic_and_manifest_tampering(self):
         self.write()

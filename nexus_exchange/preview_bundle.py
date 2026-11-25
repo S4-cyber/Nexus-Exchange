@@ -29,6 +29,8 @@ _DIAGNOSTIC_FLAGS=("actual_opportunity_verified","requirements_verified","buyer_
 _REQUIRED_CHECKS=("FIXTURE_DISCOVERY","ARCHIVE_IDEMPOTENT","CAPABILITY_FOCUS",
     "ZERO_EXPOSURE_MODEL","COUNCIL_MISSING_EVIDENCE","COUNCIL_REVIEW_ONLY",
     "ACTUAL_LOCAL_ARTIFACT","NO_OVERWRITE","OBLIGATION_BOUND",
+    "SCOPED_REVIEW_BOUND","SCOPED_LOCAL_EXPORT","SCOPED_OBLIGATION_PROVENANCE",
+    "SCOPED_PROVENANCE_RECOVERED","RESTORED_SCOPED_REVIEW_HISTORICAL_ONLY",
     "UNVERIFIED_ACCEPTANCE_NOTE","PARTIAL_RECONCILIATION",
     "DUPLICATE_AND_OVERPAYMENT_DENIED","EMERGENCY_HALT_DENIES",
     "VERIFIED_BACKUP_RESTORE","RESTART_REQUIRES_RESUME","DURABLE_COUNCIL_AUDIT","DURABLE_OBLIGATION_AND_RECEIPTS",
@@ -152,6 +154,8 @@ def _diagnostic(raw):
             or any(type(k) is not str or not re.fullmatch("[A-Z_]{1,80}",k) for k in checks)
             or len(set(checks))!=len(checks) or not set(_REQUIRED_CHECKS)<=set(checks)):
         raise ValueError("incomplete Genesis diagnostic")
+    for key in ("scout_review_scope_sha256","scout_review_sha256"):
+        _hex(data.get(key),64)
     expected={"external_requests":0,"fixture_transport_calls":1,"council_attempts":2,
         "assumption_references":17,"independently_verified_assumptions":0,
         "modeled_pre_payment_exposure_cents":0,"modeled_probability_adjusted_net_cents":12000,

@@ -112,6 +112,10 @@ HELPS={
     "operator csv quality report":"Calculate per-column aggregate completeness, distinctness and length statistics locally.",
     "operator csv reconciliation":"Compare two local CSV files by exact unique key; identify missing or changed records without editing source files.",
     "select right file":"Choose the second local CSV to compare against the left file.",
+    "review declared requirements":"Check declared service requirements against the selected current Scout record.",
+    "preview exact local sample":"Recheck the reviewed local files and produce a sample without publishing it.",
+    "export exact sample":"Reproduce the reviewed sample and create a new local CSV without overwriting a file.",
+    "register exact sample":"Recheck a selected matching CSV and record its Scout review in local obligation history; nothing is sent.",
     "animate stars":"Turn the decorative star movement on or off in all app windows. Work continues unchanged.",
 }
 
