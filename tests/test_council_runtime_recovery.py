@@ -281,3 +281,56 @@ class RuntimeCouncilTests(unittest.TestCase):
             self.assertEqual([row["audit_state"] for row in history["attempts"]],
                              ["INTERRUPTED_NO_REPORT","RECORDED"])
             self.assertEqual(history["task_id"],state["task_id"])
+
+    def test_unexpected_review_failure_asserts_halt_and_requires_recovery(self):
+        key=self.fixture()
+        with self.guard() as guard:
+            guard.resume()
+            guard.council_action("register",key)
+            with patch("nexus_exchange.council_coordinator.review_criteria",side_effect=RuntimeError("synthetic")):
+                with self.assertRaises(RuntimeError):
+                    guard.council_action("run_once",key)
+            self.assertTrue(guard.is_set())
+            self.assertEqual(guard.status()["persisted_state"],"halted")
+            with self.assertRaises(PermissionError):
+                guard.resume()
+            self.assertEqual(guard.recover_council()["recovered"],1)
+            guard.resume()
+            self.assertEqual(guard.council_action("run_once",key)["ledger"]["attempts_used"],2)
+
+    def test_startup_preserves_prior_completed_v2_audit(self):
+        from nexus_exchange.scenario_council import ScenarioCouncil
+        from nexus_exchange.council_coordinator import _prepare
+        key=self.fixture()
+        with self.guard() as guard:
+            guard.resume()
+            guard.council_action("register",key)
+            first=guard.council_action("run_once",key)
+            adapter=ScenarioCouncil(self.directory,halt_check=guard.is_set,clock=lambda:self.now)
+            with adapter._snapshot(key) as (_snapshot,task,_artifacts):
+                h,_=_prepare(task,2)
+                with CouncilAttemptStore(self.path) as store:
+                    store.reserve(h,now=self.now,halted=False)
+        self.now+=timedelta(seconds=1)
+        with self.guard() as guard:
+            self.assertEqual(guard.council_recovered_count,1)
+            guard.resume()
+            history=guard.council_action("history",key)
+            self.assertEqual([row["audit_state"] for row in history["attempts"]],
+                             ["RECORDED","INTERRUPTED_NO_REPORT"])
+            self.assertEqual(history["attempts"][0]["report_sha256"],first["report_sha256"])
+            self.assertEqual(history["attempts"][0]["audit"]["snapshot"]["snapshot_sha256"],
+                             first["snapshot"]["snapshot_sha256"])
+
+    def test_orphaned_audit_without_task_blocks_startup(self):
+        with CouncilAttemptStore(self.path):
+            pass
+        db=sqlite3.connect(self.path)
+        try:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("INSERT INTO council_review_audit_v1 VALUES ('missing',1,'{}','bad')")
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(ValueError):
+            self.guard()
