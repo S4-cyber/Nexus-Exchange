@@ -28,7 +28,7 @@ class GenesisDiagnosticTests(unittest.TestCase):
         self.assertEqual(first["hypothetical_reinvestment_cents"],15000)
         for step in ("CAPABILITY_FOCUS","COUNCIL_MISSING_EVIDENCE","COUNCIL_REVIEW_ONLY",
                      "ACTUAL_LOCAL_ARTIFACT","NO_OVERWRITE","DUPLICATE_AND_OVERPAYMENT_DENIED",
-                     "RESTART_REQUIRES_RESUME","DURABLE_COUNCIL_AUDIT","DURABLE_OBLIGATION_AND_RECEIPTS",
+                     "VERIFIED_BACKUP_RESTORE","RESTART_REQUIRES_RESUME","DURABLE_COUNCIL_AUDIT","DURABLE_OBLIGATION_AND_RECEIPTS",
                      "FUTURE_RECEIPT_EXCLUDED","PROTECTED_RESERVE_MODEL","FINAL_LEDGER_STABLE"):
             self.assertIn(step,first["checks"])
         for flag in ("buyer_accepted","contract_awarded","invoice_issued","payment_received",
