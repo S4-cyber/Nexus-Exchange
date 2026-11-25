@@ -41,6 +41,30 @@ class DeliverableFilesTests(unittest.TestCase):
         self.assertFalse(self.workspace.ready)
         self.assertFalse(list(self.directory.glob(".nexus-csv-*.tmp")))
 
+    def test_advancing_clock_keeps_immutable_contract_and_fresh_review(self):
+        # Real desktop evaluations occur at different instants even within one
+        # operation. Do not freeze the clock to make preview/export tests pass.
+        original=self.guard._clock
+        from datetime import timedelta
+        ticks=[original()]
+        def moving_clock():
+            ticks[0]+=timedelta(milliseconds=5)
+            return ticks[0]
+        self.guard._clock=moving_clock
+        first=self.preview()
+        second=self.preview()
+        self.assertEqual(first["contract"],second["contract"])
+        self.assertEqual(first["report"],second["report"])
+        self.assertTrue(self.workspace.export(self.dest,confirmed=True)["exported"])
+        self.assertEqual(self.dest.read_bytes(),first["artifact"])
+
+    def test_expired_source_blocks_export_even_with_stable_scope(self):
+        self.preview()
+        self.fixture.fixture.now+=timedelta(days=2)
+        with self.assertRaises(ValueError):
+            self.workspace.export(self.dest,confirmed=True)
+        self.assertFalse(self.dest.exists())
+
     def test_existing_destination_and_source_never_replaced(self):
         self.dest.write_bytes(b"existing")
         for path in (self.dest,self.source):

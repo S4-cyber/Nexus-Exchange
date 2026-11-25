@@ -224,10 +224,7 @@ class RuntimeGuard:
         contract=build_contract(snapshot,specification,halted=self.is_set())
         result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
         current=self._csv_snapshot(plan_id)
-        if (current["context"]!=snapshot["context"] or
-                current["scenario_sha256"]!=snapshot["scenario_sha256"] or
-                current["schedule_sha256"]!=snapshot["schedule_sha256"] or
-                current["source_hold"] is not None):
+        if build_contract(current,specification,halted=self.is_set())!=contract:
             raise ValueError("deliverable scenario scope changed")
         if self.is_set():
             raise PermissionError("deliverable withheld after halt")

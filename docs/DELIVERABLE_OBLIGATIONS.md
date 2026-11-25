@@ -41,3 +41,18 @@ Next: native registration and historical evidence controls, obligation-linked
 mock invoice and partial/duplicate payment reconciliation. Independent
 acceptance, authorized legal commitments and real money remain separate.
 Formal main release acceptance 0/42 pending integration/review.
+
+## Windows smoke regression repair
+
+PR #66 Windows run 45560587599 passed 574 unit tests but failed native CSV
+preview before packaging. Diagnosis: schedule_sha256 from the Council snapshot
+includes evaluated_at, so real-time repeated inspection changed the contract
+identity even when the saved plan and requirements were unchanged. Replaced
+that time-dependent pin with a v2 immutable schedule-scope fingerprint derived
+from the saved content-addressed plan ID, context and scenario fingerprint.
+Fresh Council/source checks still run before publication and registration;
+expiry and source/profile drift remain blocking. Draft v1 transient previews
+must be regenerated; no production migration or previously accepted record
+claimed. Three new advancing-clock/expiry tests; smoke preserves the original
+error and closes the runtime before Windows temporary directory cleanup.
+The new branch explicitly triggers full Windows source/frozen verification.

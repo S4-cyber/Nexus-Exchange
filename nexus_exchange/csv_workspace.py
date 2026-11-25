@@ -147,6 +147,8 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
             status.configure(text="Local QA passed. Export to a new name only; source and plan will be rechecked.")
             return result
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            if smoke_paths is not None:
+                raise
             error(exc)
             return None
 
@@ -156,6 +158,8 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
             clear("New CSV published. No customer acceptance or revenue recorded.")
             return result
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            if smoke_paths is not None:
+                raise
             error(exc)
             return None
 

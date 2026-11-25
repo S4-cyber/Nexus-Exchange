@@ -1479,9 +1479,13 @@ def main(*, data_directory=None, gui_smoke=False):
         csv_source=directory/"synthetic-csv-input.csv"
         csv_destination=directory/"synthetic-csv-output.csv"
         csv_source.write_bytes(b"name,id\nBeta,002\nAlpha,001\n")
-        csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
-            blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination))
-        csv_window.destroy()
+        try:
+            csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
+                blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination))
+            csv_window.destroy()
+        except BaseException:
+            close()
+            raise
         root.update_idletasks()
         root.update()
         ranking_window.destroy()

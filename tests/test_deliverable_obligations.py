@@ -57,6 +57,12 @@ class ObligationTests(unittest.TestCase):
         self.assertNotIn(str(self.source),repr(record))
         self.assertNotIn(str(self.artifact),repr(record))
 
+    def test_registration_after_time_advances_retains_preview_identity(self):
+        self.fixture.fixture.now+=timedelta(seconds=5)
+        record=self.register()
+        self.assertEqual(record["binding"]["contract"],self.preview["contract"])
+        self.assertEqual(record["binding"]["qa_report"],self.preview["report"])
+
     def test_artifact_or_preview_mismatch_denied_before_store(self):
         self.artifact.write_bytes(b"wrong")
         with self.assertRaises(ValueError):
