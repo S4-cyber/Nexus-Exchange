@@ -70,6 +70,87 @@ class DigitalDeliverableTests(unittest.TestCase):
         return self.guard.produce_csv_deliverable(self.key,raw=raw,
             specification=spec(raw,**changes),confirmed=True)
 
+    def scoped_args(self,raw,specification,capability_id,*,right_raw=None,cell_chars=30,input_bytes=None):
+        from nexus_exchange.operator_capabilities import CSV_ID, JSON_ID
+        from nexus_exchange.ranking_workspace import RankingWorkspace
+        from nexus_exchange.service_handoff import review_scope
+        context=self.guard.council_action("inspect",self.key)["context"]
+        declaration=dict(capability_id=capability_id,
+            input_format=JSON_SOURCE if capability_id==JSON_ID else "UTF8_CSV",
+            input_bytes=len(raw) if input_bytes is None else input_bytes,
+            max_cell_chars=cell_chars,preserve_all_fields=capability_id in (CSV_ID,JSON_ID),
+            requires_deduplication=False,requires_inference=False,requires_formulas=False,
+            specification=specification)
+        if right_raw is not None:
+            declaration["right_input_bytes"]=len(right_raw)
+        review=RankingWorkspace(self.directory,halt_check=self.guard.is_set,
+            clock=lambda:self.now).review_requirements(context,declaration)
+        self.assertEqual(review["state"],"DECLARED_STRUCTURE_FITS")
+        return dict(context=context,requirements=declaration,expected_scope=review_scope(review),
+                    raw=raw,right_raw=right_raw,confirmed=True)
+
+    def test_scoped_service_sample_all_four_actual_routes(self):
+        from nexus_exchange.operator_capabilities import CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
+        for raw, specification, capability, right, expected in (
+                (RAW,spec(),CSV_ID,None,EXPECTED),
+                (JSON_RAW,spec(JSON_RAW),JSON_ID,None,EXPECTED),
+                (PROFILE_RAW,spec(PROFILE_RAW,expected_rows=4),PROFILE_ID,None,PROFILE_EXPECTED),
+                (LEFT,spec(LEFT,expected_rows=3,right_input_sha256=sha256(RIGHT).hexdigest(),
+                           right_expected_rows=3),RECONCILE_ID,RIGHT,RECONCILED)):
+            with self.subTest(capability=capability):
+                args=self.scoped_args(raw,specification,capability,right_raw=right)
+                result=self.guard.produce_scoped_service_sample(self.key,**args)
+                self.assertEqual(result["review_scope_sha256"],args["expected_scope"])
+                self.assertEqual(result["sample"]["artifact"],expected)
+                self.assertEqual(result["sample"]["contract"]["plan_id"],self.key)
+                self.assertEqual(result["sample"]["contract"]["specification"],specification)
+                self.assertIs(result["external_authority"],False)
+                self.assertIs(result["sample"]["report"]["buyer_accepted"],False)
+                self.assertIs(result["sample"]["report"]["revenue_realized"],False)
+                self.assertTrue(result["sample"]["report"]["local_criteria_passed"])
+        self.assertFalse((self.directory/"operator-obligations.sqlite3").exists())
+
+    def test_scoped_service_sample_rejects_scope_bytes_and_declared_bounds(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        args=self.scoped_args(RAW,spec(),CSV_ID)
+        for change in (dict(expected_scope="f"*64),
+                       dict(raw=RAW.replace(b"Alpha",b"Omega")),
+                       dict(context=dict(args["context"],lead_key="other")),
+                       dict(requirements=dict(args["requirements"],max_cell_chars=40))):
+            with self.subTest(change=list(change)),self.assertRaises(ValueError):
+                self.guard.produce_scoped_service_sample(self.key,**dict(args,**change))
+        for constrained in (self.scoped_args(RAW,spec(),CSV_ID,cell_chars=2),
+                            self.scoped_args(RAW,spec(),CSV_ID,input_bytes=len(RAW)+1)):
+            with self.assertRaises(ValueError):
+                self.guard.produce_scoped_service_sample(self.key,**constrained)
+        self.assertEqual(self.guard.produce_scoped_service_sample(self.key,**args)["sample"]["artifact"],EXPECTED)
+
+    def test_scoped_service_sample_requires_confirmation_and_current_source(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        args=self.scoped_args(RAW,spec(),CSV_ID)
+        for confirmed in (None,False,1):
+            with self.subTest(confirmed=confirmed),self.assertRaises(PermissionError):
+                self.guard.produce_scoped_service_sample(self.key,**dict(args,confirmed=confirmed))
+        self.now+=timedelta(days=2)
+        with self.assertRaises(ValueError):
+            self.guard.produce_scoped_service_sample(self.key,**args)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.produce_scoped_service_sample(self.key,**args)
+
+    def test_scoped_service_sample_withholds_result_if_source_changes_after_production(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        args=self.scoped_args(RAW,spec(),CSV_ID)
+        original=self.guard._csv_scoped
+        def advance(*a,**kw):
+            result=original(*a,**kw)
+            self.now+=timedelta(days=2)
+            return result
+        with patch.object(self.guard,"_csv_scoped",side_effect=advance):
+            with self.assertRaises(ValueError):
+                self.guard.produce_scoped_service_sample(self.key,**args)
+        self.assertFalse(self.guard._operator_active)
+
     def test_real_saved_plan_produces_exact_artifact_and_qa(self):
         result=self.call()
         self.assertEqual(result["artifact"],EXPECTED)

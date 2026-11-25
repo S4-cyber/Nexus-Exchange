@@ -63,6 +63,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, smoke
     from tkinter.scrolledtext import ScrolledText
     from .cockpit import install_cockpit, fit_geometry
     from .operator_capabilities import CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
+    from .service_handoff import review_scope
 
     workspace.resolve(context)
     context = dict(context)
@@ -129,6 +130,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, smoke
               + "Requirement reasons: " + (", ".join(assessment["reasons"]) or "None reported") + "\n"
               + "Evaluated UTC: " + review["evaluated_at"] + "\n"
               + "Review fingerprint: " + review["review_sha256"] + "\n"
+              + "Local sample scope pin: " + review_scope(review) + "\n"
               + "Source bytes, permission, actual buyer requirements and commercial facts remain unverified.")
         return review
 

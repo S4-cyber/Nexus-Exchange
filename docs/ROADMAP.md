@@ -391,3 +391,7 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 ## RC2 native Scout service requirements form (2026-11-25)
 - Predecessor `8f9a147c11c7dae3a9bfa1dc7331baac17963abc`: both Python logs 731 tests passed, run 45630193966; Windows run 45630193991 succeeded, artifact 15029614617.
 - E13/E14/E21/E25/E27/E33/E34/E38, H04/H05/H08: native read-only explicit requirements form bound to selected archive context, no inferred values or external authority. Six private focused parser tests passed; exact blobs matched; integrated GUI smoke expanded, hosted CI pending. See docs/SCOUT_NATIVE_REQUIREMENTS_FORM.md. Formal main gate acceptance unchanged 0/42. No new dependencies, costs, live actions or Operative modifications.
+
+## RC2 guarded Scout-to-Operator work sample (2026-11-25)
+- Prior exact head `b602208d7c3b6b671cd6eef1936962f9d81b856d`: both Python jobs 737 tests passed (45630948209); Windows source/frozen checks passed (45630948208, artifact 15032035028).
+- E13/E14/E16/E17/E21/E27/E28/E31/E32/E38, H04/H08: exact stable review scope, current saved-plan revalidation, actual declared input sizes/fingerprints and parsed cell bound, four service routes through existing guarded deterministic producer, post-production scope recheck, no file export/registration or external authority. Six private focused tests passed; four real integration cases added; hosted exact-head verification pending. See docs/SCOUT_GUARDED_SAMPLE.md. Main formal acceptance remains 0/42. No paid provisioning, new dependencies or Operative changes.

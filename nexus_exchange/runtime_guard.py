@@ -244,6 +244,46 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def produce_scoped_service_sample(self,plan_id,*,context,requirements,expected_scope,
+                                      raw,confirmed=None,right_raw=None):
+        """One transient sample from fresh declared Scout scope, never dispatch.
+
+        The caller supplies explicit owned/authorized bytes and a prior local
+        review scope pin. The runtime derives the current review itself; a pin
+        is consistency evidence only, not data permission or authentication.
+        """
+        from .ranking_workspace import RankingWorkspace
+        from .service_handoff import review_scope, checked_sample_inputs
+        from .digital_deliverable import build_contract, _input, _right_input, DeliverableError
+        self._csv_ready(confirmed)
+        self._operator_active=True
+        try:
+            workspace=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock)
+            snapshot=self._csv_snapshot(plan_id)
+            review=workspace.review_requirements(context,requirements)
+            inputs=checked_sample_inputs(review,expected_scope,snapshot["context"],raw,right_raw=right_raw)
+            bound=inputs.pop("max_cell_chars")
+            contract=build_contract(snapshot,halted=self.is_set(),**inputs)
+            # The ordinary producer enforces the implementation ceiling. Also
+            # check the possibly tighter declared cell bound on parsed data.
+            left=_input(contract,raw,self.is_set(),self.is_set)
+            right=_right_input(contract,right_raw,self.is_set(),self.is_set)
+            for rows in (left,right or {}):
+                for values in rows.values():
+                    if self.is_set():
+                        raise PermissionError("deliverable withheld after halt")
+                    if any(len(value)>bound for value in values):
+                        raise DeliverableError("DECLARED_CELL_BOUND_EXCEEDED")
+            result=self._csv_scoped(plan_id,raw,snapshot=snapshot,right_raw=right_raw,**inputs)
+            current=workspace.review_requirements(context,requirements)
+            if review_scope(current)!=expected_scope:
+                raise ValueError("service review changed during sample")
+            if self.is_set():
+                raise PermissionError("deliverable withheld after halt")
+            return dict(review_scope_sha256=expected_scope,sample=result,external_authority=False)
+        finally:
+            self._operator_active=False
+
     def csv_file_action(self,action,plan_id,*,confirmed=None,**inputs):
         """Fixed local preview/export actions; no arbitrary callback or external dispatch."""
         self._csv_ready(confirmed)
