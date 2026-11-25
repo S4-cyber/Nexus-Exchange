@@ -127,3 +127,22 @@ class OperatorRuntimeTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.call('prepare')
+
+    def test_guarded_history_listing(self):
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action('history_list',self.key,limit=100)
+        self.guard.resume()
+        self.assertEqual(self.guard.operator_action('history_list',self.key,limit=100)['rows'],[])
+        self.assertFalse((self.directory/'operator.sqlite3').exists())
+        saved=self.call()
+        result=self.guard.operator_action('history_list',self.key,limit=1)
+        self.assertEqual(result['rows'],[saved])
+        self.assertFalse(result['truncated'])
+        self.assertFalse(result['external_authority'])
+        self.assertEqual(self.guard.operator_action('history_list','e'*64,limit=1)['rows'],[])
+        for limit in (0,True,101):
+            with self.assertRaises(ValueError):
+                self.guard.operator_action('history_list',self.key,limit=limit)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.guard.operator_action('history_list',self.key,limit=1)
