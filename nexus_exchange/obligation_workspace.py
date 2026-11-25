@@ -160,6 +160,8 @@ def record_text(record):
     for event in record["notes"]:
         lines.extend([str(event["sequence"])+". "+_LABELS[event["kind"]]+" | "+event["recorded_at"],
                       event["reference"]])
+    from .operator_workflow import historical_progress, progress_text
+    lines.extend(["",progress_text(historical_progress(record,record["plan_id"],halted=False))])
     return "\n".join(lines)
 
 

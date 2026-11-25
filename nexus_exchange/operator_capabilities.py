@@ -106,7 +106,13 @@ def catalog(*,halted=None):
         excluded=["FUZZY_MATCH","MERGE","SOURCE_CORRECTION","NON_KEY_VALUE_OUTPUT","DEDUPLICATION",
                   "MISSING_VALUE_INFERENCE","FORMULA_EXECUTION","NON_CSV_INPUT","EXTERNAL_DELIVERY"],
         title_hint_codes=[k for k,_ in _RECONCILE_HINTS],review_tasks=list(_RECONCILE_TASKS))
-    payload=dict(format=FORMAT,capabilities=[entry,json_entry,profile_entry,reconcile_entry],**dict.fromkeys(_FLAGS,False))
+    from .operator_workflow import workflow_template
+    entries=[entry,json_entry,profile_entry,reconcile_entry]
+    for item in entries:
+        template=workflow_template(item["contract_format"],halted=False)
+        item["workflow_template_sha256"]=template["template_sha256"]
+        item["workflow_task_ids"]=[task["task_id"] for task in template["tasks"]]
+    payload=dict(format=FORMAT,capabilities=entries,**dict.fromkeys(_FLAGS,False))
     return dict(payload,catalog_sha256=_digest(_json(payload)))
 
 
