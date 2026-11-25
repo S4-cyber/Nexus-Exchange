@@ -20,6 +20,14 @@ class GenesisDiagnosticTests(unittest.TestCase):
         self.assertEqual(first["council_attempts"],2)
         self.assertEqual(first["assumption_references"],17)
         self.assertEqual(first["independently_verified_assumptions"],0)
+        self.assertEqual(first["correspondence_event_count"],1)
+        self.assertRegex(first["correspondence_thread_id"],r"^[0-9a-f]{64}$")
+        self.assertRegex(first["correspondence_head_sha256"],r"^[0-9a-f]{64}$")
+        self.assertNotEqual(first["correspondence_thread_id"],first["correspondence_head_sha256"])
+        for step in ("CORRESPONDENCE_SCOPE_PINNED","CORRESPONDENCE_REPLAY_DENIED",
+                     "CORRESPONDENCE_BACKUP_INVENTORY","DURABLE_CORRESPONDENCE_HISTORY",
+                     "RESTORED_CORRESPONDENCE_HISTORICAL_ONLY"):
+            self.assertIn(step,first["checks"])
         self.assertEqual(first["modeled_pre_payment_exposure_cents"],0)
         self.assertEqual(first["modeled_probability_adjusted_net_cents"],12000)
         self.assertEqual(first["hypothetical_received_cents"],20000)

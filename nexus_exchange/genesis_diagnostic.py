@@ -15,6 +15,7 @@ from .database_backup import create_backup, restore_backup, verify_backup
 from .checklist_store import context_for
 from .csv_workspace import CsvWorkspace
 from .finance_workspace import FinanceWorkspace
+from .evidence import fingerprint
 from .lead_store import _digest, _json
 from .obligation_workspace import ObligationWorkspace
 from .operator_capabilities import CSV_ID, assess_requirements
@@ -163,6 +164,45 @@ def run_diagnostic(*,confirmed=None):
             _denied(lambda:guard.council_action("run_once",plan_id),PermissionError)
             pass_check("COUNCIL_TERMINAL_NO_REPLAY")
 
+            # Exercise exact draft -> recipient -> local evidence thread before
+            # the fixture opportunity expires. No contact source is fetched.
+            supplier=dict(scheme="REGISTRY",identifier="OWNED-SUPPLIER",name="Owned synthetic supplier",
+                roles=["supplier"],classifications=[dict(scheme="NAICS",code="541519")],
+                regions=["US-CA"],currency="USD",capacity="1000.00",
+                source_url="https://example.org/synthetic",observed_at=clock().isoformat())
+            rfq=guard.operator_action("save",plan_id,supplier=supplier,region="US-CA",
+                items=[dict(description="Owned CSV work sample",quantity="1",unit="job",
+                            classification=dict(scheme="NAICS",code="541519"))])
+            draft_id=rfq["draft"]["draft_id"]
+            recipient=dict(scheme="REGISTRY",identifier="OWNED-SUPPLIER",
+                organization_name="Owned synthetic supplier",email="quotes@example.org",
+                source_url="https://example.org/contact",observed_at=clock().isoformat())
+            declaration=dict(draft_id=draft_id,supplier=supplier,recipient=recipient,evidence_path=evidence)
+            candidate=guard.operator_action("recipient_preview",plan_id,**declaration)
+            saved=guard.operator_action("recipient_save",plan_id,**declaration,
+                expected_recipient_id=candidate["recipient_id"],confirmed=True)
+            scope=dict(draft_id=draft_id,recipient_id=candidate["recipient_id"])
+            pass_check("CORRESPONDENCE_SCOPE_PINNED",saved["candidate"]==candidate
+                and candidate["scope"]["draft_id"]==draft_id
+                and guard.operator_action("thread_history",plan_id,**scope) is None)
+            _denied(lambda:guard.operator_action("thread_open",plan_id,**scope,
+                supplier=supplier,confirmed=False),PermissionError)
+            opened=guard.operator_action("thread_open",plan_id,**scope,supplier=supplier,confirmed=True)
+            now[0]+=timedelta(seconds=1)
+            reply=directory/"owned-simulated-reply.txt"
+            reply.write_bytes(b"Owned simulated reply; no external transmission.")
+            event=dict(**scope,supplier=supplier,kind="SIMULATED_REPLY",evidence_path=reply,
+                expected_head=opened["head_sha256"],expected_evidence=fingerprint(reply,halted=False),
+                confirmed=True)
+            thread=guard.operator_action("thread_append",plan_id,**event)
+            _denied(lambda:guard.operator_action("thread_append",plan_id,**event),ValueError)
+            _denied(lambda:guard.operator_action("thread_history",plan_id,
+                draft_id=draft_id,recipient_id="0"*64),ValueError)
+            _false(thread,("external_authority","send_enabled","recipient_verified",
+                           "reply_authenticated","delivery_verified","commitment_enabled"))
+            pass_check("CORRESPONDENCE_REPLAY_DENIED",len(thread["events"])==1
+                and guard.operator_action("thread_history",plan_id,**scope)==thread)
+
             csv=CsvWorkspace(plan_id,action=guard.csv_file_action,blocked_check=guard.is_set)
             preview=csv.preview(source,"id,name,category","id","2")
             pass_check("ARTIFACT_EXACT_QA",preview["artifact"]==_EXPECTED
@@ -209,6 +249,11 @@ def run_diagnostic(*,confirmed=None):
         restored=root/"restored"
         manifest=create_backup(directory,backup,confirmed=True)
         recovery=restore_backup(backup,restored,confirmed=True)
+        pass_check("CORRESPONDENCE_BACKUP_INVENTORY",
+            {"operator.sqlite3","operator-recipients.sqlite3","operator-threads.sqlite3"}
+                <= {row["name"] for row in manifest["files"]}
+            and not (restored/reply.name).exists()
+            and not (restored/evidence.name).exists())
         pass_check("VERIFIED_BACKUP_RESTORE",verify_backup(backup)==manifest
             and recovery["restored_files"]==len(manifest["files"])
             and recovery["runtime_state"]["state"]=="halted"
@@ -219,7 +264,21 @@ def run_diagnostic(*,confirmed=None):
         with RuntimeGuard(restored,clock=clock) as reopened:
             pass_check("RESTART_REQUIRES_RESUME",reopened.is_set())
             _denied(lambda:reopened.simulated_invoice_action("find",plan_id),PermissionError)
+            _denied(lambda:reopened.operator_action("thread_history",plan_id,**scope),PermissionError)
             reopened.resume()
+            recovered_thread=reopened.operator_action("thread_history",plan_id,**scope)
+            recovered_draft=reopened.operator_action("history",plan_id,draft_id=draft_id)
+            recipients=reopened.operator_action("recipient_history",plan_id,draft_id=draft_id,limit=100)
+            pass_check("DURABLE_CORRESPONDENCE_HISTORY",recovered_thread==thread
+                and recovered_draft==rfq and len(recipients["rows"])==1
+                and recipients["rows"][0]==saved)
+            _false(recovered_thread,("external_authority","send_enabled","recipient_verified",
+                                     "reply_authenticated","delivery_verified","commitment_enabled"))
+            # Historical recovery is not renewal of expired source or recipient authority.
+            _denied(lambda:reopened.operator_action("thread_open",plan_id,**scope,
+                supplier=supplier,confirmed=True),ValueError)
+            pass_check("RESTORED_CORRESPONDENCE_HISTORICAL_ONLY",
+                reopened.operator_action("thread_history",plan_id,**scope)==thread)
             history=reopened.council_action("history",plan_id)
             pass_check("DURABLE_COUNCIL_AUDIT",history["attempts_used"]==2
                 and all(row["audit_state"]=="RECORDED" for row in history["attempts"]))
@@ -249,6 +308,9 @@ def run_diagnostic(*,confirmed=None):
                 council_report_sha256=reviewed["report_sha256"],
                 assumption_references=reviewed["snapshot"]["referenced"],
                 restored_database_count=recovery["restored_files"],
+                correspondence_thread_id=recovered_thread["thread_id"],
+                correspondence_head_sha256=recovered_thread["head_sha256"],
+                correspondence_event_count=len(recovered_thread["events"]),
                 independently_verified_assumptions=0,artifact_sha256=preview["report"]["artifact_sha256"],
                 qa_report_sha256=preview["report"]["report_sha256"],
                 obligation_id=obligation["obligation_id"],obligation_head_sha256=obligation["head_sha256"],
