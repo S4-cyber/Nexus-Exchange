@@ -206,3 +206,50 @@ class CouncilAttemptTests(unittest.TestCase):
             for secret in ("Review synthetic commercial evidence","synthetic source","offline only"):
                 self.assertNotIn(secret,payload)
             self.assertIn(REPORT,payload)
+
+    def test_concurrent_reservation_has_exactly_one_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        with CouncilAttemptStore(self.path) as store:
+            self.register(store)
+        barrier=Barrier(2)
+        def contender():
+            with CouncilAttemptStore(self.path) as store:
+                barrier.wait(timeout=10)
+                try:
+                    return self.reserve(store)
+                except PermissionError:
+                    return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            one=pool.submit(contender)
+            two=pool.submit(contender)
+            results=(one.result(timeout=15),two.result(timeout=15))
+        self.assertEqual(sum(result is not None for result in results),1)
+        with CouncilAttemptStore(self.path) as store:
+            self.assertEqual(store.status("TASK.1",halted=False)["attempts_used"],1)
+
+    def test_recomputed_payload_cannot_change_reservation_identity(self):
+        import hashlib
+        with CouncilAttemptStore(self.path) as store:
+            self.register(store)
+            self.reserve(store)
+            raw=json.loads(store.db.execute("SELECT payload FROM council_attempts_v1").fetchone()[0])
+            raw["attempts"][0]["reservation_id"]="b"*64
+            encoded=json.dumps(raw,sort_keys=True,separators=(",",":"),ensure_ascii=True)
+            store.db.execute("UPDATE council_attempts_v1 SET payload=?,digest=?",
+                (encoded,hashlib.sha256(encoded.encode("ascii")).hexdigest()))
+            with self.assertRaises(ValueError):
+                store.status("TASK.1",halted=False)
+
+    def test_failed_completion_preserves_reserved_attempt(self):
+        with CouncilAttemptStore(self.path) as store:
+            self.register(store)
+            ticket=self.reserve(store)
+            store.db.execute("""CREATE TRIGGER reject_completion BEFORE UPDATE ON council_attempts_v1
+                BEGIN SELECT RAISE(ABORT,'synthetic failure'); END""")
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.finish(store,ticket)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(store.status("TASK.1",halted=False)["state"],"RESERVED")
+            store.db.execute("DROP TRIGGER reject_completion")
+            self.assertEqual(self.finish(store,ticket)["next_attempt"],2)
