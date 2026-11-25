@@ -1,0 +1,150 @@
+import tempfile
+import unittest
+from datetime import timedelta
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from nexus_exchange import sam_search
+from nexus_exchange.checklist_store import context_for
+from nexus_exchange.owner_profile import ProfileStore
+from nexus_exchange.scenario_evidence import ScenarioEvidenceStore
+from nexus_exchange.runtime_guard import RuntimeGuard
+from nexus_exchange.council_workspace import CouncilWorkspace, snapshot_text, ledger_text, audit_text
+from test_cash_feasibility import scenario
+from test_schedule_feasibility import plan
+from test_owner_profile import profile
+from test_lead_store import NOW
+import test_sam_search as sam
+
+
+class CouncilWorkspaceTests(unittest.TestCase):
+    def setUp(self):
+        tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory=Path(tmp.name)
+        self.now=NOW
+        self.declared=profile()
+        self.report=sam_search.search(sam.QUERY,sam.KEY,
+            transport=Mock(return_value=(200,sam.page([sam.notice(1)]))),
+            approved=True,halt_check=lambda:False,clock=lambda:self.now)
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(self.declared,halted=False)
+        with ScenarioEvidenceStore(self.directory/"scout-leads.sqlite3") as store:
+            store.record(self.report,now=self.now,halted=False)
+            lead=store.browse(now=self.now,profile=self.declared,source="sam",halted=False)["leads"][0]
+            self.key=store.save(context_for(lead),scenario(),plan(),profile=self.declared,
+                                now=self.now,halted=False)
+        self.guard=RuntimeGuard(self.directory,clock=lambda:self.now)
+        self.addCleanup(self.guard.close)
+        self.guard.resume()
+        self.busy=False
+        self.action=Mock(side_effect=self.guard.council_action)
+        self.workspace=CouncilWorkspace(self.key,action=self.action,
+                                        blocked_check=lambda:self.busy or self.guard.is_set())
+
+    def test_open_and_inspect_never_register_or_consume_attempt(self):
+        self.action.assert_not_called()
+        snap=self.workspace.inspect()
+        self.action.assert_called_once_with("inspect",self.key)
+        self.assertFalse((self.directory/"council.sqlite3").exists())
+        self.assertIn("UNVERIFIED LOCAL REVIEW",snapshot_text(snap))
+        self.assertIn("0/17",snapshot_text(snap))
+
+    def test_explicit_register_review_and_historical_display(self):
+        registered=self.workspace.register()
+        self.assertEqual(registered["attempts_used"],0)
+        self.assertIn("0/3",ledger_text(registered))
+        result=self.workspace.run_once()
+        self.assertEqual(result["ledger"]["attempts_used"],1)
+        history=self.workspace.history()
+        self.assertEqual(history["attempts_used"],1)
+        row=history["attempts"][0]
+        self.assertIn("HISTORICAL ONLY",audit_text(row))
+        self.assertIn(row["audit"]["snapshot"]["snapshot_sha256"],audit_text(row))
+        self.assertIn("NEEDS_EVIDENCE",audit_text(row))
+        self.assertIn("No current decision",audit_text(row))
+        self.assertEqual([call.args[0] for call in self.action.call_args_list],
+                         ["register","run_once","history"])
+
+    def test_missing_registration_cannot_implicitly_register(self):
+        with self.assertRaises(ValueError):
+            self.workspace.run_once()
+        self.action.assert_called_once_with("run_once",self.key)
+        with self.assertRaises(ValueError):
+            self.workspace.history()
+
+    def test_halt_and_busy_gate_precede_facade_calls(self):
+        self.busy=True
+        for operation in (self.workspace.inspect,self.workspace.register,self.workspace.run_once,self.workspace.history):
+            with self.assertRaises(PermissionError):
+                operation()
+        self.action.assert_not_called()
+        self.busy=False
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.workspace.inspect()
+        self.action.assert_not_called()
+        self.guard.resume()
+        self.assertEqual(self.workspace.inspect()["plan_id"],self.key)
+
+    def test_unknown_blocked_state_and_bad_plan_are_rejected(self):
+        for value in (None,0,True):
+            action=Mock()
+            workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:value)
+            with self.assertRaises(PermissionError):
+                workspace.inspect()
+            action.assert_not_called()
+        for key in (None,"a"*63,"é"*64):
+            with self.assertRaises(ValueError):
+                CouncilWorkspace(key,action=self.action,blocked_check=lambda:False)
+
+    def test_historical_review_remains_distinct_after_profile_change(self):
+        self.workspace.register()
+        self.workspace.run_once()
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as store:
+            store.save(profile(hours_per_week=30),halted=False)
+        with self.assertRaises(ValueError):
+            self.workspace.inspect()
+        history=self.workspace.history()
+        self.assertFalse(history["current_decision"])
+        self.assertIn("HISTORICAL ONLY",audit_text(history["attempts"][0]))
+
+    def test_third_review_is_terminal_and_history_remains_available(self):
+        self.workspace.register()
+        for _ in range(3):
+            result=self.workspace.run_once()
+        self.assertEqual(result["ledger"]["state"],"ESCALATE")
+        self.assertIn("No next attempt",ledger_text(result["ledger"]))
+        with self.assertRaises(PermissionError):
+            self.workspace.run_once()
+        self.assertEqual(self.workspace.history()["attempts_used"],3)
+
+    def test_legacy_and_interrupted_rows_never_fabricate_snapshot(self):
+        for state,label in (("LEGACY_DIGEST_ONLY","Legacy digest only"),
+                            ("RESERVED_NO_REPORT","Reserved; no report"),
+                            ("INTERRUPTED_NO_REPORT","Interrupted; no report")):
+            row=dict(attempt=1,outcome=None,reserved_at=NOW.isoformat(),
+                     completed_at=None,report_sha256=None,audit_sha256=None,
+                     reservation_id="a"*64,audit_state=state,audit=None)
+            text=audit_text(row)
+            self.assertIn(label,text)
+            self.assertIn("No current decision",text)
+            self.assertNotIn("Modeled expected net",text)
+
+    def test_scope_and_authority_mismatch_rejected(self):
+        snap=self.workspace.inspect()
+        action=Mock(return_value=dict(snap,external_authority=True))
+        workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:False)
+        with self.assertRaises(ValueError):
+            workspace.inspect()
+        action.return_value=dict(snap,plan_id="a"*64)
+        with self.assertRaises(ValueError):
+            workspace.inspect()
+
+    def test_result_withheld_if_runtime_becomes_blocked(self):
+        snap=self.workspace.inspect()
+        states=iter([False,True])
+        workspace=CouncilWorkspace(self.key,action=Mock(return_value=snap),
+                                    blocked_check=lambda:next(states))
+        with self.assertRaises(PermissionError):
+            workspace.inspect()
