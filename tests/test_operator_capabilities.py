@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from nexus_exchange import sam_search
 from nexus_exchange.checklist_store import context_for
 from nexus_exchange.digital_deliverable import MAX_ROWS,MAX_COLUMNS,MAX_INPUT_BYTES,MAX_CELL_CHARS
-from nexus_exchange.operator_capabilities import catalog,assess_lead,assess_requirements,CSV_ID,JSON_ID,PROFILE_ID
+from nexus_exchange.operator_capabilities import catalog,assess_lead,assess_requirements,CSV_ID,JSON_ID,PROFILE_ID,RECONCILE_ID
 from nexus_exchange.review_ranking import RankingStore
 from nexus_exchange.ranking_workspace import row_details
 from test_cash_feasibility import scenario
@@ -49,7 +49,9 @@ class OperatorCapabilitiesTests(unittest.TestCase):
     def test_catalog_is_bounded_and_uses_actual_limits(self):
         result=catalog(halted=False)
         entry=result["capabilities"][0]
-        self.assertEqual(len(result["capabilities"]),3)
+        self.assertEqual(len(result["capabilities"]),4)
+        self.assertEqual(result["capabilities"][3]["capability_id"],RECONCILE_ID)
+        self.assertEqual(result["capabilities"][3]["input_count"],2)
         self.assertEqual(result["capabilities"][2]["capability_id"],PROFILE_ID)
         self.assertIn("distinct_nonblank_count",result["capabilities"][2]["output_columns"])
         self.assertEqual(result["capabilities"][1]["capability_id"],JSON_ID)
@@ -135,6 +137,33 @@ class OperatorCapabilitiesTests(unittest.TestCase):
         wrong=assess_requirements(requirements(capability_id=PROFILE_ID,
             preserve_all_fields=False,input_format="UTF8_JSON_RECORDS"),halted=False)
         self.assertIn("UNSUPPORTED_INPUT_FORMAT",wrong["reasons"])
+
+    def test_reconciliation_narrow_title_hints_and_holds(self):
+        report=sam_search.search(sam.QUERY,sam.KEY,
+            transport=Mock(return_value=(200,sam.page([
+                sam.notice(10,title="Synthetic CSV dataset reconciliation"),
+                sam.notice(11,title="Synthetic accounting reconciliation"),
+                sam.notice(12,title="Synthetic CSV comparison",active="No")]))),
+            approved=True,halt_check=lambda:False,clock=lambda:NOW)
+        self.store.record(report,now=NOW,halted=False)
+        rows=self.by_title(operator_focus=True)
+        self.assertEqual(rows["Synthetic CSV dataset reconciliation"]["operator_capability"]["capability_ids"],[RECONCILE_ID])
+        self.assertEqual(rows["Synthetic accounting reconciliation"]["operator_capability"]["capability_ids"],[])
+        self.assertEqual(rows["Synthetic CSV comparison"]["operator_capability"]["state"],"SOURCE_HELD")
+
+    def test_reconciliation_requirements_bind_both_inputs(self):
+        req=requirements(capability_id=RECONCILE_ID,preserve_all_fields=False,right_input_bytes=100)
+        req["specification"]=dict(req["specification"],right_input_sha256="b"*64,right_expected_rows=3)
+        result=assess_requirements(req,halted=False)
+        self.assertTrue(result["declared_structure_fits"])
+        self.assertFalse(result["source_bytes_checked"])
+        self.assertFalse(result["execution_eligible"])
+        self.assertIn("SECOND_INPUT_SIZE_UNKNOWN",assess_requirements(
+            dict(req,right_input_bytes=None),halted=False)["reasons"])
+        self.assertIn("VALUE_OUTPUT_UNSUPPORTED_FOR_RECONCILIATION",assess_requirements(
+            dict(req,preserve_all_fields=True),halted=False)["reasons"])
+        self.assertIn("SPECIFICATION_OUTSIDE_CAPABILITY",assess_requirements(
+            dict(req,specification=dict(req["specification"],right_expected_rows=2000)),halted=False)["reasons"])
 
     def test_focus_only_within_existing_review_tiers(self):
         result=self.rank(operator_focus=True)

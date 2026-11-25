@@ -10,7 +10,7 @@ from datetime import timedelta
 from nexus_exchange import sam_search
 from nexus_exchange.checklist_store import context_for
 from nexus_exchange.digital_deliverable import (
-    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES, JSON_FORMAT, JSON_SOURCE, PROFILE_FORMAT, PROFILE_COLUMNS,
+    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES, JSON_FORMAT, JSON_SOURCE, PROFILE_FORMAT, PROFILE_COLUMNS, RECONCILE_FORMAT, RECONCILE_REPORT,
 )
 from nexus_exchange.lead_store import _digest,_json
 from nexus_exchange.owner_profile import ProfileStore
@@ -29,6 +29,12 @@ JSON_RAW=b'[{"name":"Beta, Inc","id":"002","category":"Research"},{"category":"D
 PROFILE_RAW=b'id,name,category\n001,,A\n002, ,A\n003,Alpha,a\n004,Alpha,\n'
 PROFILE_EXPECTED=(b'"column","row_count","empty_count","whitespace_only_count","nonblank_count","distinct_nonblank_count","min_chars","max_chars"\r\n'
     b'"category","4","1","0","3","2","0","1"\r\n"id","4","0","0","4","4","3","3"\r\n"name","4","1","1","2","1","0","5"\r\n')
+
+LEFT=b'id,name,category\n001,Alpha,A\n002,Beta,B\n004,Delta,D\n'
+RIGHT=b'category,name,id\nA,Alfa,001\nC,Gamma,003\nD,Delta,004\n'
+RECONCILED=(b'"record_key","status","changed_field_count","changed_name","changed_category"\r\n'
+    b'"001","CHANGED","1","YES","NO"\r\n"002","LEFT_ONLY","0","NOT_COMPARED","NOT_COMPARED"\r\n'
+    b'"003","RIGHT_ONLY","0","NOT_COMPARED","NOT_COMPARED"\r\n"004","UNCHANGED","0","NO","NO"\r\n')
 
 
 def spec(raw=RAW,**changes):
@@ -233,6 +239,89 @@ class DigitalDeliverableTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.profile_call()
+
+    def reconcile_call(self,left=LEFT,right=RIGHT,**changes):
+        requirements=dict(expected_rows=3,right_expected_rows=3,
+                          right_input_sha256=sha256(right).hexdigest())
+        requirements.update(changes)
+        return self.guard.produce_csv_deliverable(self.key,raw=left,right_raw=right,
+            specification=spec(left,**requirements),operation="RECONCILE",confirmed=True)
+
+    def test_reconciliation_exact_key_membership_and_field_flags(self):
+        result=self.reconcile_call()
+        self.assertEqual(result["artifact"],RECONCILED)
+        self.assertEqual(result["contract"]["format"],RECONCILE_FORMAT)
+        self.assertEqual(result["report"]["format"],RECONCILE_REPORT)
+        self.assertEqual(result["report"]["right_input_sha256"],sha256(RIGHT).hexdigest())
+        self.assertEqual(result["report"]["rows"],4)
+        self.assertEqual(result["report"],verify_csv(result["contract"],LEFT,RECONCILED,
+                                                       right_raw=RIGHT,halted=False))
+        for value in (b"Alpha",b"Alfa",b"Gamma",b"Delta"):
+            self.assertNotIn(value,result["artifact"])
+        self.assertFalse(result["report"]["external_authority"])
+        self.assertFalse(result["report"]["buyer_accepted"])
+        self.assertEqual(self.reconcile_call(),result)
+
+    def test_reconciliation_rejects_wrong_bytes_unsafe_inputs_and_wrong_flags(self):
+        result=self.reconcile_call()
+        for artifact in (RECONCILED.replace(b'"CHANGED","1"',b'"CHANGED","2"'),
+                         RECONCILED.replace(b'"003","RIGHT_ONLY"',b'"005","RIGHT_ONLY"'),
+                         RECONCILED.replace(b'"YES","NO"',b'"NO","YES"'),
+                         RECONCILED.replace(b"\r\n",b"\n")):
+            with self.subTest(artifact=artifact),self.assertRaises(DeliverableError):
+                verify_csv(result["contract"],LEFT,artifact,right_raw=RIGHT,halted=False)
+        for right in (RIGHT.replace(b"003",b"001"),RIGHT.replace(b"Alfa",b"=1+1"),
+                      RIGHT.replace(b"category",b"unknown"),RIGHT.replace(b"Delta",b"\x00")):
+            with self.subTest(right=right),self.assertRaises(DeliverableError):
+                self.reconcile_call(right=right)
+        with self.assertRaises(DeliverableError):
+            verify_csv(result["contract"],LEFT,RECONCILED,right_raw=RIGHT+b"\n",halted=False)
+        with self.assertRaises(DeliverableError):
+            verify_csv(result["contract"],LEFT,RECONCILED,halted=False)
+        with self.assertRaises(DeliverableError):
+            self.reconcile_call(right_expected_rows=2000)
+        with self.assertRaises(DeliverableError):
+            self.guard.produce_csv_deliverable(self.key,raw=RAW,right_raw=RIGHT,
+                specification=spec(),confirmed=True)
+
+    def test_reconciliation_file_lifecycle_and_second_input_pin(self):
+        from nexus_exchange.csv_workspace import CsvWorkspace
+        left=self.directory/"left.csv"
+        right=self.directory/"right.csv"
+        target=self.directory/"difference.csv"
+        left.write_bytes(LEFT); right.write_bytes(RIGHT)
+        workspace=CsvWorkspace(self.key,action=self.guard.csv_file_action,
+            blocked_check=self.guard.is_set,operation="RECONCILE")
+        def preview():
+            return workspace.preview(left,"id,name,category","id","3",
+                                     right_source_path=right,right_rows="3")
+        result=preview()
+        self.assertEqual(result["artifact"],RECONCILED)
+        right.write_bytes(RIGHT.replace(b"Alfa",b"Alpha"))
+        with self.assertRaises(ValueError):
+            workspace.export(target,confirmed=True)
+        self.assertFalse(target.exists())
+        right.write_bytes(RIGHT)
+        preview()
+        self.assertTrue(workspace.export(target,confirmed=True)["exported"])
+        self.assertEqual(target.read_bytes(),RECONCILED)
+        preview()
+        saved=workspace.register(target,confirmed=True)
+        self.assertEqual(saved["binding"]["qa_report"]["right_input_sha256"],sha256(RIGHT).hexdigest())
+        self.assertEqual(self.guard.csv_obligation_action("history",self.key,
+            obligation_id=saved["obligation_id"]),saved)
+        self.assertEqual(left.read_bytes(),LEFT)
+        self.assertEqual(right.read_bytes(),RIGHT)
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            preview()
+
+    def test_reconciliation_identical_and_key_only_inputs(self):
+        key_data=b'id\n001\n002\n'
+        result=self.reconcile_call(left=key_data,right=key_data,expected_rows=2,
+                                   right_expected_rows=2,columns=["id"])
+        self.assertEqual(result["artifact"],b'"record_key","status","changed_field_count"\r\n'
+                         b'"001","UNCHANGED","0"\r\n"002","UNCHANGED","0"\r\n')
 
     def test_changed_input_or_artifact_rejected(self):
         contract=self.contract()

@@ -1529,6 +1529,17 @@ def main(*, data_directory=None, gui_smoke=False):
                 b'"id","2","0","0","2","2","3","3"\r\n"name","2","0","0","2","2","4","5"\r\n')
             if profile_destination.read_bytes()!=expected_profile:
                 raise RuntimeError("CSV quality report native output mismatch")
+            right_csv=directory/"synthetic-csv-right.csv"
+            right_csv.write_bytes(b"id,name\n001,Alfa\n003,Gamma\n")
+            reconcile_destination=directory/"synthetic-csv-reconciliation.csv"
+            reconcile_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
+                blocked_check=council_blocked,operation="RECONCILE",
+                smoke_paths=(csv_source,right_csv,reconcile_destination))
+            reconcile_window.destroy()
+            expected_reconciliation=(b'"record_key","status","changed_field_count","changed_name"\r\n'
+                b'"001","CHANGED","1","YES"\r\n"002","LEFT_ONLY","0","NOT_COMPARED"\r\n"003","RIGHT_ONLY","0","NOT_COMPARED"\r\n')
+            if reconcile_destination.read_bytes()!=expected_reconciliation:
+                raise RuntimeError("CSV reconciliation native output mismatch")
         except BaseException:
             close()
             raise
