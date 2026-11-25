@@ -359,6 +359,7 @@ def readiness(source_id, *, halted=None):
     return {"source_id":source.id,"research_only":True,
         "adapter_status":("SAM adapter tested with mocks; live pilot pending" if source.id=="sam" else
                           "TED adapter; live pilot pending" if source.id=="ted" else
-                          "UK FTS release adapter; live pilot pending" if source.id=="uk_tender" else "catalog only"),
+                          "UK FTS release adapter; live pilot pending" if source.id=="uk_tender" else
+                          "CanadaBuys CSV adapter; live pilot pending" if source.id=="canada" else "catalog only"),
         "income_kind":source.kind,"cash_exposure":None,"zero_capital_verified":False,
         "external_authority":False,"execution_eligible":False}

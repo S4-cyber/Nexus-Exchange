@@ -47,7 +47,7 @@ class TradeRegistryTests(unittest.TestCase):
         self.assertIn("mock",readiness("sam",halted=False)["adapter_status"])
         self.assertIn("TED adapter",readiness("ted",halted=False)["adapter_status"])
         self.assertIn("FTS release adapter",readiness("uk_tender",halted=False)["adapter_status"])
-        self.assertEqual(readiness("canada",halted=False)["adapter_status"],"catalog only")
+        self.assertIn("CanadaBuys CSV adapter",readiness("canada",halted=False)["adapter_status"])
 
     def test_fail_closed_halt_and_unknown_status(self):
         for state in (True,None,0):

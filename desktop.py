@@ -21,6 +21,7 @@ from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, so
 from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
 from nexus_exchange.ted_search import TedQuery, search as search_ted, notice_url as ted_notice_url
 from nexus_exchange.fts_search import FtsQuery, search as search_fts, notice_url as fts_notice_url
+from nexus_exchange.canada_search import CanadaQuery, search as search_canada, notice_url as canada_notice_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -185,7 +186,7 @@ def main(*, data_directory=None, gui_smoke=False):
             result = future.result()
             if type(result) is dict:
                 scenario_report = result
-                if result.get("format") in ("nexus-sam-research-v1","nexus-ted-research-v1","nexus-fts-research-v1"):
+                if result.get("format") in ("nexus-sam-research-v1","nexus-ted-research-v1","nexus-fts-research-v1","nexus-canada-research-v1"):
                     output.insert("end",f"Scout discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
                     show_source_results(result)
                 else:
@@ -247,6 +248,7 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-sam-research-v1":("SAM",notice_url),
             "nexus-ted-research-v1":("TED",ted_notice_url),
             "nexus-fts-research-v1":("UK Find a Tender",fts_notice_url),
+            "nexus-canada-research-v1":("CanadaBuys",canada_notice_url),
         }[source_format]
         window.title("Nexus Exchange | "+label+" research leads")
         window.geometry("1050x700")
@@ -255,6 +257,8 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
         if report.get("truncated"):
             ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
+        if source_format=="nexus-canada-research-v1":
+            ttk.Label(window,text="Daily dataset snapshot; verify the original tender and exact closing timezone.").pack()
         if source_format=="nexus-fts-research-v1":
             ttk.Label(window,text="Historical releases only. The complete procurement lifecycle is not compiled.").pack()
         tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
@@ -449,6 +453,34 @@ def main(*, data_directory=None, gui_smoke=False):
                 return search_fts(request,approved=True,halt_check=stop.is_set)
             run(work,target="UK public release discovery",scenario=True)
             write_details("Search requested. See main dashboard for results.")
+        def run_canada():
+            source=selected()
+            if source is None or source.id!="canada":
+                write_details("Select CanadaBuys before starting its public dataset search.")
+                return
+            if stop.is_set() or future is not None:
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            keyword=simpledialog.askstring("CanadaBuys public search",
+                "Filter open tender titles by keyword (no personal data).",initialvalue="software",parent=window)
+            if keyword is None:
+                return
+            request=CanadaQuery(keyword)
+            try:
+                request.validated()
+            except ValueError:
+                write_details("Enter a keyword of 3–120 characters.")
+                return
+            if not messagebox.askyesno("Authorize one CanadaBuys download",
+                    "Download the official daily open tender dataset? One read-only request, up to 32 MiB. No account, bid or spending.",
+                    parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return search_canada(request,approved=True,halt_check=stop.is_set)
+            run(work,target="CanadaBuys public tender discovery",scenario=True)
+            write_details("Search requested. See main dashboard for results.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
@@ -457,6 +489,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Commercial routes",command=trade_routes_window).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search EU TED (keyless)",command=run_ted).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -639,8 +672,13 @@ def main(*, data_directory=None, gui_smoke=False):
             title="Synthetic UK FTS fixture")
         fts_window=show_source_results(dict(format="nexus-fts-research-v1",returned=1,
             requests=0,leads=[fts_sample],truncated=False))
+        canada_sample=dict(sample_lead,notice_id="cb-1",source_url=canada_notice_url("cb-1"),
+            title="Synthetic CanadaBuys fixture",earliest_deadline_date="2026-12-01")
+        canada_window=show_source_results(dict(format="nexus-canada-research-v1",returned=1,
+            requests=0,leads=[canada_sample],truncated=False))
         root.update_idletasks()
         root.update()
+        canada_window.destroy()
         fts_window.destroy()
         ted_window.destroy()
         window.destroy()
