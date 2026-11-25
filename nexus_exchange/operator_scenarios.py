@@ -221,3 +221,70 @@ class OperatorScenario:
                 result=store.list_draft(draft,limit=limit,halted=False)
         self._allowed()
         return result
+
+
+    def _thread_scope(self,plan_id,draft_id,recipient_id):
+        self._allowed()
+        from .operator_recipients import RecipientStore
+        draft=self.history(plan_id,draft_id)["draft"]
+        with RecipientStore(self.directory/"operator-recipients.sqlite3",existing_only=True) as store:
+            record=store.get(draft,recipient_id,halted=False)
+        if record is None:
+            raise ValueError("saved recipient outside selected draft")
+        self._allowed()
+        return draft,record["candidate"]
+
+    def thread_history(self,plan_id,draft_id,recipient_id):
+        from .correspondence_thread import ThreadStore
+        draft,recipient=self._thread_scope(plan_id,draft_id,recipient_id)
+        path=self.directory/"operator-threads.sqlite3"
+        if not os.path.lexists(path):
+            return None
+        with ThreadStore(path,existing_only=True) as store:
+            result=store.get(draft,recipient,halted=False)
+        self._allowed()
+        return result
+
+    def thread_open(self,plan_id,draft_id,recipient_id,supplier,*,confirmed=None):
+        self._allowed()
+        if confirmed is not True:
+            raise PermissionError("explicit local thread confirmation required")
+        from .correspondence_thread import ThreadStore
+        draft,recipient=self._thread_scope(plan_id,draft_id,recipient_id)
+        self._recheck(draft,supplier)
+        path=self.directory/"operator-threads.sqlite3"
+        self._allowed()
+        with ThreadStore(path,existing_only=os.path.lexists(path)) as store:
+            result=store.open(draft,recipient,now=self._time(),confirmed=True,halted=False)
+        self._recheck(draft,supplier)
+        self._allowed()
+        return result
+
+    def thread_append(self,plan_id,draft_id,recipient_id,supplier,kind,evidence_path,
+                      expected_head,expected_evidence,*,confirmed=None):
+        self._allowed()
+        if confirmed is not True:
+            raise PermissionError("explicit local event confirmation required")
+        from .correspondence_thread import ThreadStore,_KINDS
+        from .evidence import fingerprint,parse_reference
+        if type(kind) is not str or kind not in _KINDS:
+            raise ValueError("unknown or external correspondence event")
+        _hash(expected_head)
+        parse_reference(expected_evidence)
+        draft,recipient=self._thread_scope(plan_id,draft_id,recipient_id)
+        self._recheck(draft,supplier)
+        # Reject a stale history before reading the explicitly chosen local file.
+        current=self.thread_history(plan_id,draft_id,recipient_id)
+        if current is None or current["head_sha256"]!=expected_head:
+            raise ValueError("thread head changed; inspect again")
+        observed=fingerprint(evidence_path,halted=self.halt_check(),halt_check=self.halt_check)
+        if observed!=expected_evidence:
+            raise ValueError("correspondence evidence changed; inspect again")
+        self._recheck(draft,supplier)
+        self._allowed()
+        with ThreadStore(self.directory/"operator-threads.sqlite3",existing_only=True) as store:
+            result=store.append(draft,recipient,kind=kind,evidence_reference=observed,
+                now=self._time(),expected_head=expected_head,confirmed=True,halted=False)
+        self._recheck(draft,supplier)
+        self._allowed()
+        return result

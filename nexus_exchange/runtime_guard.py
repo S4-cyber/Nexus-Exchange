@@ -184,7 +184,10 @@ class RuntimeGuard:
                 "acknowledge":{"draft_id","supplier","confirmed"},
                 "recipient_preview":{"draft_id","supplier","recipient","evidence_path"},
                 "recipient_save":{"draft_id","supplier","recipient","evidence_path","expected_recipient_id","confirmed"},
-                "recipient_history":{"draft_id","limit"}}
+                "recipient_history":{"draft_id","limit"},
+                "thread_history":{"draft_id","recipient_id"},
+                "thread_open":{"draft_id","recipient_id","supplier","confirmed"},
+                "thread_append":{"draft_id","recipient_id","supplier","kind","evidence_path","expected_head","expected_evidence","confirmed"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported Operator action or inputs")
         from .operator_scenarios import OperatorScenario
@@ -195,7 +198,9 @@ class RuntimeGuard:
                         "history":adapter.history,"history_list":adapter.history_list,
                         "acknowledge":adapter.acknowledge,
                         "recipient_preview":adapter.recipient_preview,"recipient_save":adapter.recipient_save,
-                        "recipient_history":adapter.recipient_history}
+                        "recipient_history":adapter.recipient_history,
+                        "thread_history":adapter.thread_history,"thread_open":adapter.thread_open,
+                        "thread_append":adapter.thread_append}
             result=operations[action](plan_id,**inputs)
             if self.is_set():
                 raise PermissionError("Operator result withheld after halt")

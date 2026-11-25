@@ -232,3 +232,18 @@ class RecipientStore:
             records.append(_view(data))
         return dict(scope=scope,rows=records[:limit],truncated=len(records)>limit,
             historical_only=True,**dict.fromkeys(_FLAGS_EXTRA,False))
+
+
+    def get(self,draft,recipient_id,*,halted=None):
+        """Exact historical lookup; never grants current recipient authority."""
+        _permit(halted)
+        scope=_scope(draft)
+        _hash(recipient_id)
+        row=self.db.execute("""SELECT recipient_id,plan_id,draft_id,recorded_at,payload,digest
+            FROM operator_recipients_v1 WHERE recipient_id=? AND plan_id=? AND draft_id=?""",
+            (recipient_id,scope["plan_id"],scope["draft_id"])).fetchone()
+        if row is None:
+            return None
+        data=_decode(row)
+        _for_draft(draft,data["candidate"])
+        return _view(data)

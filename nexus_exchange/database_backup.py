@@ -34,6 +34,7 @@ DATABASES={
     "council.sqlite3":("council_attempts_v1",),
     "operator.sqlite3":("operator_drafts_v1",),
     "operator-recipients.sqlite3":("operator_recipients_v1",),
+    "operator-threads.sqlite3":("operator_threads_v1",),
     "operator-obligations.sqlite3":("csv_obligations_v1","csv_obligation_notes_v1"),
     "operator-simulated-invoices.sqlite3":("sim_invoices_v1","sim_receipts_v1"),
 }
