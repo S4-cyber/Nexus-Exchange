@@ -6,10 +6,12 @@ returns. No external authorization or automatic task replay.
 """
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, get_ident
 import os
 
 from .event_store import EventStore
+from .council_attempts import CouncilAttemptStore
+from .scenario_council import ScenarioCouncil
 from .dashboard_events import project
 from .scout import _timestamp
 
@@ -43,8 +45,13 @@ class RuntimeGuard:
         self._stop.set()
         self._faulted=False
         self._closed=False
+        self._owner_thread=get_ident()
+        self._council_active=False
+        self.council_recovered_count=0
+        self.council_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
-        directory=Path(directory)
+        directory=Path(directory).resolve()
+        self._directory=directory
         directory.mkdir(parents=True,exist_ok=True)
         try:
             self._lock=_lock(directory/"runtime.lock")
@@ -59,6 +66,7 @@ class RuntimeGuard:
                 reason TEXT NOT NULL,revision INTEGER NOT NULL,changed_at TEXT NOT NULL)""")
             self._persist("halted","startup")
             self.recovered_count=self.events.recover_interrupted(now=self._clock())
+            self.recover_council()
         except BaseException:
             try:
                 if self.events is not None:
@@ -75,6 +83,90 @@ class RuntimeGuard:
 
     def is_set(self):
         return self._stop.is_set()
+
+    def _require_owner(self):
+        if self._closed or self._lock.closed or get_ident()!=self._owner_thread:
+            raise PermissionError("exclusive runtime owner thread required")
+
+    def _require_idle(self):
+        self._require_owner()
+        if self._council_active or project(self.events.read())["tasks"]:
+            raise PermissionError("active worker must drain before Council maintenance")
+
+    def _council_path(self):
+        path=self._directory/"council.sqlite3"
+        if not os.path.lexists(path):
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("invalid local Council database path")
+        return path
+
+    def _council_pending(self):
+        path=self._council_path()
+        if path is None:
+            return 0
+        with CouncilAttemptStore(path,existing_only=True) as store:
+            return store._runtime_pending(now=self._clock())
+
+    def recover_council(self):
+        """Halted maintenance only, under actual exclusive local ownership.
+
+        The desktop caller must also ensure its worker future has drained.
+        Never run predicates, dispatch, or clear the halt during recovery.
+        """
+        self._require_idle()
+        if self._faulted or not self.is_set():
+            raise PermissionError("halted healthy runtime required for Council recovery")
+        try:
+            path=self._council_path()
+            if path is None:
+                return dict(recovered=0,escalated=0)
+            with CouncilAttemptStore(path,existing_only=True) as store:
+                result=store._runtime_recover_all(now=self._clock())
+            self.council_recovered_count+=result["recovered"]
+            self.council_escalated_count+=result["escalated"]
+            return result
+        except BaseException:
+            self._stop.set()
+            self._faulted=True
+            raise
+
+    def council_action(self,action,plan_id):
+        """Explicit owner-thread local action for an exact saved scenario.
+
+        This is a trusted desktop facade, not an arbitrary agent callback.
+        The desktop must additionally exclude any unjournaled worker future.
+        """
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Council unavailable while halted or faulted")
+        if type(action) is not str or action not in ("inspect","register","run_once","history"):
+            raise ValueError("unsupported Council action")
+        self._council_active=True
+        try:
+            adapter=ScenarioCouncil(self._directory,halt_check=self.is_set,clock=self._clock)
+            operations={"inspect":adapter.inspect,"register":adapter.register,
+                        "run_once":adapter.run_once,"history":adapter.history}
+            if action=="run_once" and self._council_pending():
+                self.set()
+                raise PermissionError("outstanding Council reservation requires halted recovery")
+            result=operations[action](plan_id)
+            if self.is_set():
+                raise PermissionError("Council result withheld after halt")
+            return result
+        except BaseException:
+            # A failed review may have reserved an attempt. Do not allow a
+            # subsequent call to silently dispatch another until recovery.
+            if action=="run_once" and not self.is_set():
+                try:
+                    if self._council_pending():
+                        self.set()
+                except BaseException:
+                    self._stop.set()
+                    self._faulted=True
+            raise
+        finally:
+            self._council_active=False
 
     def _read(self):
         rows=self.events.db.execute(
@@ -101,7 +193,8 @@ class RuntimeGuard:
         return dict(previous,persisted_state=previous["state"],
             state="halted" if self.is_set() else previous["state"],
             reason="persistence_fault" if self._faulted else previous["reason"],
-            external_authority=False)
+            council_recovered_count=self.council_recovered_count,
+            council_escalated_count=self.council_escalated_count,external_authority=False)
 
     def _persist(self,state,reason):
         now=self._clock()
@@ -132,8 +225,7 @@ class RuntimeGuard:
     def set(self):
         # Cooperative cancellation must precede disk operations.
         self._stop.set()
-        if self._closed:
-            raise PermissionError("runtime closed")
+        self._require_owner()
         try:
             self._persist("halted","emergency")
         except BaseException:
@@ -141,14 +233,14 @@ class RuntimeGuard:
             raise
 
     def resume(self):
-        if self._closed or self._faulted:
+        self._require_idle()
+        if self._faulted:
             raise PermissionError("runtime unavailable; restart and recover")
         if not self._stop.is_set():
             return
         try:
-            active=project(self.events.read())["tasks"]
-            if active:
-                raise PermissionError("unfinished tasks require recovery")
+            if self._council_pending():
+                raise PermissionError("unfinished Council reservations require halted recovery")
             self._persist("offline_ready","explicit_resume")
         except PermissionError:
             raise
@@ -160,6 +252,9 @@ class RuntimeGuard:
     def close(self):
         if self._closed:
             return
+        self._require_owner()
+        if self._council_active:
+            raise PermissionError("Council action must drain before close")
         self._stop.set()
         try:
             self._persist("halted","shutdown")

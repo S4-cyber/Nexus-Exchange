@@ -248,6 +248,18 @@ def main(*, data_directory=None, gui_smoke=False):
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
         halt_status.configure(text=message)
+    def recover_council():
+        if future is not None or not stop.is_set():
+            halt_status.configure(text="Halt and wait for workers to drain before Council recovery.")
+            return None
+        try:
+            result=stop.recover_council()
+        except Exception:
+            halt_status.configure(text="HALTED — Council recovery failed; restart and review storage.")
+            return None
+        halt_status.configure(text=f"HALTED — {result['recovered']} Council attempts reconciled, "
+            f"{result['escalated']} escalated; Resume offline explicitly.")
+        return result
     def resume():
         if future is not None:
             halt_status.configure(text="Wait for interrupted worker to finish; then resume offline.")
@@ -1099,7 +1111,9 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     ttk.Button(simulation_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
-    halt_status = ttk.Label(root,text=f"HALTED — {stop.recovered_count} interrupted tasks reconciled; Resume offline to begin")
+    ttk.Button(root,text="Recover interrupted Council attempts",command=recover_council).pack(pady=2)
+    halt_status = ttk.Label(root,text=f"HALTED — {stop.recovered_count} journal tasks, "
+        f"{stop.council_recovered_count} Council attempts reconciled; Resume offline to begin",wraplength=1040)
     halt_status.pack()
     for button in (launch,importer,simulator):
         button.configure(state="disabled")
@@ -1160,6 +1174,37 @@ def main(*, data_directory=None, gui_smoke=False):
         scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,smoke=True)
         ranking_window=open_ranking_window(root,directory=directory,halt_check=stop.is_set,
             review_tasks=checklist_window,smoke=True)
+        # Synthetic saved-plan Council review and owner-drained recovery.
+        from nexus_exchange.scenario_store import ScenarioStore
+        from nexus_exchange.council_attempts import CouncilAttemptStore
+        from nexus_exchange.scenario_council import ScenarioCouncil
+        from nexus_exchange.council_coordinator import _prepare
+        with ScenarioStore(directory/"scout-leads.sqlite3") as fixture_plans:
+            saved=fixture_plans.list(context_for(scenario_row),halted=False)
+            key=saved[0]["plan_id"]
+        stop.council_action("register",key)
+        reviewed=stop.council_action("run_once",key)
+        if reviewed["ledger"]["attempts_used"]!=1 or reviewed["external_authority"]:
+            raise RuntimeError("Council runtime review smoke failed")
+        # Reserve a second synthetic attempt, but do not dispatch it.
+        fixture_council=ScenarioCouncil(directory,halt_check=stop.is_set)
+        with fixture_council._snapshot(key) as (_snapshot,task,_artifacts):
+            handoff,_=_prepare(task,2)
+            with CouncilAttemptStore(directory/"council.sqlite3") as fixture_ledger:
+                fixture_ledger.reserve(handoff,now=datetime.now(timezone.utc),halted=False)
+        halt()
+        resume()
+        if not stop.is_set():
+            raise RuntimeError("Council reservation did not block resume")
+        recovered=recover_council()
+        if recovered!=dict(recovered=1,escalated=0) or not stop.is_set():
+            raise RuntimeError("Council recovery did not preserve halt")
+        resume()
+        if stop.is_set():
+            raise RuntimeError("Council explicit resume failed")
+        history=stop.council_action("history",key)
+        if [item["audit_state"] for item in history["attempts"]]!=["RECORDED","INTERRUPTED_NO_REPORT"]:
+            raise RuntimeError("Council recovery lost historical audit")
         root.update_idletasks()
         root.update()
         ranking_window.destroy()
