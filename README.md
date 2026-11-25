@@ -3,10 +3,10 @@
 Independent commercial intelligence and review-only intermediary workflow research.
 
 ## Development status
-**Offline desktop preview; not production ready.** This integrated candidate combines Scout normalization, compiled procurement JSON imports, Council screening, Governor restrictions, SQLite task and opportunity history, Atlas matching, hypothetical fee-based economics and a desktop scenario report. Agent handoffs are a separate non-privileged review scaffold. No external commercial dispatch is implemented.
+**Consolidated offline release-review candidate; not production ready.** Scout has bounded consented read-only research adapters and historical lead memory, capability-aware review, Council evidence/attempt tracking, Governor halt/recovery, Atlas matching and local Operator CSV production, QA, obligations and simulated receivables/cash-flow allocation. An isolated owned Genesis diagnostic exercises discovery through simulated settlement and restart. No verified real income or external commercial dispatch is implemented. See [release review and unresolved gates](docs/RELEASE_REVIEW.md).
 
 ### Windows x64
-Use the latest successful [Windows preview workflow](https://github.com/S4-cyber/Nexus-Exchange/actions/workflows/windows-preview.yml). Download its artifact, extract the ZIP, and verify the included SHA256.txt against NexusExchange.exe before running. Unsigned portable preview, not an installer or a signed release. No separate Python installation is required for the packaged EXE. Files are retained in the local user data directory.
+Use an explicitly identified successful [Windows preview workflow](https://github.com/S4-cyber/Nexus-Exchange/actions/workflows/windows-preview.yml), not simply the newest run across unrelated branches. Download its artifact, extract the ZIP, compare SHA256.txt against NexusExchange.exe with PowerShell Get-FileHash, and check PREVIEW.json against the workflow's actual checkout and run. New bundles also include the owned source GENESIS.json diagnostic. See the [preview verification and recovery runbook](docs/RELEASE_REVIEW.md). Unsigned portable preview, not an installer or signed release; checksums are not publisher authentication. No separate Python installation is required for the EXE.
 
 ### Source and testing
 Python 3.10 or newer; Tkinter required for GUI. Runtime uses the standard library.
@@ -15,6 +15,9 @@ Python 3.10 or newer; Tkinter required for GUI. Runtime uses the standard librar
 python -m unittest discover -s tests -v
 python desktop.py --self-test
 python desktop.py --gui-self-test
+python desktop.py --fixture-process-self-test
+python desktop.py --genesis-self-test
+python -m nexus_exchange.genesis_diagnostic
 python desktop.py
 ```
 
