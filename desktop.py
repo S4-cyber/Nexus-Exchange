@@ -16,7 +16,7 @@ from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
 from nexus_exchange.scenario_import import evaluate_scenario
 from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
-from nexus_exchange.sam_search import Query, search as search_sam, SearchError
+from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
 
 def demo(*, halted=False):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -181,7 +181,11 @@ def main(*, data_directory=None, gui_smoke=False):
             result = future.result()
             if type(result) is dict:
                 scenario_report = result
-                output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
+                if result.get("format")=="nexus-sam-research-v1":
+                    output.insert("end",f"SAM discovery: {result['returned']} notices; {result['requests']} requests.\nResearch only; no execution eligibility.\nSee the results window or export the full report.")
+                    show_sam_results(result)
+                else:
+                    output.insert("end",json.dumps(result,ensure_ascii=True,indent=2))
                 exporter.configure(state="normal")
             for item in (() if type(result) is dict else result):
                 o=item.observation.opportunity
@@ -232,6 +236,53 @@ def main(*, data_directory=None, gui_smoke=False):
                 export_report(path,scenario_report)
             except OSError as exc:
                 messagebox.showerror("Export failed",type(exc).__name__,parent=root)
+    def show_sam_results(report):
+        window = tk.Toplevel(root)
+        window.title("Nexus Exchange | SAM research leads")
+        window.geometry("1050x700")
+        count = sum(lead["research_candidate"] for lead in report["leads"])
+        ttk.Label(window,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
+        ttk.Label(window,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
+        if report.get("truncated"):
+            ttk.Label(window,text="Search capped by request budget; additional notices not retrieved.").pack()
+        tree=ttk.Treeview(window,columns=("title","deadline","state"),show="headings",height=8)
+        for col,label,width in (("title","Opportunity",510),("deadline","Deadline (UTC)",200),("state","Research status",170)):
+            tree.heading(col,text=label)
+            tree.column(col,width=width,anchor="w")
+        tree.pack(fill="x",padx=12,pady=8)
+        leads={lead["notice_id"]:lead for lead in report["leads"]}
+        for key,lead in leads.items():
+            tree.insert("","end",iid=key,values=(lead["title"],lead["deadline"] or "Unverified",
+                "Review candidate" if lead["research_candidate"] else "Blocked"))
+        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details.pack(fill="both",expand=True,padx=12,pady=8)
+        def selected():
+            selection=tree.selection()
+            return leads.get(selection[0]) if selection else None
+        def display(event=None):
+            lead=selected()
+            details.configure(state="normal")
+            details.delete("1.0","end")
+            if lead is not None:
+                lines=[lead["title"],"Notice ID: "+lead["notice_id"],
+                    "Source: "+lead["source_url"],"Blockers: "+", ".join(lead["blockers"]),
+                    "", "TO DO — evidence required"]
+                lines.extend("[ ] "+task["instruction"] for task in lead["todo"])
+                details.insert("end","\n".join(lines))
+            details.configure(state="disabled")
+        def open_notice():
+            lead=selected()
+            if lead is not None and not stop.is_set():
+                try:
+                    webbrowser.open(notice_url(lead["notice_id"]),new=2)
+                except (ValueError,OSError):
+                    messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
+        tree.bind("<<TreeviewSelect>>",display)
+        ttk.Button(window,text="Open selected official notice",command=open_notice).pack(pady=8)
+        if leads:
+            tree.selection_set(next(iter(leads)))
+            display()
+        return window
     def revenue_workspace():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Scout revenue pathways")
@@ -395,10 +446,12 @@ def main(*, data_directory=None, gui_smoke=False):
     if gui_smoke:
         window = browse_archive()
         pathway_window = revenue_workspace()
+        results_window = show_sam_results(dict(returned=0,requests=0,leads=[],truncated=False))
         root.update_idletasks()
         root.update()
         window.destroy()
         pathway_window.destroy()
+        results_window.destroy()
         close()
         return
     root.mainloop()
