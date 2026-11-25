@@ -14,6 +14,7 @@ from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
 from nexus_exchange.scenario_workspace import open_scenario_window
 from nexus_exchange.operator_workspace import open_operator_window
+from nexus_exchange.csv_workspace import open_csv_window
 from nexus_exchange.ranking_workspace import open_ranking_window
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
@@ -276,6 +277,14 @@ def main(*, data_directory=None, gui_smoke=False):
             raise PermissionError("Operator halted or desktop worker active")
         try:
             return stop.operator_action(action,plan_id,**inputs)
+        finally:
+            if stop.is_set():
+                show_halted("HALTED — Operator blocked; review runtime before explicit resume.")
+    def csv_action(action,plan_id,**inputs):
+        if council_blocked():
+            raise PermissionError("Operator halted or desktop worker active")
+        try:
+            return stop.csv_file_action(action,plan_id,**inputs)
         finally:
             if stop.is_set():
                 show_halted("HALTED — Operator blocked; review runtime before explicit resume.")
@@ -1125,7 +1134,7 @@ def main(*, data_directory=None, gui_smoke=False):
     def ranked_matrix():
         return open_ranking_window(root,directory=directory,halt_check=stop.is_set,review_tasks=checklist_window,
             council_action=council_action,council_blocked=council_blocked,
-            operator_action=operator_action,operator_blocked=council_blocked)
+            operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action)
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
@@ -1235,7 +1244,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 try:
                     open_scenario_window(window,row,directory=directory,halt_check=stop.is_set,
                         council_action=council_action,council_blocked=council_blocked,
-                        operator_action=operator_action,operator_blocked=council_blocked)
+                        operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action)
                 except (ValueError,PermissionError):
                     write("Save an owner profile and refresh Scout history; scenario context changed or research halted.")
                 except Exception:
@@ -1412,10 +1421,10 @@ def main(*, data_directory=None, gui_smoke=False):
             scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
         scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,
             council_action=council_action,council_blocked=council_blocked,
-            operator_action=operator_action,operator_blocked=council_blocked,smoke=True)
+            operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action,smoke=True)
         ranking_window=open_ranking_window(root,directory=directory,halt_check=stop.is_set,
             review_tasks=checklist_window,council_action=council_action,council_blocked=council_blocked,
-            operator_action=operator_action,operator_blocked=council_blocked,smoke=True)
+            operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action,smoke=True)
         # Synthetic saved-plan Council review and owner-drained recovery.
         from nexus_exchange.scenario_store import ScenarioStore
         from nexus_exchange.council_attempts import CouncilAttemptStore
@@ -1467,6 +1476,12 @@ def main(*, data_directory=None, gui_smoke=False):
         operator_window=open_operator_window(root,plan_id=operator_key,action=operator_action,
             blocked_check=council_blocked,smoke=True)
         operator_window.destroy()
+        csv_source=directory/"synthetic-csv-input.csv"
+        csv_destination=directory/"synthetic-csv-output.csv"
+        csv_source.write_bytes(b"name,id\nBeta,002\nAlpha,001\n")
+        csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
+            blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination))
+        csv_window.destroy()
         root.update_idletasks()
         root.update()
         ranking_window.destroy()
