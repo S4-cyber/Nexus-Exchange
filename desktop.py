@@ -284,6 +284,8 @@ def main(*, data_directory=None, gui_smoke=False):
         if council_blocked():
             raise PermissionError("Operator halted or desktop worker active")
         try:
+            if action in ("list","history","note"):
+                return stop.csv_obligation_action(action,plan_id,**inputs)
             return stop.csv_file_action(action,plan_id,**inputs)
         finally:
             if stop.is_set():
@@ -1479,9 +1481,11 @@ def main(*, data_directory=None, gui_smoke=False):
         csv_source=directory/"synthetic-csv-input.csv"
         csv_destination=directory/"synthetic-csv-output.csv"
         csv_source.write_bytes(b"name,id\nBeta,002\nAlpha,001\n")
+        csv_evidence=directory/"synthetic-obligation-evidence.txt"
+        csv_evidence.write_bytes(b"Owned synthetic evidence fixture; no real customer acceptance.")
         try:
             csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
-                blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination))
+                blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination),smoke_evidence=csv_evidence)
             csv_window.destroy()
         except BaseException:
             close()
