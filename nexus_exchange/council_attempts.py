@@ -9,6 +9,7 @@ from dataclasses import fields
 import json
 import re
 import sqlite3
+from pathlib import Path
 
 from .agent_handoff import AgentHandoff, MAX_ATTEMPTS, parse_handoff
 from .council_audit import MAX_AUDIT_BYTES, build_audit, validate_audit
@@ -142,9 +143,21 @@ def _state(record):
 
 class CouncilAttemptStore:
     """Single-user local ledger; trusted coordinator boundary, no background jobs."""
-    def __init__(self,path):
-        self.db=sqlite3.connect(path,timeout=5,isolation_level=None)
+    def __init__(self,path,*,existing_only=False):
+        if type(existing_only) is not bool:
+            raise ValueError("invalid Council open mode")
+        if existing_only:
+            path=Path(path)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("existing local Council database required")
+            self.db=sqlite3.connect(path.resolve().as_uri()+"?mode=rw",uri=True,
+                                    timeout=5,isolation_level=None)
+        else:
+            self.db=sqlite3.connect(path,timeout=5,isolation_level=None)
         try:
+            if existing_only and self.db.execute("SELECT type FROM sqlite_master WHERE name=?",
+                    ("council_attempts_v1",)).fetchone()!=("table",):
+                raise ValueError("existing Council ledger schema missing")
             self.db.execute("PRAGMA trusted_schema=OFF")
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.execute("PRAGMA foreign_keys=ON")
@@ -167,6 +180,13 @@ class CouncilAttemptStore:
     @contextmanager
     def _transaction(self,halted,*,write=True):
         _permit(halted)
+        with self._atomic(write=write):
+            yield
+
+    @contextmanager
+    def _atomic(self,*,write=True):
+        # Internal storage transaction. Runtime maintenance runs while halted,
+        # without calling any research/dispatch permission gate.
         self.db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield
@@ -344,6 +364,51 @@ class CouncilAttemptStore:
                                 (task,attempt,payload,digest))
             self._write(record)
             return _state(record)
+
+    def _runtime_task_ids(self):
+        rows=self.db.execute("SELECT task_id FROM council_attempts_v1 ORDER BY task_id LIMIT ?",
+                             (MAX_TASKS+1,)).fetchall()
+        if len(rows)>MAX_TASKS:
+            raise ValueError("Council runtime recovery capacity exceeded")
+        if self.db.execute("""SELECT 1 FROM council_review_audit_v1 AS a
+                LEFT JOIN council_attempts_v1 AS t ON t.task_id=a.task_id
+                WHERE t.task_id IS NULL LIMIT 1""").fetchone() is not None:
+            raise ValueError("orphaned Council audit without task")
+        return tuple(_task(row[0]) for row in rows)
+
+    def _runtime_pending(self,*,now):
+        """Private halted maintenance read; only exclusive runtime owner calls."""
+        now=_now(now)
+        with self._atomic(write=False):
+            pending=0
+            for task in self._runtime_task_ids():
+                record=self._require(task)
+                self._clock(record,now)
+                pending+=_state(record)["state"]=="RESERVED"
+            return pending
+
+    def _runtime_recover_all(self,*,now):
+        """Private halted startup/owner-drained reconciliation, never dispatch.
+
+        RuntimeGuard must hold its directory lock and exclude workers. All
+        tasks/audits are validated inside one bounded SQLite transaction.
+        """
+        now=_now(now)
+        recovered=escalated=0
+        with self._atomic():
+            for task in self._runtime_task_ids():
+                record=self._require(task)
+                self._clock(record,now)
+                if _state(record)["state"]!="RESERVED":
+                    continue
+                entry=record["attempts"][-1]
+                final=entry["attempt"]==MAX_ATTEMPTS
+                entry.update(outcome="ESCALATE" if final else "INTERRUPTED",
+                             completed_at=_iso(now),report_sha256=None)
+                self._write(record)
+                recovered+=1
+                escalated+=final
+        return dict(recovered=recovered,escalated=escalated)
 
     def recover_interrupted(self,task_id,*,now,exclusive_owner=None,halted=None):
         """Only trusted code after exclusive ownership and worker drain may call."""
