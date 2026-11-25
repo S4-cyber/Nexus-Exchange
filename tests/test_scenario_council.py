@@ -198,3 +198,38 @@ class ScenarioCouncilTests(unittest.TestCase):
             self.assertNotIn("compensation",raw)
             self.assertNotIn(str(self.evidence),raw)
             self.assertIn(result["report_sha256"],raw)
+
+    def test_snapshot_fingerprint_is_current_but_task_identity_is_stable(self):
+        from nexus_exchange.lead_store import _digest, _json
+        first=self.council.inspect(self.key)
+        self.assertEqual(first["snapshot_sha256"],_digest(_json(
+            {k:v for k,v in first.items() if k!="snapshot_sha256"})))
+        self.now+=timedelta(hours=1)
+        later=self.council.inspect(self.key)
+        self.assertEqual(first["task_id"],later["task_id"])
+        self.assertEqual(first["policy_sha256"],later["policy_sha256"])
+        self.assertNotEqual(first["snapshot_sha256"],later["snapshot_sha256"])
+        self.assertNotEqual(first["modeled_collection_wait_us"],later["modeled_collection_wait_us"])
+
+    def test_profile_drift_after_commit_withholds_result_but_preserves_attempt(self):
+        state=self.council.register(self.key)
+        with patch.object(self.council,"_profile",side_effect=[
+            self.profile,self.profile,profile(hours_per_week=30)]):
+            with self.assertRaises(ValueError):
+                self.council.run_once(self.key)
+        with CouncilAttemptStore(self.directory/"council.sqlite3") as store:
+            historical=store.status(state["task_id"],halted=False)
+            self.assertEqual(historical["attempts_used"],1)
+            self.assertEqual(historical["state"],"NEEDS_EVIDENCE")
+            self.assertFalse(historical["external_authority"])
+
+    def test_declared_classification_mismatch_is_a_source_hold(self):
+        changed=profile(naics=["111111"],keywords=[])
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as profiles:
+            profiles.save(changed,halted=False)
+        with ScenarioEvidenceStore(self.path) as store:
+            lead=store.browse(now=NOW,source="sam",profile=changed,halted=False)["leads"][0]
+            key=store.save(context_for(lead),scenario(),plan(),profile=changed,now=NOW,halted=False)
+        report=self.council.inspect(key)
+        self.assertEqual(self.checks(report)["source_and_capability"],"LOCAL_CHECK_FAILS")
+        self.assertIn("CLASSIFICATION_MISMATCH",report["reasons"])
