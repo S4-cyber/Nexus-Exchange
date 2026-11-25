@@ -38,7 +38,7 @@ def _encode(item):
     if published > canonical.retrieved_at:
         raise ValueError("future publication")
     # Use normalized timestamps and canonical decimal text for idempotency.
-    raw["retrieved_at"] = canonical.retrieved_at.isoformat()
+    raw["retrieved_at"] = canonical.retrieved_at.isoformat(timespec="microseconds")
     raw["deadline"] = canonical.deadline.isoformat() if canonical.deadline is not None else None
     if canonical.amount is not None:
         raw["amount"] = format(canonical.amount,"f")
@@ -101,7 +101,7 @@ class OpportunityArchive:
             raise ValueError("aware evaluation time required")
         result=[]
         rows=self.db.execute("""SELECT opportunity_key,retrieved_at,payload FROM observations_v1
-            ORDER BY julianday(retrieved_at) DESC,retrieved_at DESC,opportunity_key LIMIT ?""",(limit,))
+            ORDER BY retrieved_at DESC,opportunity_key LIMIT ?""",(limit,))
         for key,stamp,payload in rows:
             data=json.loads(payload)
             o=normalize(data["raw"])
