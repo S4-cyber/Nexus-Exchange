@@ -178,3 +178,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - R07: explicit official notice browser link, no embedded browser yet. No live application submission, bid, outreach, funding or payment capability.
 - E38: 12 new SAM test methods. Observed 110/110 tests on Python 3.13 and both Python jobs successful at 610634d5fd135750000e86eba4c7b445b8c1c554, run 45530331128. GUI results and exact-head build pending at documentation time.
 - Prior revenue pathways exact-head Windows build 45529794634 succeeded, artifact 14983629079. Main formal acceptance remains 0/42. Next: verified owner profile and secure local credential handling, persistent evidence checklists, SAM live pilot only with explicit consent and own key, then approved automated read-only cadence.
+
+
+## Global trade diversification directive
+- See docs/GLOBAL_TRADE_REGISTRY.md. S01–S07 subgates map to R/E gates; preserve E01–E42 denominator. Catalog 24 primary-source-documented channels and 17 commercial routes. Distinguish earned work, restricted funding, prizes, intelligence and compliance. User-initiated official links; source prerequisites and hard research-only brokerage holds; no new live connectors.
+- S01 candidate: native catalog/route windows, filters and 12 regression methods. Current exact-head tests and packaging pending. Prior SAM read-only head c6b32aec191dddc2cc67a96ebedefb1478a27948 passed Windows 45530452026 (artifact 14985045588) and PR CI 45530464697. No authorized real SAM request yet.
+- S02 next: public EU TED and UK OCDS plus CanadaBuys, then USAspending contractor intelligence, ITA/World Bank leads, approved private and local sources. Treat licensing, cash exposure and authority as unresolved until independently verified. No new paid dependencies; main acceptance remains 0/42 pending integration.

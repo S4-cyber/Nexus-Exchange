@@ -15,6 +15,8 @@ from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
 from nexus_exchange.scenario_import import evaluate_scenario
+from nexus_exchange.trade_registry import catalog, official_url, readiness, source_tasks, KINDS
+from nexus_exchange.trade_routes import ROUTES, route_assessment
 from nexus_exchange.revenue_pathways import Mode, SOURCES, CHECKS, plan_lead, source_url
 from nexus_exchange.sam_search import Query, search as search_sam, SearchError, notice_url
 
@@ -283,6 +285,120 @@ def main(*, data_directory=None, gui_smoke=False):
             tree.selection_set(next(iter(leads)))
             display()
         return window
+    def trade_routes_window():
+        window=tk.Toplevel(root)
+        window.title("Nexus Exchange | Commercial routes")
+        window.geometry("1050x700")
+        ttk.Label(window,text="Commercial routes — research and compliance only",font=("Segoe UI",16)).pack(pady=8)
+        ttk.Label(window,text="No route grants authority or establishes zero cash exposure.").pack()
+        tree=ttk.Treeview(window,columns=("route","model","capital","gate"),show="headings",height=12)
+        for key,label,width in (("route","Commercial route",300),("model","Revenue model",265),("capital","Capital status",145),("gate","Review gate",160)):
+            tree.heading(key,text=label)
+            tree.column(key,width=width,anchor="w")
+        tree.pack(fill="x",padx=12,pady=8)
+        view=ScrolledText(window,height=10,wrap="word",state="disabled")
+        view.pack(fill="both",expand=True,padx=12,pady=8)
+        if not stop.is_set():
+            for route in ROUTES:
+                tree.insert("","end",iid=route.key,values=(route.description,route.revenue_model,route.capital,route.gate))
+        def show(event=None):
+            selection=tree.selection()
+            view.configure(state="normal")
+            view.delete("1.0","end")
+            try:
+                if selection:
+                    assessment=route_assessment(selection[0],halted=stop.is_set())
+                    route=assessment["route"]
+                    view.insert("end","\n".join([route.description,route.requirement,
+                        "Cash exposure: unknown","Execution eligible: no","External authority: none"]))
+                else:
+                    view.insert("end","Select a route.")
+            except PermissionError:
+                view.insert("end","Halted. Resume offline research.")
+            view.configure(state="disabled")
+        tree.bind("<<TreeviewSelect>>",show)
+        if tree.get_children():
+            tree.selection_set(tree.get_children()[0])
+        show()
+        return window
+    def trade_catalog():
+        window = tk.Toplevel(root)
+        window.title("Nexus Exchange | Scout global trade catalog")
+        window.geometry("1050x760")
+        ttk.Label(window,text="SCOUT — Global trade sources",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(window,text="Documented sources, not connected accounts or verified revenue. SAM pilot is separate.").pack()
+        filters=ttk.Frame(window)
+        filters.pack(fill="x",padx=12,pady=8)
+        kind=tk.StringVar(value="All")
+        query=tk.StringVar(value="")
+        ttk.Label(filters,text="Income type").pack(side="left")
+        ttk.Combobox(filters,textvariable=kind,values=["All",*KINDS],state="readonly",width=18).pack(side="left",padx=6)
+        ttk.Entry(filters,textvariable=query,width=40).pack(side="left",padx=6)
+        tree=ttk.Treeview(window,columns=("name","sector","access","priority"),show="headings",height=10)
+        for col,label,width in (("name","Source",265),("sector","Market",210),
+                ("access","Access pathway",170),("priority","Integration priority",120)):
+            tree.heading(col,text=label)
+            tree.column(col,width=width,anchor="w")
+        tree.pack(fill="x",padx=12,pady=6)
+        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details.pack(fill="both",expand=True,padx=12,pady=8)
+        rows={}
+        def write_details(value):
+            details.configure(state="normal")
+            details.delete("1.0","end")
+            details.insert("end",value)
+            details.configure(state="disabled")
+        def selected():
+            selection=tree.selection()
+            return rows.get(selection[0]) if selection else None
+        def display(event=None):
+            source=selected()
+            if source is None:
+                write_details("Select a source to inspect its documented access and required checks.")
+                return
+            try:
+                status=readiness(source.id,halted=stop.is_set())
+                tasks=source_tasks(source.id,halted=stop.is_set())
+                write_details("\n".join([source.name,source.scope,"Income category: "+source.kind,
+                    "Integration status: "+status["adapter_status"],"Cash exposure: unknown",
+                    "External authority: none",source.evidence,"","TO DO — source prerequisites",
+                    *("[ ] "+task for task in tasks)]))
+            except PermissionError:
+                write_details("Halted. Resume offline research to inspect this source.")
+        def reload():
+            rows.clear()
+            for item in tree.get_children():
+                tree.delete(item)
+            try:
+                sources=catalog(kind=None if kind.get()=="All" else kind.get(),
+                    query=query.get(),halted=stop.is_set())
+                for source in sources:
+                    rows[source.id]=source
+                    tree.insert("","end",iid=source.id,values=(source.name,source.sector,source.access,source.priority))
+                if rows:
+                    tree.selection_set(next(iter(rows)))
+                    display()
+                else:
+                    write_details("No matching curated sources.")
+            except (ValueError,PermissionError):
+                write_details("Invalid search or halted research.")
+        def open_selected(evidence=False):
+            source=selected()
+            if source is None:
+                return
+            try:
+                webbrowser.open(official_url(source.id,evidence=evidence,halted=stop.is_set()),new=2)
+            except (ValueError,PermissionError,OSError):
+                write_details("Source opening unavailable or halted.")
+        ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
+        buttons=ttk.Frame(window)
+        buttons.pack(pady=8)
+        ttk.Button(buttons,text="Open official source",command=open_selected).pack(side="left")
+        ttk.Button(buttons,text="Open integration documentation",command=lambda:open_selected(True)).pack(side="left",padx=5)
+        ttk.Button(buttons,text="Commercial routes",command=trade_routes_window).pack(side="left",padx=5)
+        tree.bind("<<TreeviewSelect>>",display)
+        reload()
+        return window
     def revenue_workspace():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Scout revenue pathways")
@@ -384,6 +500,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
         ttk.Button(buttons,text="Search SAM (read only)",command=run_sam).pack(side="left")
         ttk.Button(buttons,text="Refresh checklist",command=refresh_plan).pack(side="left")
+        ttk.Button(buttons,text="Global trade catalog",command=trade_catalog).pack(side="left")
         refresh_plan()
         return window
     def browse_archive():
@@ -446,6 +563,8 @@ def main(*, data_directory=None, gui_smoke=False):
     if gui_smoke:
         window = browse_archive()
         pathway_window = revenue_workspace()
+        trade_window = trade_catalog()
+        routes_window = trade_routes_window()
         sample_id = "0"*32
         sample_lead = dict(notice_id=sample_id,title="Synthetic GUI fixture",deadline=None,
             source_url=notice_url(sample_id),research_candidate=False,
@@ -455,6 +574,8 @@ def main(*, data_directory=None, gui_smoke=False):
         root.update()
         window.destroy()
         pathway_window.destroy()
+        trade_window.destroy()
+        routes_window.destroy()
         results_window.destroy()
         close()
         return
