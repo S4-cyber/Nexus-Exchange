@@ -1,8 +1,11 @@
 name: Windows preview
 on:
   push:
-    branches: [review/windows-desktop, review/desktop-opportunity-browser, review/offline-procurement-import, review/desktop-deal-simulator]
+    branches: [review/windows-desktop, review/desktop-opportunity-browser, review/offline-procurement-import, review/desktop-deal-simulator, review/integrated-offline-baseline, main]
   workflow_dispatch:
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

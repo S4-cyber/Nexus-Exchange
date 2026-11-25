@@ -157,3 +157,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - E38–E40: seven additional scenario/integration test methods; Windows packaging branch enabled with existing source and frozen GUI smoke checks. Results pending at entry. Prior economics head 215d44c1c579ee6006c6a20c19bfb200e4359148 passed CI run 45527912902.
 - Reuses existing Governor, archive, strict import helpers, Atlas, economics and desktop journal. No new runtime dependencies or external actions.
 - Main formal accepted gates remain 0/42; consolidate review stack and verify full integrated build before release. Next: review and consolidate, persistent halt/restart recovery, source-specific collection and independently verified counterparty/quote evidence.
+
+
+## Integrated offline baseline review
+- Consolidate the tested desktop simulator (d4e56a114862736e658eb11640917cae71cb7413) and independent handoff/research/protocol branches into a single main-targeting integration candidate. Preserve bounded archive, exclude parallel review-result store, consolidate CI and update README. See docs/INTEGRATION_BASELINE.md.
+- Prior desktop simulator Windows run 45528842172 completed successfully, artifact 14983957296. New combined test suite expected 91; exact-head CI pending.
+- E15: hardened non-privileged handoff scaffold, independent evidence verifier and actual delegation remain pending. E03/E04/E38/E40: consolidated verification required. Formal main accepted gates remain 0/42 until review and promotion.
