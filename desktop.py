@@ -16,6 +16,7 @@ from nexus_exchange.scenario_workspace import open_scenario_window
 from nexus_exchange.operator_workspace import open_operator_window
 from nexus_exchange.csv_workspace import open_csv_window
 from nexus_exchange.ranking_workspace import open_ranking_window
+from nexus_exchange.scout_discovery import open_discovery_window, load_profile, resolve_query, execute_discovery
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
@@ -905,6 +906,24 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Global trade catalog",command=trade_catalog).pack(side="left")
         refresh_plan()
         return window
+    def planned_discovery(plan,option_id,*,approved=None,api_key=None):
+        if council_blocked() or approved is not True:
+            raise PermissionError("Current public-search consent and idle runtime required.")
+        profile=load_profile(directory,halt_check=stop.is_set)
+        row,_=resolve_query(plan,option_id,profile,now=datetime.now(timezone.utc),halted=stop.is_set())
+        def work(*,halted):
+            if halted is not False:
+                raise PermissionError("HALTED_OR_UNKNOWN")
+            current=load_profile(directory,halt_check=stop.is_set)
+            return execute_discovery(plan,option_id,current,now=datetime.now(timezone.utc),
+                approved=approved,halt_check=stop.is_set,api_key=api_key)
+        if council_blocked():
+            raise PermissionError("Runtime changed before search.")
+        run(work,target="Capability discovery: "+row["source"]+" / "+plan["service_label"],scenario=True)
+        return True
+    def discovery_window(*,smoke=False):
+        return open_discovery_window(root,directory=directory,halt_check=stop.is_set,
+            blocked_check=council_blocked,launch=planned_discovery,smoke=smoke)
     def owner_profile_window():
         window = tk.Toplevel(root)
         content=install_cockpit(window).content
@@ -1342,6 +1361,7 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(scout_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     ttk.Button(scout_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(scout_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
+    ttk.Button(scout_controls,text="Capability search planner",command=discovery_window).pack(side="left")
     diagnostics=ttk.LabelFrame(content,text="Scout browser diagnostics (offline synthetic fixtures)")
     diagnostics.pack(pady=4)
     diagnostic_buttons=[]
@@ -1449,6 +1469,8 @@ def main(*, data_directory=None, gui_smoke=False):
         with ProfileStore(directory / "owner-profile.sqlite3") as fixture_profiles:
             declared=dict(mode="genesis",budget="0",hours_per_week=20,sources=["sam"],naics=[],cpv=[],keywords=[])
             fixture_profiles.save(declared,halted=False)
+        discovery=discovery_window(smoke=True)
+        discovery.destroy()
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
             scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
         scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,
