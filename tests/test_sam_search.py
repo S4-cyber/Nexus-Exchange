@@ -21,6 +21,11 @@ def page(rows,total=None,offset=0):
         limit=PAGE_SIZE,offset=offset,opportunitiesData=rows)).encode()
 
 class SamSearchTests(unittest.TestCase):
+    def setUp(self):
+        pacing=patch('nexus_exchange.sam_search.sleep')
+        pacing.start()
+        self.addCleanup(pacing.stop)
+
     def run_search(self, transport, **kw):
         args=dict(approved=True,halt_check=lambda:False,clock=lambda:NOW,transport=transport)
         args.update(kw)
@@ -56,6 +61,8 @@ class SamSearchTests(unittest.TestCase):
         self.assertTrue(lead["research_candidate"])
         self.assertFalse(lead["execution_eligible"])
         self.assertIsNone(lead["cash_exposure"])
+        self.assertEqual(len(lead["todo"]),7)
+        self.assertTrue(all(t["notice_id"]==lead["notice_id"] and t["status"]=="needs independent evidence" for t in lead["todo"]))
         self.assertIn("COMPENSATION_UNVERIFIED",lead["blockers"])
         self.assertEqual(lead["source_url"],"https://sam.gov/opp/"+row["noticeId"]+"/view")
         serialized=json.dumps(report)
@@ -127,3 +134,18 @@ class SamSearchTests(unittest.TestCase):
             self.assertIn("title=test%26value",path)
             self.assertEqual(connection.request.call_count,1)
             connection.close.assert_called_once()
+
+    def test_empty_result_and_not_found_distinguished(self):
+        report=self.run_search(Mock(return_value=(200,page([]))))
+        self.assertEqual(report["leads"],[])
+        self.assertFalse(report["truncated"])
+        transport=Mock(return_value=(404,b""))
+        with self.assertRaisesRegex(SearchError,"SAM_NO_DATA_OR_NOT_FOUND"):
+            self.run_search(transport)
+        self.assertEqual(transport.call_count,1)
+
+    def test_encoded_secret_echo_rejected(self):
+        raw=page([notice(title=KEY)]).replace(KEY.encode(),b"synthetic-test-\\u006bey")
+        self.assertNotIn(KEY.encode(),raw)
+        with self.assertRaisesRegex(SearchError,"SAM_REPORT_CONTAINS_CREDENTIAL"):
+            self.run_search(Mock(return_value=(200,raw)))
