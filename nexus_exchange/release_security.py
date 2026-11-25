@@ -64,15 +64,39 @@ def _within(module,root):
     return module==root or module.startswith(root+".")
 
 
+def _identity(info):
+    return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+
 def _source(path):
-    initial=path.lstat()
-    if not stat.S_ISREG(initial.st_mode) or not 1<=initial.st_size<=MAX_SOURCE_BYTES:
-        raise ValueError("source outside audit bounds")
-    with path.open("rb") as handle:
-        raw=handle.read(MAX_SOURCE_BYTES+1)
-    if len(raw)!=initial.st_size or len(raw)>MAX_SOURCE_BYTES:
-        raise ValueError("source changed or exceeds audit bound")
-    return raw
+    """Bounded regular-file snapshot; not a filesystem sandbox."""
+    try:
+        initial=path.lstat()
+        if not stat.S_ISREG(initial.st_mode) or not 1<=initial.st_size<=MAX_SOURCE_BYTES:
+            raise ValueError("source outside audit bounds")
+        flags=os.O_RDONLY|getattr(os,"O_BINARY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0)
+        fd=os.open(path,flags)
+        try:
+            before=os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_size!=initial.st_size
+                    or (initial.st_ino and before.st_ino and
+                        (initial.st_dev,initial.st_ino)!=(before.st_dev,before.st_ino))):
+                raise ValueError("source changed before audit read")
+            content=bytearray()
+            while len(content)<=MAX_SOURCE_BYTES:
+                chunk=os.read(fd,min(65536,MAX_SOURCE_BYTES+1-len(content)))
+                if not chunk:
+                    break
+                content.extend(chunk)
+            if (len(content)!=initial.st_size or len(content)>MAX_SOURCE_BYTES
+                    or _identity(before)!=_identity(os.fstat(fd))
+                    or _identity(initial)!=_identity(path.lstat())):
+                raise ValueError("source changed or exceeds audit bound")
+        finally:
+            os.close(fd)
+    except OSError:
+        raise ValueError("source unavailable for audit") from None
+    return bytes(content)
 
 
 def scan_source(path,raw):
@@ -97,6 +121,8 @@ def scan_source(path,raw):
         findings.add((code,line))
 
     for node in ast.walk(tree):
+        if isinstance(node,ast.ImportFrom) and any(alias.name=="*" for alias in node.names):
+            finding("WILDCARD_IMPORT_REVIEW_REQUIRED",node.lineno)
         if isinstance(node,ast.Import):
             declarations=[(alias.name,alias.asname or alias.name.split(".")[0],
                            alias.name if alias.asname else alias.name.split(".")[0]) for alias in node.names]

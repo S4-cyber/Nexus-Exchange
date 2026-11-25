@@ -2,8 +2,9 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from nexus_exchange.release_security import scan_source,scan_tree,inventory,PACKAGER
+from nexus_exchange.release_security import scan_source,scan_tree,inventory,PACKAGER,_source
 
 
 class SecurityInventoryTests(unittest.TestCase):
@@ -54,6 +55,35 @@ class SecurityInventoryTests(unittest.TestCase):
             (root/"desktop.py").write_text("pass")
             with self.assertRaises(ValueError):
                 scan_tree(root)
+
+    def test_wildcard_import_requires_explicit_review(self):
+        for source in ("from os import *\n", "from builtins import *\n",
+                       "from .scout import *\n", "from http.client import *\n"):
+            with self.subTest(source=source):
+                self.assertIn("WILDCARD_IMPORT_REVIEW_REQUIRED",self.codes(source))
+
+    def test_same_size_source_replacement_rejected(self):
+        with TemporaryDirectory() as temp:
+            path=Path(temp)/"source.py"
+            path.write_bytes(b"x=1\n")
+            replacement=Path(temp)/"replacement.py"
+            replacement.write_bytes(b"x=2\n")
+            original_lstat=Path.lstat
+            swapped=False
+
+            def swap_after_stat(target,*args,**kwargs):
+                nonlocal swapped
+                info=original_lstat(target,*args,**kwargs)
+                if target==path and not swapped:
+                    swapped=True
+                    replacement.replace(path)
+                return info
+
+            with patch.object(Path,"lstat",swap_after_stat):
+                with self.assertRaises(ValueError):
+                    _source(path)
+            self.assertTrue(swapped)
+            self.assertEqual(_source(path),b"x=2\n")
 
     def distributions(self,**changes):
         values=dict(PACKAGER,pip="25.1")
