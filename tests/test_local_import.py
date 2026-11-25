@@ -61,3 +61,22 @@ class ImportTests(unittest.TestCase):
             m["releases"]*=length
             with self.assertRaises(ValueError):
                 self.evaluate(json.dumps(m).encode())
+
+    def test_desktop_workflow_archives_import(self):
+        from functools import partial
+        from desktop import run_logged
+        from nexus_exchange.event_store import EventStore
+        from nexus_exchange.opportunity_archive import OpportunityArchive
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            path.write_text(json.dumps(manifest()),encoding="utf-8")
+            events = EventStore(":memory:")
+            try:
+                with OpportunityArchive(":memory:") as archive:
+                    result = run_logged(events,archive=archive,
+                        work=partial(evaluate_file,path,now=NOW),target="Local compiled snapshot import")
+                    self.assertEqual(archive.recent(now=NOW)[0].observation,result[0].observation)
+                    self.assertEqual(events.read()[-1]["state"],"succeeded")
+                    self.assertEqual(events.read()[-1]["target"],"Local compiled snapshot import")
+            finally:
+                events.close()
