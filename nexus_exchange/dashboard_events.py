@@ -10,8 +10,8 @@ class TaskState:
     state: str
     timestamp: str
 
-_TRANSITIONS = {None: {"queued"}, "queued": {"running", "cancelled"},
-                "running": {"succeeded", "failed", "cancelled"}}
+_TRANSITIONS = {None: {"queued"}, "queued": {"running", "cancelled", "interrupted"},
+                "running": {"succeeded", "failed", "cancelled", "interrupted"}}
 
 def project(events, page=1):
     states = {}
