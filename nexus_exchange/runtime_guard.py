@@ -203,35 +203,81 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
-    def produce_csv_deliverable(self,plan_id,*,raw,specification,confirmed=None):
-        """One explicit local, bounded work sample for an exact saved plan."""
+    def _csv_ready(self,confirmed):
         self._require_idle()
         if self._faulted or self.is_set():
             raise PermissionError("Operator unavailable while halted or faulted")
         if confirmed is not True:
             raise PermissionError("explicit local deliverable confirmation required")
+
+    def _csv_snapshot(self,plan_id):
+        if self._council_pending():
+            self.set()
+            raise PermissionError("outstanding Council reservation requires halted recovery")
+        return ScenarioCouncil(self._directory,halt_check=self.is_set,
+                               clock=self._clock).inspect(plan_id)
+
+    def _csv_scoped(self,plan_id,raw,specification,*,snapshot=None):
         from .digital_deliverable import build_contract, produce_csv
+        if snapshot is None:
+            snapshot=self._csv_snapshot(plan_id)
+        contract=build_contract(snapshot,specification,halted=self.is_set())
+        result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
+        current=self._csv_snapshot(plan_id)
+        if (current["context"]!=snapshot["context"] or
+                current["scenario_sha256"]!=snapshot["scenario_sha256"] or
+                current["schedule_sha256"]!=snapshot["schedule_sha256"] or
+                current["source_hold"] is not None):
+            raise ValueError("deliverable scenario scope changed")
+        if self.is_set():
+            raise PermissionError("deliverable withheld after halt")
+        return result
+
+    def produce_csv_deliverable(self,plan_id,*,raw,specification,confirmed=None):
+        """One explicit local, bounded work sample for an exact saved plan."""
+        self._csv_ready(confirmed)
         self._operator_active=True
         try:
-            if self._council_pending():
-                self.set()
-                raise PermissionError("outstanding Council reservation requires halted recovery")
-            snapshot=ScenarioCouncil(self._directory,halt_check=self.is_set,
-                                     clock=self._clock).inspect(plan_id)
-            contract=build_contract(snapshot,specification,halted=self.is_set())
-            result=produce_csv(contract,raw,halted=self.is_set(),halt_check=self.is_set)
-            # Re-resolve the local plan before exposing bytes; no saved report,
-            # no invoice, no acceptance or commercial dispatch.
-            current=ScenarioCouncil(self._directory,halt_check=self.is_set,
-                                    clock=self._clock).inspect(plan_id)
-            if (current["context"]!=snapshot["context"] or
-                    current["scenario_sha256"]!=snapshot["scenario_sha256"] or
-                    current["schedule_sha256"]!=snapshot["schedule_sha256"] or
-                    current["source_hold"] is not None):
-                raise ValueError("deliverable scenario scope changed")
+            return self._csv_scoped(plan_id,raw,specification)
+        finally:
+            self._operator_active=False
+
+    def csv_file_action(self,action,plan_id,*,confirmed=None,**inputs):
+        """Fixed local preview/export actions; no arbitrary callback or external dispatch."""
+        self._csv_ready(confirmed)
+        fields={"preview":{"source_path","columns","key_column","expected_rows"},
+                "export":{"source_path","columns","key_column","expected_rows",
+                          "destination_path","expected_contract","expected_report","expected_artifact"}}
+        if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
+            raise ValueError("unsupported CSV action or inputs")
+        from .digital_deliverable import build_contract
+        from .deliverable_files import read_selected_csv, publish_new_csv, preview_pins
+        from .checklist_store import _hash
+        from hashlib import sha256
+        self._operator_active=True
+        try:
+            snapshot=self._csv_snapshot(plan_id)
+            if action=="export":
+                for key in ("expected_contract","expected_report","expected_artifact"):
+                    _hash(inputs[key])
+            # Validate the declared schema and current source before file I/O.
+            spec=dict(input_sha256="0"*64,columns=inputs["columns"],
+                      key_column=inputs["key_column"],expected_rows=inputs["expected_rows"])
+            build_contract(snapshot,spec,halted=self.is_set())
+            raw=read_selected_csv(inputs["source_path"],halted=self.is_set(),halt_check=self.is_set)
+            spec["input_sha256"]=sha256(raw).hexdigest()
+            result=self._csv_scoped(plan_id,raw,spec,snapshot=snapshot)
+            if action=="preview":
+                return result
+            pins=preview_pins(result)
+            if any(pins[key]!=inputs[key] for key in pins):
+                raise ValueError("CSV preview changed; preview again before export")
+            publish_new_csv(inputs["destination_path"],result["artifact"],
+                            halted=self.is_set(),halt_check=self.is_set)
             if self.is_set():
-                raise PermissionError("deliverable withheld after halt")
-            return result
+                raise PermissionError("halt after publication; inspect selected destination")
+            return dict(pins,exported=True,report=result["report"],
+                        buyer_accepted=False,external_authority=False)
         finally:
             self._operator_active=False
 
