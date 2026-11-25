@@ -64,7 +64,8 @@ def _scheme(value):
 
 
 def _normalize(raw):
-    _shape(raw, _REQUEST)
+    pinned = type(raw) is dict and 'supplier_profile_sha256' in raw
+    _shape(raw, _REQUEST | {'supplier_profile_sha256'} if pinned else _REQUEST)
     supplier = raw['supplier']
     _shape(supplier, {'scheme', 'identifier'})
     party = dict(scheme=_scheme(supplier['scheme']), identifier=_text(supplier['identifier'], 128))
@@ -87,16 +88,20 @@ def _normalize(raw):
         normalized.append(dict(description=_text(item['description'], 256), quantity=canonical,
             unit=_match(item['unit'], '[A-Za-z][A-Za-z0-9_-]{0,31}'),
             classification=dict(scheme=_scheme(classification['scheme']), code=_text(classification['code'], 128))))
-    return dict(plan_id=_hash(raw['plan_id']), observation_sha256=_hash(raw['observation_sha256']),
+    result = dict(plan_id=_hash(raw['plan_id']), observation_sha256=_hash(raw['observation_sha256']),
         profile_revision=_hash(raw['profile_revision']), supplier=party,
         region=_match(raw['region'], '[A-Z]{2}(?:-[A-Z0-9]{1,12})?'), currency='USD', items=normalized)
+    if pinned:
+        result['supplier_profile_sha256'] = _hash(raw['supplier_profile_sha256'])
+    return result
 
 
 def prepare_rfq(raw, *, halted=None):
     """Construct a deterministic nonbinding draft, without recipient address or price assertion."""
     _permit(halted)
     request = _normalize(raw)
-    payload = dict(format='nexus-operator-rfq-v1', request=request)
+    payload = dict(format='nexus-operator-rfq-v2' if 'supplier_profile_sha256' in request else
+                   'nexus-operator-rfq-v1', request=request)
     return dict(payload, draft_id=_digest(_json(payload)), **dict.fromkeys(_FLAGS, False))
 
 

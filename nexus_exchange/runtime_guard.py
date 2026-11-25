@@ -47,6 +47,7 @@ class RuntimeGuard:
         self._closed=False
         self._owner_thread=get_ident()
         self._council_active=False
+        self._operator_active=False
         self.council_recovered_count=0
         self.council_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
@@ -90,7 +91,7 @@ class RuntimeGuard:
 
     def _require_idle(self):
         self._require_owner()
-        if self._council_active or project(self.events.read())["tasks"]:
+        if self._council_active or self._operator_active or project(self.events.read())["tasks"]:
             raise PermissionError("active worker must drain before Council maintenance")
 
     def _council_path(self):
@@ -167,6 +168,28 @@ class RuntimeGuard:
             raise
         finally:
             self._council_active=False
+
+    def operator_action(self,action,plan_id,**inputs):
+        """Fixed local draft operations, owner thread only; no recipient dispatch."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Operator unavailable while halted or faulted")
+        fields={"prepare":{"supplier","region","items"},"save":{"supplier","region","items"},
+                "history":{"draft_id"},"acknowledge":{"draft_id","supplier","confirmed"}}
+        if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
+            raise ValueError("unsupported Operator action or inputs")
+        from .operator_scenarios import OperatorScenario
+        self._operator_active=True
+        try:
+            adapter=OperatorScenario(self._directory,halt_check=self.is_set,clock=self._clock)
+            operations={"prepare":adapter.prepare,"save":adapter.save,
+                        "history":adapter.history,"acknowledge":adapter.acknowledge}
+            result=operations[action](plan_id,**inputs)
+            if self.is_set():
+                raise PermissionError("Operator result withheld after halt")
+            return result
+        finally:
+            self._operator_active=False
 
     def _read(self):
         rows=self.events.db.execute(
@@ -253,8 +276,8 @@ class RuntimeGuard:
         if self._closed:
             return
         self._require_owner()
-        if self._council_active:
-            raise PermissionError("Council action must drain before close")
+        if self._council_active or self._operator_active:
+            raise PermissionError("Local Council or Operator action must drain before close")
         self._stop.set()
         try:
             self._persist("halted","shutdown")
