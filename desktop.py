@@ -232,13 +232,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 launch.configure(state="normal")
                 importer.configure(state="normal")
                 simulator.configure(state="normal")
-    def halt():
+    def show_halted(message):
         nonlocal scenario_report
-        message="HALTED — new tasks blocked"
-        try:
-            stop.set()
-        except Exception:
-            message="HALTED — persistence fault; restart and recover before resuming"
         scenario_report=None
         exporter.configure(state="disabled")
         output.configure(state="normal")
@@ -248,6 +243,23 @@ def main(*, data_directory=None, gui_smoke=False):
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
         halt_status.configure(text=message)
+    def halt():
+        message="HALTED — new tasks blocked"
+        try:
+            stop.set()
+        except Exception:
+            message="HALTED — persistence fault; restart and recover before resuming"
+        show_halted(message)
+    def council_blocked():
+        return stop.is_set() or future is not None
+    def council_action(action,plan_id):
+        if council_blocked():
+            raise PermissionError("Council halted or desktop worker active")
+        try:
+            return stop.council_action(action,plan_id)
+        finally:
+            if stop.is_set():
+                show_halted("HALTED — Council blocked; recover interrupted attempts before explicit resume.")
     def recover_council():
         if future is not None or not stop.is_set():
             halt_status.configure(text="Halt and wait for workers to drain before Council recovery.")
@@ -931,7 +943,8 @@ def main(*, data_directory=None, gui_smoke=False):
             synthetic.unlink()
         return window
     def ranked_matrix():
-        return open_ranking_window(root,directory=directory,halt_check=stop.is_set,review_tasks=checklist_window)
+        return open_ranking_window(root,directory=directory,halt_check=stop.is_set,review_tasks=checklist_window,
+            council_action=council_action,council_blocked=council_blocked)
     def browse_leads():
         window=tk.Toplevel(root)
         window.title("Nexus Exchange | Unified Scout history")
@@ -1039,7 +1052,8 @@ def main(*, data_directory=None, gui_smoke=False):
             row=selected()
             if row is not None:
                 try:
-                    open_scenario_window(window,row,directory=directory,halt_check=stop.is_set)
+                    open_scenario_window(window,row,directory=directory,halt_check=stop.is_set,
+                        council_action=council_action,council_blocked=council_blocked)
                 except (ValueError,PermissionError):
                     write("Save an owner profile and refresh Scout history; scenario context changed or research halted.")
                 except Exception:
@@ -1171,9 +1185,10 @@ def main(*, data_directory=None, gui_smoke=False):
             fixture_profiles.save(declared,halted=False)
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:
             scenario_row=fixture_store.browse(now=datetime.now(timezone.utc),source="sam",profile=declared,halted=False)["leads"][0]
-        scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,smoke=True)
+        scenario_window=open_scenario_window(root,scenario_row,directory=directory,halt_check=stop.is_set,
+            council_action=council_action,council_blocked=council_blocked,smoke=True)
         ranking_window=open_ranking_window(root,directory=directory,halt_check=stop.is_set,
-            review_tasks=checklist_window,smoke=True)
+            review_tasks=checklist_window,council_action=council_action,council_blocked=council_blocked,smoke=True)
         # Synthetic saved-plan Council review and owner-drained recovery.
         from nexus_exchange.scenario_store import ScenarioStore
         from nexus_exchange.council_attempts import CouncilAttemptStore
@@ -1182,9 +1197,9 @@ def main(*, data_directory=None, gui_smoke=False):
         with ScenarioStore(directory/"scout-leads.sqlite3") as fixture_plans:
             saved=fixture_plans.list(context_for(scenario_row),halted=False)
             key=saved[0]["plan_id"]
-        stop.council_action("register",key)
-        reviewed=stop.council_action("run_once",key)
-        if reviewed["ledger"]["attempts_used"]!=1 or reviewed["external_authority"]:
+        reviewed=council_action("history",key)
+        if (reviewed["attempts_used"]!=1 or reviewed["external_authority"]
+                or reviewed["attempts"][0]["audit_state"]!="RECORDED"):
             raise RuntimeError("Council runtime review smoke failed")
         # Reserve a second synthetic attempt, but do not dispatch it.
         fixture_council=ScenarioCouncil(directory,halt_check=stop.is_set)
