@@ -227,6 +227,24 @@ class FinanceWorkspace:
             raise ValueError("refresh a saved simulated invoice")
         return aging(self._record,self.obligation,as_of)
 
+    def cashflow(self,as_of,reserve_bps):
+        from .cashflow_projection import parse_reserve, validate_projection
+        self._permit()
+        if self._record is None:
+            raise ValueError("refresh saved simulation before cash-flow modeling")
+        _date(as_of)
+        bps=parse_reserve(reserve_bps)
+        record=self._record
+        try:
+            result=self.action("cashflow",self.plan_id,invoice_id=record["invoice"]["invoice_id"],
+                expected_head=record["head_sha256"],expected_obligation_head=self.obligation["head_sha256"],
+                as_of=as_of,reserve_bps=bps)
+            self._permit()
+            return validate_projection(result,record,self.obligation,as_of=as_of,reserve_bps=bps)
+        except Exception:
+            self.clear()
+            raise
+
 
 def invoice_text(invoice):
     return "\n".join(["SIMULATION ONLY — not an invoice, receivable or available funds",
@@ -270,10 +288,12 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     reference=tk.StringVar(master=window,value="")
     amount=tk.StringVar(master=window,value="")
     paid=tk.StringVar(master=window,value=today)
+    reserve=tk.StringVar(master=window,value="")
     form=ttk.Frame(window); form.pack(fill="x",padx=12,pady=5)
     for i,(label,var) in enumerate((("Assumed issue date (YYYY-MM-DD)",issue),
         ("As-of model date",asof),("Synthetic reference (SIM-... uppercase)",reference),
-        ("Synthetic receipt USD",amount),("Synthetic receipt date",paid))):
+        ("Synthetic receipt USD",amount),("Synthetic receipt date",paid),
+        ("Hypothetical reserve share (0–10000 bp)",reserve))):
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=3)
         ttk.Entry(form,textvariable=var,width=34).grid(row=i,column=1,sticky="w",padx=8)
     output=ScrolledText(window,state="disabled",wrap="word")
@@ -293,6 +313,7 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
         create_button.configure(state="normal" if workspace.previewed is not None else "disabled")
         receipt_button.configure(state="normal" if workspace.can_pay else "disabled")
         asof_button.configure(state="normal" if workspace.record is not None else "disabled")
+        cashflow_button.configure(state="normal" if workspace.record is not None else "disabled")
 
     def clear(message):
         workspace.clear()
@@ -364,6 +385,18 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             error(exc)
 
+    def cashflow():
+        from .cashflow_projection import projection_text
+        try:
+            report=workspace.cashflow(asof.get(),reserve.get())
+            write(record_text(workspace.record,workspace.projection(asof.get()))+"\n\n"+projection_text(report))
+            status.configure(text="Hypothetical allocation only; no balance or transfer authorization.")
+            buttons()
+            return report
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+            return None
+
     def confirm_create():
         if workspace.previewed is not None and messagebox.askyesno("Save simulated invoice",
                 "Save these hypothetical terms only? No actual invoice or claim for payment.",parent=window):
@@ -388,6 +421,14 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
     receipt_button.pack(side="left",padx=4)
     asof_button=ttk.Button(bar,text="Evaluate as-of date",command=project,state="disabled")
     asof_button.pack(side="left",padx=4)
+    cashflow_button=ttk.Button(window,text="Model cash flow and reserve",command=cashflow,state="disabled")
+    cashflow_button.pack(pady=3)
+    def projection_changed(*_):
+        if workspace.record is not None:
+            write("Model inputs changed. Evaluate as-of date or cash flow explicitly.")
+            status.configure(text="Previous financial projection cleared.")
+    asof.trace_add("write",projection_changed)
+    reserve.trace_add("write",projection_changed)
     issue.trace_add("write",lambda *_:clear("Issue date changed; preview or refresh explicitly."))
     def check():
         nonlocal timer
@@ -423,4 +464,12 @@ def open_finance_window(parent,*,obligation,action,blocked_check,smoke=False):
             raise RuntimeError("native finance settlement failed")
         if refresh()!=final or "SIMULATION ONLY" not in output.get("1.0","end"):
             raise RuntimeError("native finance persistence failed")
+        reserve.set("5000")
+        result=cashflow()
+        if (result is None or result["allocation_modeled"] is not True
+                or result["modeled_total_cost_cents"]!=0
+                or result["modeled_protected_reserve_cents"]+result["modeled_reinvestment_cents"]!=inv["gross_cents"]
+                or result["funds_available"] or result["reinvestment_authorized"]
+                or "Hypothetical protected reserve" not in output.get("1.0","end")):
+            raise RuntimeError("native modeled allocation failed")
     return window

@@ -343,6 +343,7 @@ class RuntimeGuard:
                 "create":{"obligation_id","expected_obligation_head","issue_date","expected_invoice_id"},
                 "history":{"invoice_id"},
                 "find":set(),
+                "cashflow":{"invoice_id","expected_head","expected_obligation_head","as_of","reserve_bps"},
                 "payment":{"invoice_id","expected_head","sim_reference","amount","paid_on"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported simulated invoice action or inputs")
@@ -386,6 +387,21 @@ class RuntimeGuard:
                 if action=="history":
                     return record
                 invoice=record["invoice"]
+                if action=="cashflow":
+                    from .cashflow_projection import project_cashflow
+                    if record["head_sha256"]!=_hash(inputs["expected_head"]):
+                        raise ValueError("simulation receipt history changed; refresh")
+                    current=obligation(invoice["obligation_id"])
+                    if current["head_sha256"]!=_hash(inputs["expected_obligation_head"]):
+                        raise ValueError("obligation evidence changed; reopen from refreshed history")
+                    with ScenarioStore(self._directory/"scout-leads.sqlite3") as scenarios:
+                        saved=scenarios.get(plan_id,halted=self.is_set())
+                    result=project_cashflow(record,current,saved,as_of=inputs["as_of"],
+                        reserve_bps=inputs["reserve_bps"],halted=self.is_set(),halt_check=self.is_set)
+                    if (obligation(invoice["obligation_id"])!=current or
+                            store.history(plan_id,inputs["invoice_id"],**opts())!=record or self.is_set()):
+                        raise ValueError("modeled cash-flow scope changed; refresh")
+                    return result
                 if obligation(invoice["obligation_id"])["head_sha256"]!=invoice["obligation_head_sha256"]:
                     raise ValueError("obligation evidence changed; simulation held for review")
                 return store.payment(plan_id,inputs["invoice_id"],
