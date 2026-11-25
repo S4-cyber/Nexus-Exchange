@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from .checklist_store import _hash
-from .digital_deliverable import _contract, _FLAGS, REPORT, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, _permit, _checks, _output_spec
+from .digital_deliverable import _contract, _FLAGS, REPORT, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, _permit, _checks, _output_spec, RECONCILE_FORMAT, RECONCILE_REPORT
 from .deliverable_files import preview_pins
 from .evidence import parse_reference
 from .lead_store import _digest, _json, _now
@@ -48,17 +48,22 @@ def _shape(value,keys):
 def _qa(contract,report):
     """Reconstruct all report fields from exact contract and bounded identities."""
     spec=contract["specification"]
-    output_spec=_output_spec(contract)
     if type(report) is not dict:
         raise ValueError("invalid QA metadata")
+    reconcile=contract["format"]==RECONCILE_FORMAT
+    output_spec=_output_spec(contract,report.get("rows"))
     if not _integer(report.get("input_bytes"),MAX_INPUT_BYTES) or not _integer(report.get("artifact_bytes"),MAX_OUTPUT_BYTES):
         raise ValueError("invalid QA byte count")
-    expected=dict(format=REPORT,contract_sha256=contract["contract_sha256"],
+    expected=dict(format=RECONCILE_REPORT if reconcile else REPORT,contract_sha256=contract["contract_sha256"],
         plan_id=contract["plan_id"],input_sha256=spec["input_sha256"],
         artifact_sha256=_hash(report.get("artifact_sha256")),input_bytes=report["input_bytes"],
         artifact_bytes=report["artifact_bytes"],rows=output_spec["expected_rows"],
         columns=list(output_spec["columns"]),key_column=output_spec["key_column"],checks=_checks(contract),
         local_criteria_passed=True,**dict.fromkeys(_FLAGS,False))
+    if reconcile:
+        if not _integer(report.get("right_input_bytes"),MAX_INPUT_BYTES):
+            raise ValueError("invalid second input byte count")
+        expected.update(right_input_sha256=spec["right_input_sha256"],right_input_bytes=report["right_input_bytes"])
     expected["report_sha256"]=_digest(_json(expected))
     if _json(expected)!=_json(report):
         raise ValueError("QA metadata integrity mismatch")

@@ -147,6 +147,8 @@ def record_text(record):
            "Contract: "+binding["contract"]["contract_sha256"],
            "Artifact: "+binding["artifact_reference"],"QA: "+qa["report_sha256"],
            "Expected rows: "+str(spec["expected_rows"])+" | key: "+spec["key_column"],
+           *(["Right input rows: "+str(spec["right_expected_rows"]),
+              "Right input SHA-256: "+spec["right_input_sha256"]] if "right_expected_rows" in spec else []),
            "Columns: "+", ".join(spec["columns"]),
            "Output rows: "+str(qa["rows"])+" | output key: "+qa["key_column"],
            "Output columns: "+", ".join(qa["columns"]),

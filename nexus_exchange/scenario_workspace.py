@@ -336,6 +336,8 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
                    command=lambda:csv_deliverable("UTF8_JSON_RECORDS")).pack(pady=3)
         ttk.Button(content,text="Operator CSV quality report",
                    command=lambda:csv_deliverable(operation="COLUMN_PROFILE")).pack(pady=3)
+        ttk.Button(content,text="Operator CSV reconciliation",
+                   command=lambda:csv_deliverable(operation="RECONCILE")).pack(pady=3)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
         items=tree.selection()

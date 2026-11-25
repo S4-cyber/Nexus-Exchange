@@ -5,7 +5,7 @@ import re
 import sqlite3
 
 from .checklist_store import _hash
-from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT, PROFILE_FORMAT
+from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT, PROFILE_FORMAT, RECONCILE_FORMAT
 from .deliverable_files import preview_pins
 from .obligation_workspace import validate_record, open_obligation_window
 
@@ -40,10 +40,15 @@ class CsvWorkspace:
             self.clear()
             raise PermissionError("CSV workspace halted or busy")
 
-    def preview(self,source_path,columns,key,rows):
+    def preview(self,source_path,columns,key,rows,*,right_source_path=None,right_rows=None):
         self.clear()
         self._permit()
         inputs=dict(source_path=source_path,**parse_fields(columns,key,rows))
+        if self.operation=="RECONCILE":
+            second=parse_fields(columns,key,right_rows)
+            inputs.update(right_source_path=right_source_path,right_expected_rows=second["expected_rows"])
+        elif right_source_path is not None or right_rows is not None:
+            raise ValueError("unexpected second input")
         if self.source_format!=CSV_SOURCE:
             inputs["source_format"]=self.source_format
         if self.operation!="PRESERVE":
@@ -101,10 +106,14 @@ def preview_text(result):
     pins=preview_pins(result)
     report=result["report"]
     reader=csv.reader(io.StringIO(result["artifact"].decode("utf-8"),newline=""))
+    reconcile=result["contract"]["format"]==RECONCILE_FORMAT
+    input_rows=str(result["contract"]["specification"]["expected_rows"])
+    if reconcile:
+        input_rows+=" left / "+str(result["contract"]["specification"]["right_expected_rows"])+" right"
     lines=["LOCAL WORK SAMPLE — not customer acceptance or commercial authority",
            "Source: "+("flat JSON string records" if result["contract"]["format"]==JSON_FORMAT else "CSV"),
-           "Service: "+("Column quality profile (aggregate statistics)" if result["contract"]["format"]==PROFILE_FORMAT else "Field-preserving CSV output"),
-           "Input rows: "+str(result["contract"]["specification"]["expected_rows"])+" | output rows: "+str(report["rows"])+" | bytes: "+str(report["artifact_bytes"]),
+           "Service: "+("Two-file key reconciliation (key and flags only)" if reconcile else "Column quality profile (aggregate statistics)" if result["contract"]["format"]==PROFILE_FORMAT else "Field-preserving CSV output"),
+           "Input rows: "+input_rows+" | output rows: "+str(report["rows"])+" | bytes: "+str(report["artifact_bytes"]),
            "Contract: "+pins["expected_contract"],"Artifact: "+pins["expected_artifact"],
            "QA: "+", ".join(report["checks"]),"",
            "Preview: header and up to 10 data rows (full artifact on explicit export)"]
@@ -122,25 +131,32 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     from tkinter.scrolledtext import ScrolledText
 
     workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check,source_format=source_format,operation=operation)
+    reconcile_mode=operation=="RECONCILE"
     profile_mode=operation=="COLUMN_PROFILE"
     json_source=source_format==JSON_SOURCE
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
-    window.title("Nexus Exchange | Operator CSV quality report" if profile_mode else "Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
+    window.title("Nexus Exchange | Operator CSV reconciliation" if reconcile_mode else "Nexus Exchange | Operator CSV quality report" if profile_mode else "Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
     window.geometry(fit_geometry(window,1000,650))
-    ttk.Label(content,text="OPERATOR — CSV column quality report" if profile_mode else "OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
+    ttk.Label(content,text="OPERATOR — CSV reconciliation" if reconcile_mode else "OPERATOR — CSV column quality report" if profile_mode else "OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(content,text="Saved plan: "+plan_id,wraplength=950).pack()
-    ttk.Label(content,text=("Select UTF-8 CSV and declare its exact input columns, unique key and row count. Produce aggregate empty, whitespace, nonblank, distinct and length counts per column; no source cell values or data correction." if profile_mode else "Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)
+    ttk.Label(content,text=("Choose left and right UTF-8 CSV files with identical declared columns and unique keys. Compare exact strings; report keys, record status and changed columns, never non-key values. Combined row limit 2000. No source changes." if reconcile_mode else "Select UTF-8 CSV and declare its exact input columns, unique key and row count. Produce aggregate empty, whitespace, nonblank, distinct and length counts per column; no source cell values or data correction." if profile_mode else "Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)
     form=ttk.Frame(content); form.pack(fill="x",padx=12,pady=5)
     source=tk.StringVar(master=window)
     columns=tk.StringVar(master=window)
     key=tk.StringVar(master=window)
     rows=tk.StringVar(master=window)
-    for i,(label,var) in enumerate((("Source JSON" if json_source else "Source CSV",source),("Input columns (comma separated)" if profile_mode else "Output columns (comma separated)",columns),
-                                   ("Unique key column",key),("Expected data rows (1–2000)",rows))):
+    right_source=tk.StringVar(master=window)
+    right_rows=tk.StringVar(master=window)
+    fields=[("Source JSON" if json_source else "Left CSV" if reconcile_mode else "Source CSV",source),
+            ("Input columns (comma separated)" if profile_mode or reconcile_mode else "Output columns (comma separated)",columns),
+            ("Unique key column",key),("Expected left rows" if reconcile_mode else "Expected data rows (1–2000)",rows)]
+    if reconcile_mode:
+        fields.extend([("Right CSV",right_source),("Expected right rows",right_rows)])
+    for i,(label,var) in enumerate(fields):
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=4)
-        ttk.Entry(form,textvariable=var,width=66,state="readonly" if i==0 else "normal").grid(row=i,column=1,sticky="ew",padx=6)
+        ttk.Entry(form,textvariable=var,width=66,state="readonly" if var in (source,right_source) else "normal").grid(row=i,column=1,sticky="ew",padx=6)
     form.columnconfigure(1,weight=1)
     status=ttk.Label(content,wraplength=950); status.pack(fill="x",padx=12,pady=4)
     output=ScrolledText(content,state="disabled",wrap="word")
@@ -172,10 +188,19 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
         if path and blocked_check() is False:
             source.set(path)
 
+    def choose_right():
+        if blocked_check() is not False:
+            clear("Halted or busy.")
+            return
+        path=filedialog.askopenfilename(parent=window,filetypes=[("CSV","*.csv")])
+        if path and blocked_check() is False:
+            right_source.set(path)
+
     def preview():
         clear()
         try:
-            result=workspace.preview(source.get(),columns.get(),key.get(),rows.get())
+            result=workspace.preview(source.get(),columns.get(),key.get(),rows.get(),
+                **(dict(right_source_path=right_source.get(),right_rows=right_rows.get()) if reconcile_mode else {}))
             write(preview_text(result))
             export_button.configure(state="normal")
             register_button.configure(state="normal")
@@ -235,13 +260,15 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
         return open_obligation_window(window,plan_id=plan_id,action=action,blocked_check=blocked_check)
 
     ttk.Button(form,text="Select file",command=choose).grid(row=0,column=2,padx=4)
+    if reconcile_mode:
+        ttk.Button(form,text="Select right file",command=choose_right).grid(row=4,column=2,padx=4)
     ttk.Button(bar,text="Produce and preview",command=preview).pack(side="left",padx=5)
     export_button=ttk.Button(bar,text="Export new CSV",command=export,state="disabled")
     export_button.pack(side="left",padx=5)
     register_button=ttk.Button(bar,text="Register matching CSV",command=register,state="disabled")
     register_button.pack(side="left",padx=5)
     ttk.Button(bar,text="Obligation history",command=history).pack(side="left",padx=5)
-    for var in (source,columns,key,rows):
+    for var in (source,columns,key,rows,right_source,right_rows):
         var.trace_add("write",lambda *_:clear())
     def check():
         nonlocal timer
@@ -255,7 +282,11 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     window.bind("<Destroy>",destroyed,add="+")
     check()
     if smoke_paths is not None:
-        src,dest=smoke_paths
+        if reconcile_mode:
+            src,other,dest=smoke_paths
+            right_source.set(str(other)); right_rows.set("2")
+        else:
+            src,dest=smoke_paths
         source.set(str(src)); columns.set("id,name"); key.set("id"); rows.set("2")
         result=preview()
         if result is None or "LOCAL WORK SAMPLE" not in output.get("1.0","end"):

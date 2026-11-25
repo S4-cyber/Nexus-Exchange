@@ -18,6 +18,8 @@ from .lead_store import _digest, _json
 FORMAT="nexus-csv-deliverable-contract-v2"
 JSON_FORMAT="nexus-json-records-to-csv-contract-v1"
 PROFILE_FORMAT="nexus-csv-column-profile-contract-v1"
+RECONCILE_FORMAT="nexus-csv-key-reconciliation-contract-v1"
+RECONCILE_REPORT="nexus-csv-reconciliation-report-v1"
 PROFILE_COLUMNS=("column","row_count","empty_count","whitespace_only_count",
                  "nonblank_count","distinct_nonblank_count","min_chars","max_chars")
 CSV_SOURCE="UTF8_CSV"
@@ -51,8 +53,8 @@ def _shape(value,fields):
         raise DeliverableError("INVALID_DELIVERABLE_SCHEMA")
 
 
-def _spec(raw):
-    _shape(raw,_SPEC)
+def _spec(raw,*,reconcile=False):
+    _shape(raw,_SPEC|{"right_input_sha256","right_expected_rows"} if reconcile else _SPEC)
     cols=raw["columns"]
     if (type(cols) is not list or not 1<=len(cols)<=MAX_COLUMNS or
             any(type(col) is not str or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,39}",col)
@@ -64,8 +66,14 @@ def _spec(raw):
     n=raw["expected_rows"]
     if type(n) is not int or not 1<=n<=MAX_ROWS:
         raise DeliverableError("INVALID_EXPECTED_ROW_COUNT")
-    return dict(input_sha256=_hash(raw["input_sha256"]),columns=list(cols),
+    result=dict(input_sha256=_hash(raw["input_sha256"]),columns=list(cols),
                 key_column=key,expected_rows=n)
+    if reconcile:
+        right=raw["right_expected_rows"]
+        if type(right) is not int or not 1<=right<=MAX_ROWS or n+right>MAX_ROWS:
+            raise DeliverableError("RECONCILIATION_COMBINED_ROW_LIMIT")
+        result.update(right_input_sha256=_hash(raw["right_input_sha256"]),right_expected_rows=right)
+    return result
 
 
 def _schedule_scope(plan_id,context,scenario_sha256):
@@ -80,12 +88,12 @@ def _schedule_scope(plan_id,context,scenario_sha256):
 def _source_contract_format(source_format,operation="PRESERVE"):
     if type(source_format) is not str or source_format not in (CSV_SOURCE,JSON_SOURCE):
         raise DeliverableError("UNSUPPORTED_SOURCE_FORMAT")
-    if type(operation) is not str or operation not in ("PRESERVE","COLUMN_PROFILE"):
+    if type(operation) is not str or operation not in ("PRESERVE","COLUMN_PROFILE","RECONCILE"):
         raise DeliverableError("UNSUPPORTED_DELIVERABLE_OPERATION")
-    if operation=="COLUMN_PROFILE":
+    if operation in ("COLUMN_PROFILE","RECONCILE"):
         if source_format!=CSV_SOURCE:
             raise DeliverableError("UNSUPPORTED_SERVICE_SOURCE")
-        return PROFILE_FORMAT
+        return PROFILE_FORMAT if operation=="COLUMN_PROFILE" else RECONCILE_FORMAT
     return FORMAT if source_format==CSV_SOURCE else JSON_FORMAT
 
 
@@ -95,8 +103,9 @@ def build_contract(snapshot,specification,*,halted=None,source_format=CSV_SOURCE
     snap=validate_snapshot(snapshot)
     if snap["source_hold"] is not None:
         raise DeliverableError("CURRENT_SOURCE_REVIEW_REQUIRED")
-    spec=_spec(specification)
-    payload=dict(format=_source_contract_format(source_format,operation),plan_id=snap["plan_id"],context=dict(snap["context"]),
+    format_id=_source_contract_format(source_format,operation)
+    spec=_spec(specification,reconcile=format_id==RECONCILE_FORMAT)
+    payload=dict(format=format_id,plan_id=snap["plan_id"],context=dict(snap["context"]),
                  scenario_sha256=snap["scenario_sha256"],
                  schedule_scope_sha256=_schedule_scope(snap["plan_id"],snap["context"],snap["scenario_sha256"]),
                  specification=spec,**dict.fromkeys(_FLAGS,False))
@@ -108,12 +117,12 @@ def _contract(raw):
     ctx=_context(raw["context"])
     if ctx["profile_revision"] is None:
         raise DeliverableError("CURRENT_DECLARED_PROFILE_REQUIRED")
-    if raw["format"] not in (FORMAT,JSON_FORMAT,PROFILE_FORMAT) or any(raw[k] is not False for k in _FLAGS):
+    if raw["format"] not in (FORMAT,JSON_FORMAT,PROFILE_FORMAT,RECONCILE_FORMAT) or any(raw[k] is not False for k in _FLAGS):
         raise DeliverableError("DELIVERABLE_AUTHORITY_OR_SCOPE_MISMATCH")
     payload=dict(format=raw["format"],plan_id=_hash(raw["plan_id"]),context=ctx,
                  scenario_sha256=_hash(raw["scenario_sha256"]),
                  schedule_scope_sha256=_schedule_scope(raw["plan_id"],ctx,raw["scenario_sha256"]),
-                 specification=_spec(raw["specification"]),**dict.fromkeys(_FLAGS,False))
+                 specification=_spec(raw["specification"],reconcile=raw["format"]==RECONCILE_FORMAT),**dict.fromkeys(_FLAGS,False))
     expected=dict(payload,contract_sha256=_digest(_json(payload)))
     if _json(raw)!=_json(expected):
         raise DeliverableError("DELIVERABLE_CONTRACT_INTEGRITY")
@@ -209,12 +218,69 @@ def _json_table(raw,spec,halted,halt_check):
     return rows
 
 
-def _output_spec(contract):
+def _output_spec(contract,output_rows=None):
     spec=contract["specification"]
     if contract["format"]==PROFILE_FORMAT:
         return dict(spec,columns=list(PROFILE_COLUMNS),key_column="column",
                     expected_rows=len(spec["columns"]))
+    if contract["format"]==RECONCILE_FORMAT:
+        lo=max(spec["expected_rows"],spec["right_expected_rows"])
+        hi=spec["expected_rows"]+spec["right_expected_rows"]
+        if type(output_rows) is not int or not lo<=output_rows<=hi:
+            raise DeliverableError("RECONCILIATION_OUTPUT_ROW_COUNT")
+        return dict(spec,columns=["record_key","status","changed_field_count",
+                    *("changed_"+col for col in spec["columns"] if col!=spec["key_column"])],
+                    key_column="record_key",expected_rows=output_rows)
     return spec
+
+
+def _reconcile_rows(spec,left,right,halted,halt_check):
+    """Report keys and exact changed-column flags; never include non-key values."""
+    indexes=[i for i,col in enumerate(spec["columns"]) if col!=spec["key_column"]]
+    result={}
+    for key in left.keys()|right.keys():
+        _permit(halted,halt_check)
+        if key not in right or key not in left:
+            state="LEFT_ONLY" if key in left else "RIGHT_ONLY"
+            result[key]=(key,state,"0",*("NOT_COMPARED" for _ in indexes))
+            continue
+        flags=tuple("YES" if left[key][i]!=right[key][i] else "NO" for i in indexes)
+        count=flags.count("YES")
+        result[key]=(key,"CHANGED" if count else "UNCHANGED",str(count),*flags)
+    return result
+
+
+def _verify_reconciliation(spec,left,right,output,halted,halt_check):
+    """Recompute membership, changes, and all flags separately from production."""
+    if set(output)!=set(left)|set(right):
+        raise DeliverableError("RECONCILIATION_KEY_SET_MISMATCH")
+    for key,row in output.items():
+        _permit(halted,halt_check)
+        if key in left and key in right:
+            different={col for col,a,b in zip(spec["columns"],left[key],right[key]) if a!=b}
+            expected=(key,"CHANGED" if different else "UNCHANGED",str(len(different)),
+                      *("YES" if col in different else "NO" for col in spec["columns"] if col!=spec["key_column"]))
+        else:
+            expected=(key,"LEFT_ONLY" if key in left else "RIGHT_ONLY","0",
+                      *("NOT_COMPARED" for col in spec["columns"] if col!=spec["key_column"]))
+        if row!=expected:
+            raise DeliverableError("RECONCILIATION_DISCREPANCY_MISMATCH")
+    _permit(halted,halt_check)
+
+
+def _right_input(contract,right_raw,halted,halt_check):
+    _permit(halted,halt_check)
+    if contract["format"]!=RECONCILE_FORMAT:
+        if right_raw is not None:
+            raise DeliverableError("UNEXPECTED_SECOND_INPUT")
+        return None
+    spec=contract["specification"]
+    if type(right_raw) is not bytes or not 1<=len(right_raw)<=MAX_INPUT_BYTES:
+        raise DeliverableError("CSV_BYTE_LIMIT")
+    if sha256(right_raw).hexdigest()!=spec["right_input_sha256"]:
+        raise DeliverableError("RIGHT_INPUT_FINGERPRINT_MISMATCH")
+    return _table(right_raw,dict(spec,expected_rows=spec["right_expected_rows"]),
+                  maximum=MAX_INPUT_BYTES,ordered=False,halted=halted,halt_check=halt_check)
 
 
 def _profile_rows(spec,rows,halted,halt_check):
@@ -256,6 +322,10 @@ def _verify_profile(spec,original,output,halted,halt_check):
 
 
 def _checks(contract):
+    if contract["format"]==RECONCILE_FORMAT:
+        return ["EXACT_BOTH_INPUT_PINS","BOTH_INPUT_COLUMN_SCHEMAS","EXPECTED_BOTH_INPUT_ROW_COUNTS",
+                "BOTH_INPUT_UNIQUE_KEYS","NO_FORMULA_SHAPED_CELLS","EXACT_UNION_OF_KEYS",
+                "EXACT_RECORD_STATUS","EXACT_CHANGED_FIELD_FLAGS","CANONICAL_ORDER_AND_SERIALIZATION"]
     if contract["format"]==PROFILE_FORMAT:
         return ["EXACT_INPUT_PIN","INPUT_COLUMN_SCHEMA","EXPECTED_INPUT_ROW_COUNT",
                 "INPUT_UNIQUE_KEYS","NO_FORMULA_SHAPED_CELLS","EXACT_COLUMN_COUNTS",
@@ -281,7 +351,7 @@ def _input(contract,raw,halted,halt_check):
                   halted=halted,halt_check=halt_check)
 
 
-def verify_csv(contract,raw,artifact,*,halted=None,halt_check=None):
+def verify_csv(contract,raw,artifact,*,halted=None,halt_check=None,right_raw=None):
     """Reparse both byte streams and check every field by exact unique key.
 
     Verification is a local mechanical comparison to supplied bytes and
@@ -289,24 +359,29 @@ def verify_csv(contract,raw,artifact,*,halted=None,halt_check=None):
     """
     _permit(halted,halt_check)
     checked=_contract(contract)
-    spec=_output_spec(checked)
     original=_input(checked,raw,halted,halt_check)
+    right=_right_input(checked,right_raw,halted,halt_check)
+    spec=_output_spec(checked,len(original.keys()|right.keys()) if right is not None else None)
     output=_table(artifact,spec,maximum=MAX_OUTPUT_BYTES,ordered=True,
                   halted=halted,halt_check=halt_check)
-    if checked["format"]==PROFILE_FORMAT:
+    if checked["format"]==RECONCILE_FORMAT:
+        _verify_reconciliation(checked["specification"],original,right,output,halted,halt_check)
+    elif checked["format"]==PROFILE_FORMAT:
         _verify_profile(checked["specification"],original,output,halted,halt_check)
     elif original!=output:
         raise DeliverableError("CSV_CONTENT_MISMATCH")
     # Compare canonical serialization as well: noncanonical output bytes fail.
     if artifact!=_serialize(spec,output,halted,halt_check):
         raise DeliverableError("CSV_CANONICAL_OUTPUT_REQUIRED")
-    result=dict(format=REPORT,contract_sha256=checked["contract_sha256"],
+    result=dict(format=RECONCILE_REPORT if right is not None else REPORT,contract_sha256=checked["contract_sha256"],
                 plan_id=checked["plan_id"],input_sha256=sha256(raw).hexdigest(),
                 artifact_sha256=sha256(artifact).hexdigest(),
                 input_bytes=len(raw),artifact_bytes=len(artifact),rows=len(output),
                 columns=list(spec["columns"]),key_column=spec["key_column"],
                 checks=_checks(checked),
                 local_criteria_passed=True,**dict.fromkeys(_FLAGS,False))
+    if right is not None:
+        result.update(right_input_sha256=sha256(right_raw).hexdigest(),right_input_bytes=len(right_raw))
     _permit(halted,halt_check)
     return dict(result,report_sha256=_digest(_json(result)))
 
@@ -327,14 +402,17 @@ def _serialize(spec,rows,halted,halt_check):
     return artifact
 
 
-def produce_csv(contract,raw,*,halted=None,halt_check=None):
+def produce_csv(contract,raw,*,halted=None,halt_check=None,right_raw=None):
     """Produce actual UTF-8 CSV bytes, plus a separate deterministic QA report."""
     _permit(halted,halt_check)
     checked=_contract(contract)
     rows=_input(checked,raw,halted,halt_check)
-    if checked["format"]==PROFILE_FORMAT:
+    right=_right_input(checked,right_raw,halted,halt_check)
+    if checked["format"]==RECONCILE_FORMAT:
+        rows=_reconcile_rows(checked["specification"],rows,right,halted,halt_check)
+    elif checked["format"]==PROFILE_FORMAT:
         rows=_profile_rows(checked["specification"],rows,halted,halt_check)
-    artifact=_serialize(_output_spec(checked),rows,halted,halt_check)
-    report=verify_csv(checked,raw,artifact,halted=halted,halt_check=halt_check)
+    artifact=_serialize(_output_spec(checked,len(rows)),rows,halted,halt_check)
+    report=verify_csv(checked,raw,artifact,halted=halted,halt_check=halt_check,right_raw=right_raw)
     _permit(halted,halt_check)
     return dict(contract=checked,artifact=artifact,report=report)
