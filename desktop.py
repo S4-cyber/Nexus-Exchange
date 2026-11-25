@@ -1511,6 +1511,15 @@ def main(*, data_directory=None, gui_smoke=False):
             csv_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
                 blocked_check=council_blocked,smoke_paths=(csv_source,csv_destination),smoke_evidence=csv_evidence)
             csv_window.destroy()
+            json_source=directory/"synthetic-json-input.json"
+            json_destination=directory/"synthetic-json-output.csv"
+            json_source.write_bytes(b'[{"name":"Beta","id":"002"},{"id":"001","name":"Alpha"}]')
+            json_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
+                blocked_check=council_blocked,source_format="UTF8_JSON_RECORDS",
+                smoke_paths=(json_source,json_destination))
+            json_window.destroy()
+            if json_destination.read_bytes()!=csv_destination.read_bytes():
+                raise RuntimeError("JSON conversion native output mismatch")
         except BaseException:
             close()
             raise

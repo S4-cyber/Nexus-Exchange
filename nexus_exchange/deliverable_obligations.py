@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from .checklist_store import _hash
-from .digital_deliverable import _contract, _FLAGS, REPORT, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, _permit
+from .digital_deliverable import _contract, _FLAGS, REPORT, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, _permit, _checks
 from .deliverable_files import preview_pins
 from .evidence import parse_reference
 from .lead_store import _digest, _json, _now
@@ -22,8 +22,6 @@ NOTE_KINDS=("acceptance_claim_noted","revision_request_noted","rejection_claim_n
 MAX_OBLIGATIONS=10000
 MAX_NOTES=16
 MAX_PAYLOAD=32768
-_CHECKS=["EXACT_INPUT_PIN","COLUMN_SCHEMA","EXPECTED_ROW_COUNT","UNIQUE_KEYS",
-         "NO_FORMULA_SHAPED_CELLS","EXACT_CELL_PRESERVATION","CANONICAL_ORDER_AND_SERIALIZATION"]
 _FLAGS_EXTRA=tuple(dict.fromkeys((*_FLAGS,"customer_identity_verified",
                                  "evidence_authenticity_verified","payment_received")))
 
@@ -58,7 +56,7 @@ def _qa(contract,report):
         plan_id=contract["plan_id"],input_sha256=spec["input_sha256"],
         artifact_sha256=_hash(report.get("artifact_sha256")),input_bytes=report["input_bytes"],
         artifact_bytes=report["artifact_bytes"],rows=spec["expected_rows"],
-        columns=list(spec["columns"]),key_column=spec["key_column"],checks=list(_CHECKS),
+        columns=list(spec["columns"]),key_column=spec["key_column"],checks=_checks(contract),
         local_criteria_passed=True,**dict.fromkeys(_FLAGS,False))
     expected["report_sha256"]=_digest(_json(expected))
     if _json(expected)!=_json(report):

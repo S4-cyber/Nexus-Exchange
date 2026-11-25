@@ -10,7 +10,7 @@ import stat
 import tempfile
 
 from .digital_deliverable import (
-    MAX_INPUT_BYTES,MAX_OUTPUT_BYTES,DeliverableError,_permit,_contract,
+    MAX_INPUT_BYTES,MAX_OUTPUT_BYTES,DeliverableError,_permit,_contract,CSV_SOURCE,JSON_SOURCE,_source_contract_format,
 )
 from .evidence import _identity,_same_file
 from .lead_store import _digest,_json
@@ -18,7 +18,9 @@ from .lead_store import _digest,_json
 _CHUNK=64*1024
 
 
-def _path(value):
+def _path(value,*,source_format=CSV_SOURCE):
+    _source_contract_format(source_format)
+    suffix=".json" if source_format==JSON_SOURCE else ".csv"
     try:
         raw=os.fspath(value)
         if (type(raw) is not str or not os.path.isabs(raw)
@@ -26,19 +28,19 @@ def _path(value):
                 or any(ord(c)<32 for c in raw)):
             raise ValueError()
         path=Path(raw)
-        if path.suffix.lower()!=".csv" or ".." in path.parts:
+        if path.suffix.lower()!=suffix or ".." in path.parts:
             raise ValueError()
         # Deny Windows alternate data streams/device names.
         if os.name=="nt" and (":" in path.name or path.is_reserved()):
             raise ValueError()
         return path
     except (ValueError,TypeError,OverflowError):
-        raise DeliverableError("SELECT_ABSOLUTE_LOCAL_CSV") from None
+        raise DeliverableError("SELECT_ABSOLUTE_LOCAL_JSON" if source_format==JSON_SOURCE else "SELECT_ABSOLUTE_LOCAL_CSV") from None
 
 
-def read_selected_csv(value,*,halted=None,halt_check=None):
+def read_selected_csv(value,*,halted=None,halt_check=None,source_format=CSV_SOURCE):
     _permit(halted,halt_check)
-    path=_path(value)
+    path=_path(value,source_format=source_format)
     try:
         initial=path.lstat()
         if not stat.S_ISREG(initial.st_mode) or not 1<=initial.st_size<=MAX_INPUT_BYTES:
