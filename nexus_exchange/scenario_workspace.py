@@ -11,6 +11,7 @@ from .owner_profile import ProfileStore, profile_revision
 from .scenario_store import ScenarioStore
 from .evidence_workspace import open_evidence_window
 from .council_workspace import open_council_window
+from .operator_workspace import open_operator_window
 from .schedule_feasibility import _optional_timestamp, _quantity
 
 FINANCE_FIELDS=(
@@ -157,7 +158,8 @@ def summary_text(result):
     ])
 
 
-def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,council_blocked=None,smoke=False):
+def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,council_blocked=None,
+                         operator_action=None,operator_blocked=None,smoke=False):
     """Local Tk window. No implicit save, evaluation, external action or network."""
     import tkinter as tk
     from tkinter import ttk
@@ -296,6 +298,15 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             error(exc)
             return None
+    def operator():
+        try:
+            key=selection()
+            workspace.load(key)
+            return open_operator_window(window,plan_id=key,action=operator_action,
+                blocked_check=operator_blocked)
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+            return None
     def new():
         tree.selection_remove(*tree.selection())
         populate(blank_fields())
@@ -305,6 +316,8 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
         ttk.Button(buttons,text=label,command=callback).pack(side="left",padx=4)
     if council_action is not None:
         ttk.Button(buttons,text="Council review",command=council).pack(side="left",padx=4)
+    if operator_action is not None:
+        ttk.Button(buttons,text="Operator RFQ",command=operator).pack(side="left",padx=4)
     def selection_changed(_event):
         # Delayed Tk selection events must not erase the just-evaluated plan.
         items=tree.selection()

@@ -175,7 +175,8 @@ class RuntimeGuard:
         if self._faulted or self.is_set():
             raise PermissionError("Operator unavailable while halted or faulted")
         fields={"prepare":{"supplier","region","items"},"save":{"supplier","region","items"},
-                "history":{"draft_id"},"acknowledge":{"draft_id","supplier","confirmed"}}
+                "history":{"draft_id"},"history_list":{"limit"},
+                "acknowledge":{"draft_id","supplier","confirmed"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported Operator action or inputs")
         from .operator_scenarios import OperatorScenario
@@ -183,7 +184,8 @@ class RuntimeGuard:
         try:
             adapter=OperatorScenario(self._directory,halt_check=self.is_set,clock=self._clock)
             operations={"prepare":adapter.prepare,"save":adapter.save,
-                        "history":adapter.history,"acknowledge":adapter.acknowledge}
+                        "history":adapter.history,"history_list":adapter.history_list,
+                        "acknowledge":adapter.acknowledge}
             result=operations[action](plan_id,**inputs)
             if self.is_set():
                 raise PermissionError("Operator result withheld after halt")

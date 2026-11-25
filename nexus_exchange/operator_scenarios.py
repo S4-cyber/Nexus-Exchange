@@ -63,7 +63,7 @@ class OperatorScenario:
                 raise ValueError('invalid local Operator database path')
         elif existing:
             raise ValueError('saved draft history unavailable')
-        return DraftStore(self.path)
+        return DraftStore(self.path,existing_only=os.path.lexists(self.path))
 
     def _prepare(self, plan_id, supplier, *, region, items, now):
         self._allowed()
@@ -129,6 +129,22 @@ class OperatorScenario:
         if result is None or result['draft']['request']['plan_id'] != plan_id:
             raise ValueError('saved draft outside selected plan')
         return self._history_view(result)
+
+    def history_list(self, plan_id, *, limit=100):
+        self._allowed()
+        _hash(plan_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('invalid draft history limit')
+        if not os.path.lexists(self.path):
+            from .operator_drafts import _FLAGS
+            result = dict(plan_id=plan_id,rows=[],truncated=False,historical_only=True,
+                          **dict.fromkeys(_FLAGS,False))
+        else:
+            with self._storage(existing=True) as store:
+                result = store.list_plan(plan_id,limit=limit,halted=False)
+            result['rows'] = [self._history_view(row) for row in result['rows']]
+        self._allowed()
+        return result
 
     def acknowledge(self, plan_id, draft_id, supplier, *, confirmed=None):
         self._allowed()

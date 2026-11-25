@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from pathlib import Path
 import unicodedata
 
 from .governor import Action, decide
@@ -167,9 +168,21 @@ def _view(record):
 
 class DraftStore:
     """Trusted local storage; one immutable content identity and optional local acknowledgment."""
-    def __init__(self, path):
-        self.db = sqlite3.connect(path, timeout=5, isolation_level=None)
+    def __init__(self, path, *, existing_only=False):
+        if type(existing_only) is not bool:
+            raise ValueError('invalid draft storage mode')
+        if existing_only:
+            path = Path(path)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('existing draft database required')
+            self.db = sqlite3.connect(path.resolve().as_uri()+'?mode=rw', uri=True,
+                                      timeout=5, isolation_level=None)
+        else:
+            self.db = sqlite3.connect(path, timeout=5, isolation_level=None)
         try:
+            if existing_only and self.db.execute('SELECT type FROM sqlite_master WHERE name=?',
+                    ('operator_drafts_v1',)).fetchone() != ('table',):
+                raise ValueError('existing draft storage schema missing')
             self.db.execute('PRAGMA trusted_schema=OFF')
             self.db.execute('PRAGMA synchronous=FULL')
             self.db.execute('CREATE TABLE IF NOT EXISTS operator_drafts_v1('
@@ -209,6 +222,22 @@ class DraftStore:
         _permit(halted)
         record = self._read(key)
         return None if record is None else _view(record)
+
+    def list_plan(self, plan_id, *, limit=100, halted=None):
+        """Bounded historical projection; validate each returned immutable record."""
+        _permit(halted)
+        _hash(plan_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('invalid draft history limit')
+        rows = self.db.execute("""SELECT draft_id,payload,digest FROM operator_drafts_v1
+            WHERE json_extract(payload,'$.draft.request.plan_id')=?
+            ORDER BY json_extract(payload,'$.created_at') DESC,draft_id LIMIT ?""",
+            (plan_id,limit+1)).fetchall()
+        records = [_view(_decode(*row)) for row in rows]
+        if any(row['draft']['request']['plan_id'] != plan_id for row in records):
+            raise ValueError('draft history scope mismatch')
+        return dict(plan_id=plan_id, rows=records[:limit], truncated=len(records)>limit,
+                    historical_only=True, **dict.fromkeys(_FLAGS,False))
 
     def save(self, draft, *, now, halted=None):
         _permit(halted)
