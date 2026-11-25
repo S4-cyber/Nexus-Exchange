@@ -131,3 +131,12 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - E38–E40: seven new import regression tests; Windows packaging includes this branch, source/frozen GUI smoke checks. Hosted results pending at entry time.
 - Reuse decision: follow OCDS record/compiled release distinction (https://standard.open-contracting.org/latest/en/schema/records_reference/ and https://standard.open-contracting.org/latest/en/schema/merging/). No new dependency or upstream code copying. Full OCDS schema validation, upstream compiler integration, source authentication, raw file digest persistence and provider-specific collection remain pending.
 - Formal main acceptance remains 0/42. Next: reconcile draft stack, durable halt/recovery, buyer/supplier qualification and an authorized read-only procurement adapter.
+
+
+## Atlas qualification candidate
+- E20/E21: normalized source-asserted buyer/supplier profiles; scheme-scoped identity; explicit classification and region; deterministic candidate matching with reason codes for roles, same identity, capacity, currency, geography, stale/future observations and Council opportunity screening. Governor denies evaluation when halted or unknown.
+- E38: ten new regression test methods for offline matching, schema rejection, bounded batches, provenance, exact financial constraints and halt precedence. CI pending at entry time.
+- Reuse: OCDS v1.1.5 organization identifiers, party roles and classification schema inform the design. No upstream code copied or new dependency installed; see docs/ATLAS.md.
+- E22 remains pending: declared capacity and tender amount are not quotes, revenue or economic forecasts. E20/E21 remain partial until verified organization/source linkage, profile persistence and user interface are implemented.
+- Prior E40 evidence: import-enabled Windows build 45523381631 completed successfully, including GUI smoke checks and artifact 14980484368. Formal main acceptance remains 0/42; integration stack not merged.
+- Next: integrate Atlas with archive and explicit user requirements, persistent halt/recovery, then source adapters and evidence-based economics.
