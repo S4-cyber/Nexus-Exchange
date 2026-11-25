@@ -191,5 +191,85 @@ class SearchHistoryTests(unittest.TestCase):
         self.assertFalse(hint["freshness_verified"])
 
 
+    def test_review_receipt_shows_exact_historical_observation_without_authority(self):
+        from nexus_exchange.discovery_history import review_receipt, receipt_review_text
+        with LeadStore(self.path) as store:
+            self.record(store)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            report=review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=NOW,halted=False)
+            self.assertEqual(len(report["observations"]),1)
+            item=report["observations"][0]
+            self.assertEqual(item["observation_sha256"],row["observation_refs"][0][3])
+            self.assertEqual(item["retrieved_at"],row["observation_refs"][0][2])
+            self.assertEqual(item["latest_state"],"SAME_OBSERVATION")
+            self.assertIn("HISTORICAL_OBSERVATION_REVALIDATION_REQUIRED",item["blockers"])
+            self.assertFalse(item["execution_eligible"])
+            self.assertFalse(report["external_authority"])
+            self.assertIn(item["source_url"],receipt_review_text(report))
+            self.assertFalse(store.db.in_transaction)
+
+    def test_review_receipt_distinguishes_later_observation_without_substitution(self):
+        from nexus_exchange.discovery_history import review_receipt
+        later=NOW+timedelta(seconds=1)
+        _,q=resolve_query(self.plan,self.row["option_id"],self.profile,now=NOW,halted=False)
+        report=sam_search.search(q,sam.KEY,approved=True,halt_check=lambda:False,
+            clock=lambda:later,transport=Mock(return_value=(200,sam.page([sam.notice()]))))
+        with LeadStore(self.path) as store:
+            self.record(store)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            self.assertEqual(store.record(report,now=later,halted=False),1)
+            reviewed=review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=later,halted=False)
+            item=reviewed["observations"][0]
+            self.assertEqual(item["retrieved_at"],row["observation_refs"][0][2])
+            self.assertEqual(item["observation_sha256"],row["observation_refs"][0][3])
+            self.assertEqual(item["latest_retrieved_at"],later.isoformat(timespec="microseconds"))
+            self.assertEqual(item["latest_state"],"LATER_OBSERVATION_KNOWN")
+            self.assertNotEqual(item["latest_observation_sha256"],item["observation_sha256"])
+            earlier=review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=NOW,halted=False)
+            self.assertEqual(earlier["observations"][0]["latest_state"],"FUTURE_OBSERVATION_KNOWN")
+
+    def test_review_receipt_rechecks_age_and_rejects_future_receipt(self):
+        from nexus_exchange.discovery_history import review_receipt
+        with LeadStore(self.path) as store:
+            self.record(store)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            report=review_receipt(store.db,row["task_id"],row["receipt_sha256"],
+                                  now=NOW+timedelta(hours=25),halted=False)
+            self.assertIn("OBSERVATION_STALE",report["observations"][0]["blockers"])
+            with self.assertRaises(ValueError):
+                review_receipt(store.db,row["task_id"],row["receipt_sha256"],
+                               now=NOW-timedelta(seconds=1),halted=False)
+            self.assertFalse(store.db.in_transaction)
+
+    def test_review_receipt_rejects_changed_selection_missing_evidence_and_halt(self):
+        from nexus_exchange.discovery_history import review_receipt
+        with LeadStore(self.path) as store:
+            self.record(store)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            for halted in (True,None,0):
+                with self.assertRaises(PermissionError):
+                    review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=NOW,halted=halted)
+            for task,digest in (("2"*32,row["receipt_sha256"]),(row["task_id"],"f"*64)):
+                with self.assertRaises(ValueError):
+                    review_receipt(store.db,task,digest,now=NOW,halted=False)
+            store.db.execute("DELETE FROM scout_observations_v1")
+            with self.assertRaises(ValueError):
+                review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=NOW,halted=False)
+            self.assertFalse(store.db.in_transaction)
+
+    def test_review_empty_receipt_does_not_claim_absence_of_opportunity(self):
+        from nexus_exchange.discovery_history import review_receipt,receipt_review_text
+        _,q=resolve_query(self.plan,self.row["option_id"],self.profile,now=NOW,halted=False)
+        report=sam_search.search(q,sam.KEY,approved=True,halt_check=lambda:False,
+            clock=lambda:NOW,transport=Mock(return_value=(200,sam.page([]))))
+        with LeadStore(self.path) as store:
+            self.record(store,report)
+            row=store.search_history(now=NOW,halted=False)["rows"][0]
+            view=review_receipt(store.db,row["task_id"],row["receipt_sha256"],now=NOW,halted=False)
+            self.assertEqual(view["observations"],[])
+            self.assertFalse(view["provider_freshness_verified"])
+            self.assertIn("not proof",receipt_review_text(view))
+
+
 if __name__=="__main__":
     unittest.main()
