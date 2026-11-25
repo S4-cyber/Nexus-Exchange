@@ -284,6 +284,8 @@ def main(*, data_directory=None, gui_smoke=False):
         if council_blocked():
             raise PermissionError("Operator halted or desktop worker active")
         try:
+            if action in ("sim_preview","sim_create","sim_find","sim_history","sim_payment"):
+                return stop.simulated_invoice_action(action[4:],plan_id,**inputs)
             if action in ("list","history","note"):
                 return stop.csv_obligation_action(action,plan_id,**inputs)
             return stop.csv_file_action(action,plan_id,**inputs)
