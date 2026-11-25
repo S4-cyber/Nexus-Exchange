@@ -11,6 +11,7 @@ import hashlib
 
 from .agent_handoff import parse_handoff
 from .council_attempts import CouncilAttemptStore, _contract, _hash
+from .council_audit import validate_snapshot
 from .council_criterion_review import (
     CriterionSpec, build_review_plan, review_criteria, _artifacts, _permit,
 )
@@ -138,7 +139,7 @@ class CouncilCoordinator:
         self._permit()
         return result
 
-    def run_once(self,task,artifacts):
+    def run_once(self,task,artifacts,*,audit_snapshot=None):
         """Explicitly run exactly one available review attempt.
 
         After a reservation, an exception or halt leaves that attempt consumed
@@ -147,6 +148,10 @@ class CouncilCoordinator:
         """
         self._permit()
         first,_=_prepare(task,1)
+        if audit_snapshot is not None:
+            validate_snapshot(audit_snapshot)
+            if audit_snapshot["task_id"]!=first.task_id or audit_snapshot["policy_sha256"]!=task.policy_sha256:
+                raise ValueError("audit snapshot outside exact task")
         state=self.store.status(first.task_id,halted=False)
         if state["contract_sha256"]!=_contract(first)[1]:
             raise ValueError("immutable Council task changed")
@@ -168,7 +173,8 @@ class CouncilCoordinator:
         digest=_digest(_json(report))
         now=self._time()
         self._permit()
-        state=self.store.complete(ticket,report["status"],digest,now=now,halted=False)
+        audit_args={} if audit_snapshot is None else dict(audit_snapshot=audit_snapshot,review_report=report)
+        state=self.store.complete(ticket,report["status"],digest,now=now,halted=False,**audit_args)
         self._permit()
         return dict(format="nexus-council-coordinated-review-v1",
             task_id=handoff.task_id,report_sha256=digest,review=report,ledger=state,
