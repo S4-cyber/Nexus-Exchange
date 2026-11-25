@@ -225,6 +225,8 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     from tkinter import ttk, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
     from .cockpit import install_cockpit, fit_geometry
+    from .lead_store import LeadStore
+    from .discovery_history import recent_hint, hint_text
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
     window.title("Nexus Exchange | Capability search planner")
@@ -245,6 +247,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     output.pack(fill="both",expand=True,padx=12,pady=6)
     plan=None
     rows={}
+    search_history={"rows":[]}
 
     def write(value):
         output.configure(state="normal");output.delete("1.0","end")
@@ -268,14 +271,20 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
                  and blocked_check() is False and halt_check() is False)
         search_button.configure(state="normal" if allowed else "disabled")
         if plan is not None and row is not None:
-            write(option_text(plan,row))
+            write(option_text(plan,row)+"\n\n"+hint_text(recent_hint(row,search_history,now=datetime.now(timezone.utc))))
 
     def refresh():
-        nonlocal plan
+        nonlocal plan,search_history
         clear("Planning locally...")
         try:
             profile=load_profile(directory,halt_check=halt_check)
-            plan=build_plan(profile,labels[service.get()],now=datetime.now(timezone.utc),halted=halt_check())
+            now=datetime.now(timezone.utc)
+            plan=build_plan(profile,labels[service.get()],now=now,halted=halt_check())
+            archive=Path(directory)/"scout-leads.sqlite3"
+            search_history={"rows":[]}
+            if archive.is_file():
+                with LeadStore(archive) as store:
+                    search_history=store.search_history(now=now,halted=halt_check())
             for row in plan["options"]:
                 key=row["option_id"];rows[key]=row
                 value=row["filter_value"] or row["filter_kind"]
@@ -296,7 +305,8 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
             clear("Search unavailable. Refresh the local plan when ready.")
             return
         if not messagebox.askyesno("Authorize one public research search",
-                option_text(current,row)+"\n\nRun only this bounded search?",parent=window):
+                option_text(current,row)+"\n\n"+hint_text(recent_hint(row,search_history,now=datetime.now(timezone.utc)))
+                +"\n\nRun only this bounded search?",parent=window):
             return
         key=None
         if row["key_required"]:
@@ -315,9 +325,36 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError):
             write("Search not launched or selection changed. Refresh the plan.")
 
+    def show_history():
+        try:
+            if blocked_check() is not False or halt_check() is not False:
+                raise PermissionError("Local research unavailable.")
+            archive=Path(directory)/"scout-leads.sqlite3"
+            if not archive.is_file():
+                write("No completed capability-search receipts yet.")
+                return
+            with LeadStore(archive) as store:
+                history=store.search_history(now=datetime.now(timezone.utc),halted=halt_check())
+            lines=["COMPLETED CAPABILITY SEARCHES — historical only",
+                   "Showing "+str(history["returned"])+" of "+str(history["total"])+
+                   "; failed and unarchived searches are not represented."]
+            for item in history["rows"]:
+                scope=item["scope"]
+                lines.extend(["",item["completed_at"]+" | "+scope["source"]+" | "+
+                              (scope["filter_value"] or scope["filter_kind"]),
+                              str(item["requests"])+" requests | "+str(item["returned"])+
+                              " returned | "+str(item["inserted"])+" newly archived observations"+
+                              (" | truncated" if item["truncated"] else "")+
+                              (" | future-dated" if item["future_dated"] else ""),
+                              "Receipt: "+item["receipt_sha256"]])
+            write("\n".join(lines))
+        except (ValueError,PermissionError,OSError,sqlite3.Error):
+            write("Search history unavailable. Review local storage and halt state.")
+
     ttk.Button(controls,text="Refresh discovery plan",command=refresh).pack(side="left",padx=4)
     search_button=ttk.Button(controls,text="Search selected plan",command=search_selected,state="disabled")
     search_button.pack(side="left",padx=4)
+    ttk.Button(controls,text="Search history",command=show_history).pack(side="left",padx=4)
     tree.bind("<<TreeviewSelect>>",display,add="+")
     chooser.bind("<<ComboboxSelected>>",lambda _event:refresh(),add="+")
     refresh()
@@ -331,4 +368,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         service.set("JSON-to-CSV conversion");refresh()
         if not rows or any(r["filter_value"]!="json to csv" for r in rows.values()):
             raise RuntimeError("Capability discovery GUI retained old service")
+        show_history()
+        if "COMPLETED CAPABILITY SEARCHES" not in output.get("1.0","end"):
+            raise RuntimeError("Capability discovery GUI history missing")
     return window

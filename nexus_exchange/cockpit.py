@@ -115,6 +115,7 @@ HELPS={
     "capability search planner":"Plan public searches for one implemented service using your saved source choices.",
     "refresh discovery plan":"Rebuild the local search options using the current profile and time.",
     "search selected plan":"Confirm and run only the selected bounded public research search; no bid or payment.",
+    "search history":"Review archived completed capability searches and their request and observation counts.",
     "review declared requirements":"Check declared service requirements against the selected current Scout record.",
     "preview exact local sample":"Recheck the reviewed local files and produce a sample without publishing it.",
     "export exact sample":"Reproduce the reviewed sample and create a new local CSV without overwriting a file.",

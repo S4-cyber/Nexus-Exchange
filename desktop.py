@@ -43,7 +43,7 @@ def demo(*, halted=False):
         value=dict(amount=1000,currency="USD")))
     return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=halted)
 
-def run_logged(store, stop=None, archive=None, *, work=None, target="Offline screening", lead_store=None):
+def run_logged(store, stop=None, archive=None, *, work=None, target="Offline screening", lead_store=None,discovery=None):
     task = uuid4().hex
     def record(state):
         store.append(dict(task_id=task,target=target,state=state,
@@ -54,6 +54,9 @@ def run_logged(store, stop=None, archive=None, *, work=None, target="Offline scr
         return ()
     record("running")
     try:
+        started=datetime.now(timezone.utc)
+        if discovery is not None and lead_store is None:
+            raise ValueError("Discovery receipt requires lead archive.")
         result = (demo if work is None else work)(halted=stop.is_set() if stop is not None else False)
         if stop is not None and stop.is_set():
             record("cancelled")
@@ -61,7 +64,14 @@ def run_logged(store, stop=None, archive=None, *, work=None, target="Offline scr
         if archive is not None:
             archive.record(tuple(item.observation for item in result))
         if lead_store is not None and type(result) is dict and result.get("format") in LEAD_FORMATS:
-            lead_store.record(result,now=datetime.now(timezone.utc),halted=stop.is_set() if stop is not None else False)
+            if discovery is None:
+                lead_store.record(result,now=datetime.now(timezone.utc),halted=stop.is_set() if stop is not None else False)
+            else:
+                lead_store.record(result,now=datetime.now(timezone.utc),halted=stop.is_set() if stop is not None else False,
+                    discovery=dict(discovery,started_at=started,task_id=task),
+                    halt_check=stop.is_set if stop is not None else None)
+        elif discovery is not None:
+            raise ValueError("Discovery task did not return a supported source report.")
         if stop is not None and stop.is_set():
             record("cancelled")
             return ()
@@ -187,17 +197,17 @@ def main(*, data_directory=None, gui_smoke=False):
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
-    def worker(work=None, target="Offline screening", scenario=False):
+    def worker(work=None, target="Offline screening", scenario=False,discovery=None):
         local = EventStore(directory / "events.sqlite3")
         try:
             if scenario:
                 with LeadStore(directory / "scout-leads.sqlite3") as leads:
-                    return run_logged(local, stop, work=work, target=target, lead_store=leads)
+                    return run_logged(local, stop, work=work, target=target, lead_store=leads,discovery=discovery)
             with OpportunityArchive(directory / "archive.sqlite3") as archive:
                 return run_logged(local, stop, archive, work=work, target=target)
         finally:
             local.close()
-    def run(work=None, target="Offline screening", scenario=False):
+    def run(work=None, target="Offline screening", scenario=False,discovery=None):
         nonlocal future, scenario_report
         if stop.is_set() or busy():
             return
@@ -208,7 +218,7 @@ def main(*, data_directory=None, gui_smoke=False):
             button.configure(state="disabled")
         scenario_report = None
         exporter.configure(state="disabled")
-        future = executor.submit(worker, work, target, scenario)
+        future = executor.submit(worker, work, target, scenario,discovery)
         poll()
     def poll():
         nonlocal future, scenario_report
@@ -919,7 +929,8 @@ def main(*, data_directory=None, gui_smoke=False):
                 approved=approved,halt_check=stop.is_set,api_key=api_key)
         if council_blocked():
             raise PermissionError("Runtime changed before search.")
-        run(work,target="Capability discovery: "+row["source"]+" / "+plan["service_label"],scenario=True)
+        run(work,target="Capability discovery: "+row["source"]+" / "+plan["service_label"],scenario=True,
+            discovery=dict(plan=plan,option_id=option_id,profile=profile))
         return True
     def discovery_window(*,smoke=False):
         return open_discovery_window(root,directory=directory,halt_check=stop.is_set,
