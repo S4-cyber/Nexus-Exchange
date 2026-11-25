@@ -161,3 +161,63 @@ class OperatorScenario:
             result = store.acknowledge(draft_id, confirmed=True, now=now, halted=False)
         self._recheck(draft, supplier)
         return self._history_view(result)
+
+    def _recipient_candidate(self,plan_id,draft_id,supplier,recipient,evidence_path):
+        self._allowed()
+        from .operator_recipients import validate_declaration,prepare_recipient
+        from .evidence import fingerprint
+        record=self.history(plan_id,draft_id)
+        draft=record["draft"]
+        if not record["supplier_scope_pinned"]:
+            raise ValueError("recipient declaration requires a scoped RFQ")
+        self._recheck(draft,supplier)
+        party=_normalize_supplier(supplier)
+        # Reject malformed declarations before opening the explicitly selected file.
+        validate_declaration(draft,recipient,organization_name=party.name,now=self._time(),halted=False)
+        evidence=fingerprint(evidence_path,halted=self.halt_check(),halt_check=self.halt_check)
+        self._recheck(draft,supplier)
+        candidate=prepare_recipient(draft,recipient,organization_name=party.name,
+            evidence_reference=evidence,now=self._time(),halted=False)
+        self._allowed()
+        return draft,candidate
+
+    def recipient_preview(self,plan_id,draft_id,supplier,recipient,evidence_path):
+        """Local inspection/fingerprint only, no contact record saved."""
+        _,candidate=self._recipient_candidate(plan_id,draft_id,supplier,recipient,evidence_path)
+        return candidate
+
+    def recipient_save(self,plan_id,draft_id,supplier,recipient,evidence_path,expected_recipient_id,*,confirmed=None):
+        self._allowed()
+        if confirmed is not True:
+            raise PermissionError("explicit local recipient-record confirmation required")
+        _hash(expected_recipient_id)
+        draft,candidate=self._recipient_candidate(plan_id,draft_id,supplier,recipient,evidence_path)
+        if candidate["recipient_id"]!=expected_recipient_id:
+            raise ValueError("recipient evidence or declaration changed; preview again")
+        from .operator_recipients import RecipientStore
+        path=self.directory/"operator-recipients.sqlite3"
+        self._allowed()
+        with RecipientStore(path,existing_only=os.path.lexists(path)) as store:
+            result=store.save(draft,candidate,now=self._time(),confirmed=True,halted=False)
+        # Separate stores: a historical record can survive a post-commit scope failure.
+        self._recheck(draft,supplier)
+        self._allowed()
+        return result
+
+    def recipient_history(self,plan_id,draft_id,*,limit=100):
+        self._allowed()
+        from .operator_recipients import RecipientStore,_scope,_FLAGS_EXTRA
+        if type(limit) is not int or not 1<=limit<=100:
+            raise ValueError("invalid recipient history limit")
+        record=self.history(plan_id,draft_id)
+        draft=record["draft"]
+        scope=_scope(draft)
+        path=self.directory/"operator-recipients.sqlite3"
+        if not os.path.lexists(path):
+            result=dict(scope=scope,rows=[],truncated=False,historical_only=True,
+                **dict.fromkeys(_FLAGS_EXTRA,False))
+        else:
+            with RecipientStore(path,existing_only=True) as store:
+                result=store.list_draft(draft,limit=limit,halted=False)
+        self._allowed()
+        return result
