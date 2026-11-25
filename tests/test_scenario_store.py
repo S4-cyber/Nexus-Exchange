@@ -172,3 +172,43 @@ class ScenarioStoreTests(unittest.TestCase):
             self.assertEqual(rows["returned"],1)
         with ScenarioStore(self.path) as store:
             self.assertIsNotNone(store.get(key,halted=False))
+
+    def test_cross_connection_idempotency_and_scope_isolation(self):
+        with ScenarioStore(self.path) as first, ScenarioStore(self.path) as second:
+            a=self.save(first)
+            self.assertEqual(self.save(second),a)
+            alternate=profile(mode="genesis",budget="0",hours_per_week=30)
+            other=context_for(second.browse(now=NOW,source="sam",profile=alternate,
+                                            halted=False)["leads"][0])
+            self.assertEqual(first.list(other,halted=False),[])
+            c=second.save(other,scenario(),plan(),profile=alternate,now=NOW,halted=False)
+            self.assertNotEqual(a,c)
+            self.assertEqual([x["plan_id"] for x in first.list(self.context,halted=False)],[a])
+            self.assertEqual([x["plan_id"] for x in first.list(other,halted=False)],[c])
+
+    def test_failed_insert_rolls_back_and_archive_survives(self):
+        import sqlite3
+        with ScenarioStore(self.path) as store:
+            store.db.execute("""CREATE TRIGGER fail_scenario BEFORE INSERT ON scout_scenarios_v1
+                BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END""")
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.save(store)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(store.list(self.context,halted=False),[])
+            self.assertEqual(store.browse(now=NOW,source="sam",halted=False)["returned"],1)
+            store.db.execute("DROP TRIGGER fail_scenario")
+            self.assertIsNotNone(self.save(store))
+
+    def test_digest_does_not_accept_recomputed_payload_with_old_identity(self):
+        import json, hashlib
+        with ScenarioStore(self.path) as store:
+            key=self.save(store)
+            encoded=store.db.execute("SELECT payload FROM scout_scenarios_v1 WHERE plan_id=?",
+                                     (key,)).fetchone()[0]
+            raw=json.loads(encoded)
+            raw["scenario"]["compensation"]="500.00"
+            changed=json.dumps(raw,sort_keys=True,separators=(",",":"),ensure_ascii=True)
+            store.db.execute("UPDATE scout_scenarios_v1 SET payload=?,digest=? WHERE plan_id=?",
+                (changed,hashlib.sha256(changed.encode("ascii")).hexdigest(),key))
+            with self.assertRaisesRegex(ValueError,"identity mismatch"):
+                store.get(key,halted=False)
