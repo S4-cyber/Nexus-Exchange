@@ -470,3 +470,8 @@ failure (matching blob hashes); four integration tests added; exact full
 checkout DNS blocked and hosted candidate checks pending. No new runtime
 dependencies, external actions, cost, Operative changes or formal main
 acceptance (0/42).
+
+## Awesome resource library — 2026-11-25
+- E01/E02/E03/E37/E38, H01-H08: initial targeted survey of GitHub's Awesome topic and related catalogues, 19 exact pinned references, source/blob evidence, license hints and prioritized research steps. All are REFERENCE_ONLY; no upstream code, model, prompt, package, tool or dependency installed. See [resource library](../resources/awesome/README.md) and [adoption plan](../resources/awesome/ADOPTION.md).
+- Local standard-library catalogue CLI supports deterministic workstream/category filtering, strict bounded reference validation and rejects automatic install, execution and authority claims. Five isolated local tests passed after expected missing-module red; tested source and test blob hashes matched. Repository catalogue integration test awaits hosted verification. Full git checkout failed DNS; no full local suite or independent acceptance claimed. No provider calls, spend or changes to Operative. Formal main acceptance 0/42.
+- Exact RC3 base 80ac719f617f4c594212968d545aca12e320683e: both Python jobs passed 828 tests (45674383337); Windows 45674383449 was still running at preflight. Separate review branch preserves that build and avoids interfering with hourly development. Next: independently audit selected security tooling, then mock and benchmark a bounded local inference worker.

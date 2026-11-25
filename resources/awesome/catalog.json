@@ -1,0 +1,470 @@
+{
+  "format": "nexus-awesome-catalog-v1",
+  "surveyed_at": "2026-11-25",
+  "topic": "https://github.com/topics/awesome",
+  "auto_install": false,
+  "auto_execute": false,
+  "external_authority": false,
+  "resources": [
+    {
+      "repository": "anchore/syft",
+      "revision": "bbb56b7d5a55fd1cdca9a02e254b24feb92c061d",
+      "category": "security",
+      "priority": 1,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "Apache-2.0",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "go.mod",
+          "blob": "16a1d56d44b3f94194318cf562e36f28a10338aa"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64"
+        }
+      ],
+      "purpose": "Candidate build and distribution SBOM creation.",
+      "next_check": "Go 1.26.8 and many dependencies observed; validate actual frozen content coverage, licenses and redacted output.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "ggml-org/llama.cpp",
+      "revision": "2d5b3ddde360cbcefc641cc46cd9e00d700f277a",
+      "category": "local-inference",
+      "priority": 1,
+      "workstreams": [
+        "H01",
+        "H04",
+        "H07"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "CMakeLists.txt",
+          "blob": "93543defd9fd8498ae2b660c8d1b6c7077b1a6b8"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "e7dca554bcb802f98408383a864404e3aa4eacca"
+        }
+      ],
+      "purpose": "Candidate native C/C++ model inference for Windows and offline testing.",
+      "next_check": "Review binaries, GPU backends, GGUF model license and memory budget; no execution or model download until reviewed.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "gitleaks/gitleaks",
+      "revision": "5f6ec56cfa6f8c67648d863582c7ae2f206d5c1c",
+      "category": "security",
+      "priority": 1,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "go.mod",
+          "blob": "3a16143eab785122ab77865b331761b5cd1f5992"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "3c270b36c539ca8fbc4cc1017d3cbb7be1e44bbc"
+        }
+      ],
+      "purpose": "Candidate redacted secret scanning of owned source and history.",
+      "next_check": "Review Go 1.24.11 manifest and transitives, signed release checks, report redaction and synthetic secret fixtures.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "ollama/ollama",
+      "revision": "784dd544291825e8f5f064672dc2bd7f4d9345ed",
+      "category": "local-inference",
+      "priority": 1,
+      "workstreams": [
+        "H01",
+        "H03",
+        "H04",
+        "H07"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "go.mod",
+          "blob": "ebd0a528c27108a1815d2c1e577e2653abd5e1b6"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "8e3dc978a7ca8c53f56bbedc5b558116140fc02e"
+        }
+      ],
+      "purpose": "Candidate separately installed local inference service for non-authorizing Council advice.",
+      "next_check": "Review Go 1.26.10 dependencies, server binding, telemetry and cloud options, model terms and no-tool/no-network fixture.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "PyCQA/bandit",
+      "revision": "2d5467c45c3189f4d7d07e8022276bc73a478abd",
+      "category": "security",
+      "priority": 1,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "Apache-2.0",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "setup.cfg",
+          "blob": "fe4c747467cb4e83466bba4717fa8b7a54ca9bf0"
+        }
+      ],
+      "purpose": "Candidate Python static security analysis supplement.",
+      "next_check": "Confirm license file, supported Python and dependencies; measure findings on owned fixtures without suppressing genuine alerts.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "pydantic/pydantic-ai",
+      "revision": "ffbcf3ec5fbf4cf2044ebb7366e3554c82e27a5f",
+      "category": "agents",
+      "priority": 1,
+      "workstreams": [
+        "H01",
+        "H04",
+        "H06",
+        "H07",
+        "H08"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "blob": "98c87da4ceffd521af1b6aeb604aa89db19793a8"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "1bf1f55e6d1736b499ded961ec6b94bfebb17aec"
+        }
+      ],
+      "purpose": "Typed outputs and bounded advisory agent design reference.",
+      "next_check": "Pinned manifest requires Python >=3.11 and broad provider extras; defer core import, assess minimal isolated worker.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "pypa/pip-audit",
+      "revision": "864264baeb9a9e30115a0f2838fe4769cf5a0840",
+      "category": "security",
+      "priority": 1,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "Apache-2.0",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "blob": "4392508e058a20eb1e7b0367c82250b07faef0a1"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "f433b1a53f5b830a205fd2df78e2b34974656c7b"
+        }
+      ],
+      "purpose": "Candidate known-vulnerability review of pinned build dependencies.",
+      "next_check": "Python >=3.10 observed; audit requests and other transitives; use isolated tooling and review advisory lookup data/cost.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "rafska/awesome-local-llm",
+      "revision": "d8b5e8530e906b345e18034986afe1c04d1fd138",
+      "category": "local-inference",
+      "priority": 1,
+      "workstreams": [
+        "H01",
+        "H03",
+        "H04",
+        "H07"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "a8102be957afc005defaeffce38c2096838e38f6"
+        }
+      ],
+      "purpose": "Local model runtimes and hardware-aware inference discovery.",
+      "next_check": "Test model licenses, memory and latency on the owner machine; no model download or cloud fallback.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "awesomedata/awesome-public-datasets",
+      "revision": "f1c36b86c0e14310c002eefcdc115e44094773d4",
+      "category": "data",
+      "priority": 2,
+      "workstreams": [
+        "H03",
+        "H04",
+        "H08"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.rst",
+          "blob": "f9f9fa3615dd51203566e5a532cb8cd8a4d56e54"
+        }
+      ],
+      "purpose": "Dataset discovery for Scout research and synthetic evaluation planning.",
+      "next_check": "Check dataset-specific terms, freshness, privacy, fees and official provenance before ingestion.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "backblaze-labs/awesome-agent-infrastructure",
+      "revision": "a36a64e24c3cfa525278d7487f9b560774e7f331",
+      "category": "infrastructure",
+      "priority": 2,
+      "workstreams": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H06",
+        "H07"
+      ],
+      "license_hint": "CC0-1.0",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "3baaa2f7d10d9056facc4473e2bad20e9fb9b675"
+        }
+      ],
+      "purpose": "Memory, sandboxing, tool boundaries and evaluation options.",
+      "next_check": "Separate catalog discovery from executable dependencies; verify each tool's costs and privacy.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "kaushikb11/awesome-llm-agents",
+      "revision": "0db5a88b2b0637be3f053f4fd9ab135f83275cdb",
+      "category": "agents",
+      "priority": 2,
+      "workstreams": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H07",
+        "H08"
+      ],
+      "license_hint": "CC0-1.0",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "f7dd3256e33ede13ea05c7e0100a8c8eee72ed67"
+        }
+      ],
+      "purpose": "Agent framework, coordination, memory and evaluation comparison.",
+      "next_check": "Inspect actual source and model dependencies; do not trust rankings as approval.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "modelcontextprotocol/python-sdk",
+      "revision": "77001c96f9507be0f4d009b83210a384a5e08bda",
+      "category": "agents",
+      "priority": 2,
+      "workstreams": [
+        "H01",
+        "H02",
+        "H06",
+        "H07",
+        "H08"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "blob": "6d7626d79b4a78c66e5dd1837b28530e677a0d34"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "3d48435454b105021b4f777c11b6b07d8d2ffea3"
+        }
+      ],
+      "purpose": "Candidate typed tool protocol after a Governor-enforced local boundary exists.",
+      "next_check": "Pinned manifest requires Python >=3.11; no automatic discovery, arbitrary MCP servers, shell, or credential access.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "ossf/scorecard",
+      "revision": "789a810815a4398abf14b10898b111d3ced5d94d",
+      "category": "security",
+      "priority": 2,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "Apache-2.0",
+      "license_basis": "LICENSE_FILE_OBSERVED",
+      "evidence": [
+        {
+          "path": "go.mod",
+          "blob": "984f48638ddd09b3234c6b9e29febffa5ca9cb34"
+        },
+        {
+          "path": "LICENSE",
+          "blob": "18f7f43fde86f7ef648559da1e3b2ba46c167f90"
+        }
+      ],
+      "purpose": "Candidate upstream repository supply-chain review aid.",
+      "next_check": "Go 1.27.4 manifest and many dependencies observed; assess GitHub permissions, quotas and limitations before use.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "public-apis/public-apis",
+      "revision": "9fb3bdb62643400aaebee03a2ecce0cd1ec934eb",
+      "category": "data",
+      "priority": 2,
+      "workstreams": [
+        "H02",
+        "H04",
+        "H08"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "dfaa4c5092c918fcb64558b34c0d4c29156d07c0"
+        }
+      ],
+      "purpose": "Candidate API directory for Scout provider research.",
+      "next_check": "Ignore promotions and sign-up links; check official endpoints, quotas, permissions and cost separately.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "sindresorhus/awesome",
+      "revision": "bc98e517ddca672f55f9857d714fc3ea3c3540b2",
+      "category": "index",
+      "priority": 2,
+      "workstreams": [
+        "H01",
+        "H05",
+        "H06",
+        "H07"
+      ],
+      "license_hint": "CC0-1.0",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "readme.md",
+          "blob": "0acaa99d5f45582ecf70f987213f59ae1855226f"
+        }
+      ],
+      "purpose": "Index for discovering specialized engineering collections.",
+      "next_check": "Follow relevant links manually; review each project independently.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "tysoncung/awesome-devsecops",
+      "revision": "247ff92d2fe01d1f783a03ae4061d95f3554cd5d",
+      "category": "security",
+      "priority": 2,
+      "workstreams": [
+        "H06",
+        "H07"
+      ],
+      "license_hint": "CC0-1.0",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "fd6a9ece321666aa6574cea55bca42b22b8f3c75"
+        }
+      ],
+      "purpose": "Defensive source, dependency, supply chain and CI security references.",
+      "next_check": "Treat the small collection as discovery only; confirm current vendor documentation and use owned fixtures.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "vinta/awesome-python",
+      "revision": "4c3cb15dc695e95ae64add86b9994add8277f323",
+      "category": "language",
+      "priority": 2,
+      "workstreams": [
+        "H01",
+        "H03",
+        "H04",
+        "H05",
+        "H07"
+      ],
+      "license_hint": "NOASSERTION",
+      "license_basis": "UNRESOLVED",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "c17b5426891a8378a5c6d74d96c979c20db14339"
+        }
+      ],
+      "purpose": "Python tooling, testing, data normalization and UI references.",
+      "next_check": "Resolve list license before copying; prefer standard library and Python 3.10 compatibility.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "Awesome-llms-labs/awesome-ai-agents",
+      "revision": "90685bdc9255a652dff90366b7807360ece0ff9a",
+      "category": "agents",
+      "priority": 3,
+      "workstreams": [
+        "H01",
+        "H02",
+        "H04",
+        "H08"
+      ],
+      "license_hint": "MIT",
+      "license_basis": "METADATA_ONLY",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "fbd4d584c1132e454a523fe92c63382267689ec9"
+        }
+      ],
+      "purpose": "Broad agent ecosystem and framework comparison.",
+      "next_check": "Verify maintenance and licensing directly; discard hosted or privileged options by default.",
+      "adoption": "REFERENCE_ONLY"
+    },
+    {
+      "repository": "awesome-selfhosted/awesome-selfhosted",
+      "revision": "6e7abbc2294fde161ce28811c5e2a7db9d498ba0",
+      "category": "infrastructure",
+      "priority": 3,
+      "workstreams": [
+        "H03",
+        "H05",
+        "H07"
+      ],
+      "license_hint": "NOASSERTION",
+      "license_basis": "UNRESOLVED",
+      "evidence": [
+        {
+          "path": "README.md",
+          "blob": "b8f0212e0ceaa84d80d0b6166675bdab1b367a7d"
+        }
+      ],
+      "purpose": "Self-hosted infrastructure options for local data and future worker services.",
+      "next_check": "Review each service license, deployment burden, resource use and isolation; no provisioning.",
+      "adoption": "REFERENCE_ONLY"
+    }
+  ]
+}
