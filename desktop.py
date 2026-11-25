@@ -4,11 +4,11 @@ import os
 import json
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
 from pathlib import Path
 from functools import partial
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
+from nexus_exchange.runtime_guard import RuntimeGuard
 from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.owner_profile import ProfileStore, PROFILE_SOURCES
 from nexus_exchange.checklist_store import ChecklistStore, context_for
@@ -106,16 +106,30 @@ def main(*, data_directory=None, gui_smoke=False):
     if gui_smoke:
         root.withdraw()
     directory.mkdir(parents=True, exist_ok=True)
-    store = EventStore(directory / "events.sqlite3")
+    try:
+        stop=RuntimeGuard(directory)
+    except Exception as exc:
+        if gui_smoke:
+            root.destroy()
+            raise
+        messagebox.showerror("Nexus Exchange startup blocked",
+            "Local ownership, journal or halt state could not be validated. No research started. ("+type(exc).__name__+")",parent=root)
+        root.destroy()
+        return
+    store=stop.events
     executor = ThreadPoolExecutor(max_workers=1)
-    stop = Event()
     future = None
     scenario_report = None
     def close():
-        stop.set()
+        try:
+            stop.set()
+        except Exception:
+            pass  # In-memory halt is asserted even when persistence fails.
         executor.shutdown(wait=True, cancel_futures=True)
-        store.close()
-        root.destroy()
+        try:
+            stop.close()
+        finally:
+            root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
     ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
     ttk.Label(root,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
@@ -194,6 +208,9 @@ def main(*, data_directory=None, gui_smoke=False):
         output.delete("1.0","end")
         try:
             result = future.result()
+            if stop.is_set():
+                output.insert("end","Research halted. Task output withheld; no automatic replay.")
+                return
             if type(result) is dict:
                 scenario_report = result
                 if result.get("format") in LEAD_FORMATS:
@@ -216,18 +233,34 @@ def main(*, data_directory=None, gui_smoke=False):
                 importer.configure(state="normal")
                 simulator.configure(state="normal")
     def halt():
-        stop.set()
+        nonlocal scenario_report
+        message="HALTED — new tasks blocked"
+        try:
+            stop.set()
+        except Exception:
+            message="HALTED — persistence fault; restart and recover before resuming"
+        scenario_report=None
+        exporter.configure(state="disabled")
+        output.configure(state="normal")
+        output.delete("1.0","end")
+        output.configure(state="disabled")
         launch.configure(state="disabled")
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
-        halt_status.configure(text="HALTED — new tasks blocked")
+        halt_status.configure(text=message)
     def resume():
-        if future is None:
-            stop.clear()
-            launch.configure(state="normal")
-            importer.configure(state="normal")
-            simulator.configure(state="normal")
-            halt_status.configure(text="Offline ready")
+        if future is not None:
+            halt_status.configure(text="Wait for interrupted worker to finish; then resume offline.")
+            return
+        try:
+            stop.resume()
+        except Exception:
+            halt_status.configure(text="HALTED — recovery or local persistence requires review")
+            return
+        launch.configure(state="normal")
+        importer.configure(state="normal")
+        simulator.configure(state="normal")
+        halt_status.configure(text="Offline ready — commercial actions disabled")
     def import_file():
         if stop.is_set() or future is not None:
             return
@@ -242,11 +275,11 @@ def main(*, data_directory=None, gui_smoke=False):
             run(partial(evaluate_scenario,path,directory / "archive.sqlite3"),
                 target="Offline deal simulation",scenario=True)
     def export_scenario():
-        if scenario_report is None:
+        if scenario_report is None or stop.is_set():
             return
         path = filedialog.asksaveasfilename(parent=root,defaultextension=".json",
             filetypes=[("JSON","*.json")],initialfile="nexus-report.json")
-        if path:
+        if path and not stop.is_set() and scenario_report is not None:
             try:
                 export_report(path,scenario_report)
             except OSError as exc:
@@ -971,7 +1004,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 return
             path=filedialog.asksaveasfilename(parent=window,defaultextension=".json",
                 filetypes=[("JSON","*.json")],initialfile="nexus-scout-history.json")
-            if path:
+            if path and not stop.is_set() and report is not None:
                 try:
                     export_report(path,report)
                 except OSError as exc:
@@ -1019,6 +1052,8 @@ def main(*, data_directory=None, gui_smoke=False):
         def reload():
             nonlocal report
             try:
+                if stop.is_set():
+                    raise PermissionError("HALTED")
                 report = archive_report(directory / "archive.sqlite3",
                     now=datetime.now(timezone.utc),query=search.get())
                 value = json.dumps(report,ensure_ascii=True,indent=2)
@@ -1030,11 +1065,11 @@ def main(*, data_directory=None, gui_smoke=False):
             view.insert("end",value)
             view.configure(state="disabled")
         def export():
-            if report is None:
+            if report is None or stop.is_set():
                 return
             path = filedialog.asksaveasfilename(parent=window,defaultextension=".json",
                 filetypes=[("JSON","*.json")],initialfile="nexus-exchange-archive.json")
-            if path:
+            if path and not stop.is_set() and report is not None:
                 try:
                     export_report(path, report)
                 except OSError as exc:
@@ -1064,9 +1099,22 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     ttk.Button(simulation_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
     ttk.Button(simulation_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
-    halt_status = ttk.Label(root,text="Offline ready")
+    halt_status = ttk.Label(root,text=f"HALTED — {stop.recovered_count} interrupted tasks reconciled; Resume offline to begin")
     halt_status.pack()
+    for button in (launch,importer,simulator):
+        button.configure(state="disabled")
     if gui_smoke:
+        if not stop.is_set() or str(launch.cget("state"))!="disabled":
+            raise RuntimeError("desktop did not start halted")
+        resume()
+        if stop.is_set() or str(launch.cget("state"))!="normal":
+            raise RuntimeError("explicit offline resume failed")
+        halt()
+        if not stop.is_set() or str(launch.cget("state"))!="disabled":
+            raise RuntimeError("desktop emergency halt failed")
+        resume()
+        if stop.is_set():
+            raise RuntimeError("desktop smoke resume failed")
         window = browse_archive()
         leads_window = browse_leads()
         profile_window = owner_profile_window()
