@@ -81,3 +81,27 @@ class ScenarioTests(unittest.TestCase):
             self.path.write_bytes(raw)
             with self.assertRaises(ValueError):
                 evaluate_scenario(self.path,self.archive,halted=False,now=NOW)
+
+    def test_desktop_task_journal_and_export(self):
+        from functools import partial
+        from desktop import run_logged, export_report
+        from nexus_exchange.event_store import EventStore
+        from threading import Event
+        self.path.write_text(json.dumps(manifest(self.item)),encoding="utf-8")
+        events=EventStore(":memory:")
+        try:
+            work=partial(evaluate_scenario,self.path,self.archive,now=NOW)
+            report=run_logged(events,work=work,target="Offline deal simulation")
+            self.assertEqual(events.read()[-1]["state"],"succeeded")
+            self.assertEqual(events.read()[-1]["target"],"Offline deal simulation")
+            output=Path(self.directory.name)/"report.json"
+            export_report(output,report)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")),report)
+            stop=Event()
+            stop.set()
+            with patch("nexus_exchange.scenario_import.Path.open") as opened:
+                self.assertEqual(run_logged(events,stop,work=work,target="Offline deal simulation"),())
+                opened.assert_not_called()
+            self.assertEqual(events.read()[-1]["state"],"cancelled")
+        finally:
+            events.close()
