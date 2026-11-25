@@ -58,7 +58,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Cannot resolve checkout tree" }
           python -m nexus_exchange.preview_bundle write dist --commit "$commit" --tree "$tree" --run-id "$env:GITHUB_RUN_ID" --attempt "$env:GITHUB_RUN_ATTEMPT" --event "$env:GITHUB_EVENT_NAME"
           if ($LASTEXITCODE -ne 0) { throw "Preview bundle generation failed" }
-          python -m nexus_exchange.preview_bundle verify dist --commit "$commit" --tree "$tree" --run-id "$env:GITHUB_RUN_ID"
+          python -m nexus_exchange.preview_bundle verify dist --commit "$commit" --tree "$tree" --run-id "$env:GITHUB_RUN_ID" --attempt "$env:GITHUB_RUN_ATTEMPT" --event "$env:GITHUB_EVENT_NAME"
           if ($LASTEXITCODE -ne 0) { throw "Preview bundle verification failed" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

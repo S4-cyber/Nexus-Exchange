@@ -6,7 +6,7 @@ from hashlib import sha256
 
 from nexus_exchange.preview_bundle import (
     write_bundle,verify_bundle,EXE,CHECKSUM,GENESIS,MANIFEST,
-    _canonical,_json,_DIAGNOSTIC_FLAGS,_REQUIRED_CHECKS,
+    _canonical,_json,_DIAGNOSTIC_FLAGS,_REQUIRED_CHECKS,_DIAGNOSTIC_IDS,
 )
 
 
@@ -15,7 +15,8 @@ def report(**changes):
     # own integration suite and runs in CI during bundle creation.
     result=dict(format="nexus-owned-genesis-diagnostic-v1",mode="OWNED_OFFLINE_FIXTURE_ONLY",
         checks=list(_REQUIRED_CHECKS),external_requests=0,fixture_transport_calls=1,
-        scout_review_scope_sha256="c"*64,scout_review_sha256="d"*64,
+        restored_database_count=12,correspondence_event_count=1,
+        **{key:sha256(key.encode("ascii")).hexdigest() for key in _DIAGNOSTIC_IDS},
         council_attempts=2,assumption_references=17,independently_verified_assumptions=0,
         modeled_pre_payment_exposure_cents=0,modeled_probability_adjusted_net_cents=12000,
         hypothetical_gross_cents=20000,hypothetical_received_cents=20000,
@@ -66,6 +67,35 @@ class PreviewBundleTests(unittest.TestCase):
             with self.subTest(diagnostic=diagnostic),self.assertRaises(ValueError):
                 self.write(diagnostic=diagnostic)
         self.assertFalse((self.path/MANIFEST).exists())
+
+    def test_exact_sequence_includes_correspondence_and_recovery(self):
+        checks=list(_REQUIRED_CHECKS)
+        for altered in (checks[1:],checks[::-1],checks+["UNEXPECTED"],
+                        [x for x in checks if x!="DURABLE_CORRESPONDENCE_HISTORY"]):
+            with self.subTest(altered=altered),self.assertRaises(ValueError):
+                self.write(report(checks=altered))
+        self.assertFalse((self.path/MANIFEST).exists())
+
+    def test_all_provenance_ids_and_restored_history_required(self):
+        for key in _DIAGNOSTIC_IDS:
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                self.write(report(**{key:"missing"}))
+        for changes in (dict(correspondence_event_count=True),dict(correspondence_event_count=0),
+                        dict(restored_database_count=0),dict(restored_database_count=True),
+                        dict(restored_database_count=65),
+                        dict(correspondence_head_sha256=report()["correspondence_thread_id"])):
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                self.write(report(**changes))
+        self.assertFalse((self.path/MANIFEST).exists())
+
+    def test_external_attempt_and_event_pins(self):
+        expected=self.write()
+        self.assertEqual(expected,verify_bundle(self.path,expected_attempt=1,
+                                               expected_event="pull_request"))
+        for pins in (dict(expected_attempt=2),dict(expected_attempt=True),
+                     dict(expected_event="push"),dict(expected_event="unknown")):
+            with self.subTest(pins=pins),self.assertRaises(ValueError):
+                verify_bundle(self.path,**pins)
 
     def test_diagnostic_and_manifest_tampering(self):
         self.write()

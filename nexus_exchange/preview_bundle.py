@@ -26,15 +26,50 @@ _DIAGNOSTIC_FLAGS=("actual_opportunity_verified","requirements_verified","buyer_
     "funds_available","zero_capital_verified","independently_verified",
     "execution_eligible","external_authority","reinvestment_authorized",
     "commercial_dispatch_enabled","release_eligible")
-_REQUIRED_CHECKS=("FIXTURE_DISCOVERY","ARCHIVE_IDEMPOTENT","CAPABILITY_FOCUS",
-    "ZERO_EXPOSURE_MODEL","COUNCIL_MISSING_EVIDENCE","COUNCIL_REVIEW_ONLY",
-    "ACTUAL_LOCAL_ARTIFACT","NO_OVERWRITE","OBLIGATION_BOUND",
-    "SCOPED_REVIEW_BOUND","SCOPED_LOCAL_EXPORT","SCOPED_OBLIGATION_PROVENANCE",
-    "SCOPED_PROVENANCE_RECOVERED","RESTORED_SCOPED_REVIEW_HISTORICAL_ONLY",
-    "UNVERIFIED_ACCEPTANCE_NOTE","PARTIAL_RECONCILIATION",
-    "DUPLICATE_AND_OVERPAYMENT_DENIED","EMERGENCY_HALT_DENIES",
-    "VERIFIED_BACKUP_RESTORE","RESTART_REQUIRES_RESUME","DURABLE_COUNCIL_AUDIT","DURABLE_OBLIGATION_AND_RECEIPTS",
-    "EXACT_SETTLEMENT","FUTURE_RECEIPT_EXCLUDED","PROTECTED_RESERVE_MODEL","FINAL_LEDGER_STABLE")
+_REQUIRED_CHECKS=(
+    "STARTUP_HALTED",
+    "FIXTURE_DISCOVERY",
+    "ARCHIVE_IDEMPOTENT",
+    "CAPABILITY_FOCUS",
+    "ZERO_EXPOSURE_MODEL",
+    "DECLARED_STRUCTURE_ONLY",
+    "COUNCIL_MISSING_EVIDENCE",
+    "COUNCIL_REVIEW_ONLY",
+    "COUNCIL_TERMINAL_NO_REPLAY",
+    "CORRESPONDENCE_SCOPE_PINNED",
+    "CORRESPONDENCE_REPLAY_DENIED",
+    "ARTIFACT_EXACT_QA",
+    "ACTUAL_LOCAL_ARTIFACT",
+    "NO_OVERWRITE",
+    "SCOPED_REVIEW_BOUND",
+    "SCOPED_LOCAL_EXPORT",
+    "SCOPED_OBLIGATION_PROVENANCE",
+    "OBLIGATION_BOUND",
+    "UNVERIFIED_ACCEPTANCE_NOTE",
+    "INVOICE_TERMS_PINNED",
+    "PARTIAL_RECONCILIATION",
+    "DUPLICATE_AND_OVERPAYMENT_DENIED",
+    "PARTIAL_ALLOCATION_HELD",
+    "EMERGENCY_HALT_DENIES",
+    "CORRESPONDENCE_BACKUP_INVENTORY",
+    "VERIFIED_BACKUP_RESTORE",
+    "RESTART_REQUIRES_RESUME",
+    "DURABLE_CORRESPONDENCE_HISTORY",
+    "RESTORED_CORRESPONDENCE_HISTORICAL_ONLY",
+    "DURABLE_COUNCIL_AUDIT",
+    "DURABLE_OBLIGATION_AND_RECEIPTS",
+    "SCOPED_PROVENANCE_RECOVERED",
+    "RESTORED_SCOPED_REVIEW_HISTORICAL_ONLY",
+    "EXACT_SETTLEMENT",
+    "FUTURE_RECEIPT_EXCLUDED",
+    "PROTECTED_RESERVE_MODEL",
+    "FINAL_LEDGER_STABLE",
+)
+_DIAGNOSTIC_IDS=("source_page_sha256","plan_id","capability_catalog_sha256",
+    "council_report_sha256","correspondence_thread_id","correspondence_head_sha256",
+    "artifact_sha256","qa_report_sha256","obligation_id","obligation_head_sha256",
+    "scout_review_scope_sha256","scout_review_sha256","invoice_id",
+    "receipt_head_sha256","allocation_sha256")
 _FLAGS=("signed","publisher_authenticated","production_ready","release_eligible",
         "external_authority","actual_revenue_verified")
 
@@ -150,13 +185,17 @@ def _diagnostic(raw):
             or any(data.get(k) is not False for k in _DIAGNOSTIC_FLAGS)):
         raise ValueError("invalid owned Genesis diagnostic identity or authority")
     checks=data.get("checks")
-    if (type(checks) is not list or not 1<=len(checks)<=64
-            or any(type(k) is not str or not re.fullmatch("[A-Z_]{1,80}",k) for k in checks)
-            or len(set(checks))!=len(checks) or not set(_REQUIRED_CHECKS)<=set(checks)):
-        raise ValueError("incomplete Genesis diagnostic")
-    for key in ("scout_review_scope_sha256","scout_review_sha256"):
+    if type(checks) is not list or checks!=list(_REQUIRED_CHECKS):
+        raise ValueError("incomplete or unexpected Genesis diagnostic sequence")
+    for key in _DIAGNOSTIC_IDS:
         _hex(data.get(key),64)
+    if data["correspondence_thread_id"]==data["correspondence_head_sha256"]:
+        raise ValueError("invalid correspondence history identity")
+    restored=data.get("restored_database_count")
+    if type(restored) is not int or not 1<=restored<=64:
+        raise ValueError("invalid restored database count")
     expected={"external_requests":0,"fixture_transport_calls":1,"council_attempts":2,
+        "correspondence_event_count":1,
         "assumption_references":17,"independently_verified_assumptions":0,
         "modeled_pre_payment_exposure_cents":0,"modeled_probability_adjusted_net_cents":12000,
         "hypothetical_gross_cents":20000,"hypothetical_received_cents":20000,
@@ -198,10 +237,12 @@ def write_bundle(directory,*,commit,tree,run_id,attempt,event,diagnostic):
                          (GENESIS,raw),(MANIFEST,_canonical(manifest))):
         with (path/name).open("xb") as handle:
             handle.write(content)
-    return verify_bundle(path,expected_commit=commit,expected_tree=tree,expected_run=run_id)
+    return verify_bundle(path,expected_commit=commit,expected_tree=tree,expected_run=run_id,
+                         expected_attempt=attempt,expected_event=event)
 
 
-def verify_bundle(directory,*,expected_commit=None,expected_tree=None,expected_run=None):
+def verify_bundle(directory,*,expected_commit=None,expected_tree=None,expected_run=None,
+                  expected_attempt=None,expected_event=None):
     """Validate exact bundle content and optional externally supplied build pins."""
     path=_directory(directory)
     _,raw_manifest=_read(path/MANIFEST,MAX_JSON_BYTES,retain=True)
@@ -217,6 +258,11 @@ def verify_bundle(directory,*,expected_commit=None,expected_tree=None,expected_r
         raise ValueError("checkout tree mismatch")
     if expected_run is not None and identity["run_id"]!=_positive(expected_run):
         raise ValueError("CI run mismatch")
+    if expected_attempt is not None and identity["run_attempt"]!=_positive(expected_attempt):
+        raise ValueError("CI run attempt mismatch")
+    if expected_event is not None and (type(expected_event) is not str
+            or expected_event not in _EVENTS or identity["event"]!=expected_event):
+        raise ValueError("CI event mismatch")
     exe,_=_read(path/EXE,MAX_EXE_BYTES,pe=True)
     _,checksum=_read(path/CHECKSUM,65,retain=True)
     if checksum!=(exe["sha256"]+"\n").encode("ascii"):
@@ -239,8 +285,8 @@ def main():
         command.add_argument("--commit",required=command is create)
         command.add_argument("--tree",required=command is create)
         command.add_argument("--run-id",type=int,required=command is create)
-    create.add_argument("--attempt",required=True,type=int)
-    create.add_argument("--event",required=True,choices=_EVENTS)
+        command.add_argument("--attempt",type=int,required=command is create)
+        command.add_argument("--event",choices=_EVENTS,required=command is create)
     args=parser.parse_args()
     if args.operation=="write":
         from .genesis_diagnostic import run_diagnostic
@@ -248,7 +294,8 @@ def main():
                             attempt=args.attempt,event=args.event,diagnostic=run_diagnostic(confirmed=True))
     else:
         result=verify_bundle(args.directory,expected_commit=args.commit,
-                             expected_tree=args.tree,expected_run=args.run_id)
+                             expected_tree=args.tree,expected_run=args.run_id,
+                             expected_attempt=args.attempt,expected_event=args.event)
     print(_json(result))
 
 
