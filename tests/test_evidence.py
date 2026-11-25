@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock,patch
-from nexus_exchange.evidence import fingerprint,verify_reference,parse_reference,EvidenceError,MAX_BYTES
+from nexus_exchange.evidence import fingerprint,verify_reference,parse_reference,EvidenceError,MAX_BYTES,_same_file
 from nexus_exchange.checklist_store import ChecklistStore,context_for
 from nexus_exchange.lead_store import LeadStore
 from test_lead_store import reports,NOW
@@ -97,6 +97,23 @@ class EvidenceTests(unittest.TestCase):
         with patch("nexus_exchange.evidence.os.read",side_effect=read):
             with self.assertRaisesRegex(EvidenceError,"CHANGED"):
                 fingerprint(self.path,halted=False)
+
+    def test_path_and_handle_metadata_precision(self):
+        from types import SimpleNamespace
+        a=SimpleNamespace(st_size=5,st_dev=1,st_ino=2,st_mtime_ns=100,st_ctime_ns=100)
+        b=SimpleNamespace(st_size=5,st_dev=1,st_ino=2,st_mtime_ns=101,st_ctime_ns=102)
+        self.assertTrue(_same_file(a,b))
+        b.st_ino=3
+        self.assertFalse(_same_file(a,b))
+        b.st_ino=2
+        b.st_size=6
+        self.assertFalse(_same_file(a,b))
+
+    def test_filesystem_permission_error_redacted(self):
+        with patch("nexus_exchange.evidence.os.open",side_effect=PermissionError(str(self.path))):
+            with self.assertRaises(EvidenceError) as error:
+                fingerprint(self.path,halted=False)
+            self.assertEqual(str(error.exception),"EVIDENCE_FILE_UNAVAILABLE")
 
     def test_same_bytes_different_path(self):
         other=self.directory/"other.txt"
