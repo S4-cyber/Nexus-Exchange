@@ -76,3 +76,35 @@ failure (matching blob hashes); four integration tests added; exact full
 checkout DNS blocked and hosted candidate checks pending. No new runtime
 dependencies, external actions, cost, Operative changes or formal main
 acceptance (0/42).
+
+
+## RC3 source review integrity — 2026-11-25
+
+E02/E37/E38/E39/E40; H06/H07. Exact RC3 head
+2e6aab4279be679ad18167cd23a36e74408155d4 passed 815 tests on both
+Python versions and Windows 45653537383 (artifact 15041778609).
+Follow-up PR #96 head a8dcf3d760a8d611e33326e6c49cfbf0791aed12 also
+passed 815 tests on each Python version (45658974764), plus full Windows
+45658974941 (artifact 15042814943). Its workflow now covers RC3-targeting
+PRs, including new application and test modules.
+
+This increment rejects wildcard imports in source tripwires (including
+relative imports) rather than silently missing their imported names.
+Bounded source reads compare descriptor and path identity before/after
+the read, reject symlinks/nonregular files and normalize unavailable
+files to ValueError. Two regression methods cover wildcard imports and
+same-size atomic replacement between initial lstat and open. These
+are narrow defensive controls, not a complete filesystem sandbox,
+taint analysis, independent audit or security clearance. No change to
+provider access, runtime permissions or build packages. Full local
+checkout remains blocked by GitHub DNS; local full red/green not run.
+Coherent implementation and tests submitted together for hosted CI.
+
+Reuse: pinned agency-agents security auditor
+8ae6164602c95ca78828b148b9052460ee426885 (MIT) reviewed as a defensive
+design reference only. Operative risk_gate.py blob
+ab737fdd8fae557ef456e3240d6580fc35d9e459 inspected for exact-type
+default-deny design; no code copied and no Operative changes. Formal
+main acceptance remains 0/42. No spending, cloud provisioning or
+external commercial actions. Independent security/license review,
+source permissions, signing and role authorization remain outstanding.
