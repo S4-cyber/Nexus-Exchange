@@ -127,3 +127,38 @@ class CouncilCriterionTests(unittest.TestCase):
             self.review(h=replace(self.h,attempt=4))
         for check in self.checks.values():
             check.assert_not_called()
+
+    def test_malformed_plan_digest_rejected_before_checks(self):
+        plan=build_review_plan(self.h,self.specs)
+        for bad in ("é"*64,"a"*63,"G"*64,True):
+            with self.assertRaises(ValueError):
+                self.review(plan=replace(plan,handoff_sha256=bad))
+        for check in self.checks.values():
+            check.assert_not_called()
+
+    def test_aggregate_budget_checked_before_predicates(self):
+        names=["a","b","c","d","e"]
+        h=handoff(acceptance_criteria=names)
+        raw=b"x"*MAX_ARTIFACT_BYTES
+        check=Mock(return_value=True)
+        specs=tuple(CriterionSpec(k,digest(raw),check) for k in names)
+        with self.assertRaises(ValueError):
+            review_criteria(h,build_review_plan(h,specs),
+                dict.fromkeys(names,raw),halted=False)
+        check.assert_not_called()
+
+    def test_callback_cannot_replace_remaining_artifact_mapping(self):
+        source=self.artifacts["source"]
+        def mutate(_raw):
+            self.artifacts["source"]=b"tampered"
+            return True
+        self.checks["identity"].side_effect=mutate
+        self.assertEqual(self.review()["status"],"ADVANCE_REVIEW_ONLY")
+        self.checks["source"].assert_called_once_with(source)
+
+    def test_unknown_halt_callback_fails_closed(self):
+        for checker in (True,lambda:None,lambda:0,Mock(side_effect=RuntimeError("private"))):
+            with self.assertRaises(PermissionError):
+                self.review(halt_check=checker)
+        for check in self.checks.values():
+            check.assert_not_called()
