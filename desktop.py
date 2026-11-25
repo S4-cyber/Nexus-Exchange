@@ -72,6 +72,9 @@ def archive_report(path, *, now, query=""):
     return dict(scope="Historical observations; review only; no commercial authority",
         evaluated_at=now.isoformat(), search_scope="Newest 100 observations", rows=rows)
 
+def export_report(path, report):
+    Path(path).write_text(json.dumps(report,ensure_ascii=True,indent=2),encoding="utf-8")
+
 def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
@@ -212,7 +215,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 filetypes=[("JSON","*.json")],initialfile="nexus-exchange-archive.json")
             if path:
                 try:
-                    Path(path).write_text(json.dumps(report,ensure_ascii=True,indent=2)+"\\n",encoding="utf-8")
+                    export_report(path, report)
                 except OSError as exc:
                     messagebox.showerror("Export failed",type(exc).__name__,parent=window)
         buttons = ttk.Frame(window)
