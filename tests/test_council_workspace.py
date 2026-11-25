@@ -148,3 +148,19 @@ class CouncilWorkspaceTests(unittest.TestCase):
                                     blocked_check=lambda:next(states))
         with self.assertRaises(PermissionError):
             workspace.inspect()
+
+    def test_context_layers_do_not_consume_attempts_or_authorize(self):
+        from nexus_exchange.context_packet import validate_packet
+        for level in ("summary","review","evidence"):
+            packet,snap=self.workspace.context(level)
+            self.assertEqual(packet,validate_packet(packet,snap,halted=False))
+            self.assertEqual(packet["plan_id"],self.key)
+            self.assertFalse(packet["external_authority"])
+        self.assertFalse((self.directory/"council.sqlite3").exists())
+        self.assertEqual([call.args[0] for call in self.action.call_args_list],["inspect"]*3)
+        self.workspace.register()
+        self.workspace.context("review")
+        self.assertEqual(self.workspace.history()["attempts_used"],0)
+        self.busy=True
+        with self.assertRaises(PermissionError):
+            self.workspace.context("summary")
