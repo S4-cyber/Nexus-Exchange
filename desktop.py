@@ -19,7 +19,7 @@ from nexus_exchange.ranking_workspace import open_ranking_window
 from nexus_exchange.scout_discovery import open_discovery_window, load_profile, resolve_query, execute_discovery
 from nexus_exchange.evidence import fingerprint, verify_reference, EvidenceError
 from nexus_exchange.opportunity_archive import OpportunityArchive
-from nexus_exchange.dashboard_events import project
+from nexus_exchange.dashboard_events import project, search_history
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
 from nexus_exchange.local_import import evaluate_file
@@ -161,8 +161,14 @@ def main(*, data_directory=None, gui_smoke=False):
         cell.grid(row=i//5,column=i%5,sticky="ew",padx=3,pady=4)
         tasks.columnconfigure(i%5,weight=1)
         slots.append(cell)
-    history = ttk.Treeview(content,columns=("time","target","state"),show="headings",height=7)
-    for key,label in (("time","UTC timestamp"),("target","Target"),("state","Status")):
+    filters = ttk.Frame(content)
+    filters.pack(fill="x", padx=20)
+    ttk.Label(filters, text="Search history by target, status, date or task ID").pack(side="left")
+    history_query = tk.StringVar()
+    history_search = ttk.Entry(filters, textvariable=history_query)
+    history_search.pack(side="left", fill="x", expand=True, padx=6)
+    history = ttk.Treeview(content,columns=("time","target","state","task_id"),show="headings",height=7)
+    for key,label in (("time","UTC timestamp"),("target","Target"),("state","Status"),("task_id","Task ID")):
         history.heading(key,text=label)
         history.column(key,width=220 if key=="time" else 160)
     history.pack(fill="both",padx=20,pady=8)
@@ -172,8 +178,21 @@ def main(*, data_directory=None, gui_smoke=False):
     status = ttk.Label(content)
     status.pack()
     page = 1
+    journal = ()
+    def display_history(*_):
+        visible, matches = search_history(journal, history_query.get())
+        history.delete(*history.get_children())
+        for event in visible:
+            history.insert("", "end", values=(event.timestamp, event.target, event.state, event.task_id))
+        match_count.configure(text=f"{len(visible)} shown / {matches} matching")
+
+    match_count = ttk.Label(filters)
+    match_count.pack(side="right")
+    ttk.Button(filters, text="Clear", command=lambda: history_query.set("")).pack(side="right", padx=4)
+    history_query.trace_add("write", display_history)
+
     def refresh():
-        nonlocal page
+        nonlocal page, journal
         events = store.read()
         first = project(events)
         page = min(page,first["pages"])
@@ -181,10 +200,8 @@ def main(*, data_directory=None, gui_smoke=False):
         for i,slot in enumerate(slots):
             slot.configure(text=(view["tasks"][i].target+" | "+view["tasks"][i].state) if i<len(view["tasks"]) else "Idle")
         page_label.configure(text=f"Page {page} / {view['pages']}")
-        for item in history.get_children():
-            history.delete(item)
-        for event in reversed(view["history"][-100:]):
-            history.insert("","end",values=(event.timestamp,event.target,event.state))
+        journal = view["history"]
+        display_history()
         status.configure(text=f"Successful tasks: {view['successful_tasks']} | Recorded events: {len(view['history'])}")
     navigation = ttk.Frame(content)
     navigation.pack()
@@ -1398,6 +1415,17 @@ def main(*, data_directory=None, gui_smoke=False):
         resume()
         if stop.is_set() or str(launch.cget("state"))!="normal":
             raise RuntimeError("explicit offline resume failed")
+        run_logged(store, stop, target="Review search fixture")
+        refresh()
+        history_query.set("REVIEW SEARCH")
+        if len(history.get_children()) != 3:
+            raise RuntimeError("Dashboard history search missed fixture events")
+        history_query.set("no such event")
+        if history.get_children():
+            raise RuntimeError("Dashboard history search retained unrelated events")
+        history_query.set("")
+        if len(history.get_children()) != 3:
+            raise RuntimeError("Dashboard history search failed to clear")
         halt()
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
             raise RuntimeError("desktop emergency halt failed")
