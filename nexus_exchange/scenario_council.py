@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .cash_feasibility import assess
 from .council_attempts import CouncilAttemptStore, _hash
+from .council_audit import POLICY, POLICY_SHA256, scope_for, validate_snapshot
 from .council_coordinator import CouncilCoordinator, build_task
 from .council_criterion_review import CriterionSpec, _permit
 from .lead_store import _digest, _json, _now
@@ -17,16 +18,6 @@ from .owner_profile import ProfileStore, profile_revision
 from .review_ranking import _source_tier, _collection_wait
 from .scenario_evidence import ScenarioEvidenceStore, ASSUMPTION_FIELDS, _value
 from .schedule_feasibility import assess_schedule, _iso
-
-POLICY=(
-    ("source_and_capability","Historical source and declared profile suitability, not verified eligibility"),
-    ("financial_model","Known modeled budget fit and strictly positive expected net"),
-    ("delivery_schedule","Modeled preparation, delivery and declared labor fit"),
-    ("collection_timing","Known nonnegative modeled wait until payment"),
-    ("reference_coverage","Every known assumption has a recorded reference; no factual verification"),
-)
-POLICY_SHA256=_digest(_json(dict(namespace="scenario-local-review-v1",criteria=POLICY)))
-
 
 def _financial(cash):
     budget=cash["modeled_budget_fit"]
@@ -51,7 +42,7 @@ def _predicate(expected,verdict):
 
 def _task_and_material(saved,values):
     """Pin immutable local inputs, not changing model results or reference counts."""
-    scope=_digest(_json(dict(namespace="scenario-local-review",plan_id=saved["plan_id"])))
+    scope=scope_for(saved["plan_id"])
     specs=[]
     artifacts={}
     for name,_ in POLICY:
@@ -135,6 +126,8 @@ class ScenarioCouncil:
                               for name,description in POLICY],
                     total=len(ASSUMPTION_FIELDS),referenced=referenced,unknown=len(unknown),
                     missing_reference_fields=missing,unknown_fields=unknown,
+                    reference_ids={key:[entry["evidence_id"] for entry in refs[key]] for key in ASSUMPTION_FIELDS},
+                    scenario_sha256=cash["scenario_sha256"],schedule_sha256=timing["schedule_sha256"],
                     independently_verified_count=0,
                     modeled_cash_exposure=None if cash["modeled_cash_exposure"] is None else str(cash["modeled_cash_exposure"]),
                     modeled_expected_net=None if cash["modeled_expected_net"] is None else str(cash["modeled_expected_net"]),
@@ -143,6 +136,7 @@ class ScenarioCouncil:
                     commercial_facts_verified=False,independent_reviewer_authenticated=False,
                     release_eligible=False,execution_eligible=False,external_authority=False)
                 result["snapshot_sha256"]=_digest(_json(result))
+                validate_snapshot(result)
                 self._confirm(profile)
                 yield result,task,artifacts
                 self._permit()
@@ -165,5 +159,17 @@ class ScenarioCouncil:
         with self._snapshot(plan_id) as (snapshot,task,artifacts):
             with CouncilAttemptStore(self.directory/"council.sqlite3") as store:
                 result=CouncilCoordinator(store,halt_check=self.halt_check,
-                    clock=self.clock).run_once(task,artifacts)
+                    clock=self.clock).run_once(task,artifacts,audit_snapshot=snapshot)
                 return dict(result,snapshot=snapshot)
+
+    def history(self,plan_id):
+        """Historical review audit only; never current eligibility or factual verification."""
+        self._permit()
+        task_id="COUNCIL."+scope_for(plan_id)
+        path=self.directory/"council.sqlite3"
+        if not path.is_file():
+            raise ValueError("Council history unavailable")
+        with CouncilAttemptStore(path) as store:
+            result=store.audit_history(task_id,halted=False)
+        self._permit()
+        return result
