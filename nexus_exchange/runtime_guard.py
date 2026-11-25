@@ -4,6 +4,7 @@ Only the desktop owner invokes resume; worker threads observe a cooperative
 threading.Event. The OS lock is held until workers have drained and close
 returns. No external authorization or automatic task replay.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, get_ident
@@ -49,6 +50,8 @@ class RuntimeGuard:
         self._council_active=False
         self._operator_active=False
         self._browser_active=False
+        self._browser_job=None
+        self._browser_executor=None
         self.council_recovered_count=0
         self.council_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
@@ -229,6 +232,93 @@ class RuntimeGuard:
             raise
         finally:
             self._browser_active=False
+
+    def browser_process_pending(self):
+        """Owner-thread state; remains true until the supervisor is collected."""
+        self._require_owner()
+        return self._browser_job is not None
+
+    def _browser_process_fault(self):
+        if not self.is_set():
+            try:
+                self.set()
+            except BaseException:
+                self._stop.set()
+                self._faulted=True
+
+    def start_browser_process(self,fixture_id,*,confirmed=None):
+        """Reserve and launch one fixed offline diagnostic; never accept a Future or callback."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Scout diagnostics unavailable while halted or faulted")
+        if confirmed is not True:
+            raise PermissionError("explicit local fixture confirmation required")
+        from .browser_contract import plan_fixture
+        from .browser_process import _supervise, DEFAULT_PARENT_MS
+        plan=plan_fixture(fixture_id,request_limit=2,timeout_ms=5000,halted=self.is_set())
+        self._browser_active=True
+        try:
+            if self._council_pending():
+                self.set()
+                raise PermissionError("outstanding Council reservation requires halted recovery")
+            self._browser_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix="scout-fixture")
+            # The worker only receives the fixed plan and the thread-safe halt reader.
+            # It cannot use the owner's SQLite connection or change runtime state.
+            self._browser_job=self._browser_executor.submit(
+                _supervise,plan,halt_check=self.is_set,timeout_ms=DEFAULT_PARENT_MS)
+        except BaseException:
+            try:
+                if self._browser_executor is not None:
+                    self._browser_executor.shutdown(wait=True,cancel_futures=True)
+            finally:
+                self._browser_executor=None
+                self._browser_job=None
+                self._browser_active=False
+                self._browser_process_fault()
+            raise
+
+    def _collect_browser_process(self,*,wait):
+        self._require_owner()
+        job=self._browser_job
+        if job is None:
+            raise PermissionError("no reserved Scout diagnostic")
+        if not wait and not job.done():
+            return None
+        try:
+            report=job.result()
+            if self.is_set():
+                raise PermissionError("Scout diagnostic result withheld after halt")
+            return report
+        except BaseException as exc:
+            from .browser_process import ProcessDenied
+            self._browser_process_fault()
+            if isinstance(exc,ProcessDenied) and exc.reason=="WORKER_CLEANUP_FAILED":
+                self._faulted=True
+            raise
+        finally:
+            # No idle/close/resume until supervisor thread has joined.
+            self._browser_executor.shutdown(wait=True,cancel_futures=True)
+            self._browser_executor=None
+            self._browser_job=None
+            self._browser_active=False
+
+    def poll_browser_process(self):
+        """Nonblocking owner collection; None means still reserved/running."""
+        return self._collect_browser_process(wait=False)
+
+    def drain_browser_process(self):
+        """Shutdown-only collection; never release a result while halted."""
+        self._require_owner()
+        if not self.is_set():
+            raise PermissionError("halt before draining Scout diagnostic")
+        if self._browser_job is None:
+            return
+        try:
+            self._collect_browser_process(wait=True)
+        except Exception:
+            # The halt remains asserted; no result or automatic replay.
+            if self._browser_job is not None:
+                raise
 
     def _read(self):
         rows=self.events.db.execute(

@@ -121,12 +121,15 @@ def main(*, data_directory=None, gui_smoke=False):
     executor = ThreadPoolExecutor(max_workers=1)
     future = None
     scenario_report = None
+    def busy():
+        return future is not None or stop.browser_process_pending()
     def close():
         try:
             stop.set()
         except Exception:
             pass  # In-memory halt is asserted even when persistence fails.
         executor.shutdown(wait=True, cancel_futures=True)
+        stop.drain_browser_process()
         try:
             stop.close()
         finally:
@@ -190,7 +193,7 @@ def main(*, data_directory=None, gui_smoke=False):
             local.close()
     def run(work=None, target="Offline screening", scenario=False):
         nonlocal future, scenario_report
-        if stop.is_set() or future is not None:
+        if stop.is_set() or busy():
             return
         launch.configure(state="disabled")
         importer.configure(state="disabled")
@@ -258,7 +261,7 @@ def main(*, data_directory=None, gui_smoke=False):
             message="HALTED — persistence fault; restart and recover before resuming"
         show_halted(message)
     def council_blocked():
-        return stop.is_set() or future is not None
+        return stop.is_set() or busy()
     def council_action(action,plan_id):
         if council_blocked():
             raise PermissionError("Council halted or desktop worker active")
@@ -278,27 +281,55 @@ def main(*, data_directory=None, gui_smoke=False):
     def browser_diagnostic(fixture_id):
         nonlocal scenario_report
         if council_blocked():
-            return None
+            return False
         scenario_report=None
         exporter.configure(state="disabled")
         output.configure(state="normal")
         output.delete("1.0","end")
+        output.insert("end","Scout owned fixture process running — no network or browser engine.")
+        output.configure(state="disabled")
         try:
-            report=stop.browser_fixture(fixture_id,confirmed=True)
+            stop.start_browser_process(fixture_id,confirmed=True)
+        except Exception:
             if stop.is_set():
-                return None
-            output.insert("end","SCOUT OFFLINE DIAGNOSTIC — synthetic data, no browser or network.\n"+json.dumps(report,ensure_ascii=True,indent=2))
-            return report
-        except Exception as exc:
+                show_halted("HALTED — Scout diagnostic could not start.")
+            else:
+                output.configure(state="normal")
+                output.delete("1.0","end")
+                output.insert("end","Scout diagnostic blocked.")
+                output.configure(state="disabled")
+            return False
+        for button in (launch,importer,simulator,*diagnostic_buttons):
+            button.configure(state="disabled")
+        halt_status.configure(text="Scout diagnostic running — Emergency halt available.")
+        root.after(25,browser_poll)
+        return True
+    def browser_poll():
+        try:
+            report=stop.poll_browser_process()
+            if report is None:
+                root.after(25,browser_poll)
+                return
             if not stop.is_set():
-                output.insert("end","Diagnostic blocked: "+type(exc).__name__)
-            return None
-        finally:
-            output.configure(state="disabled")
-            if stop.is_set():
-                show_halted("HALTED — Scout diagnostic stopped; review runtime before explicit resume.")
+                output.configure(state="normal")
+                output.delete("1.0","end")
+                output.insert("end","SCOUT OFFLINE PROCESS DIAGNOSTIC — synthetic data, no browser or network.\n"
+                              +json.dumps(report,ensure_ascii=True,indent=2))
+                output.configure(state="disabled")
+        except Exception:
+            if not stop.is_set():
+                try:
+                    stop.set()
+                except Exception:
+                    pass
+        if stop.is_set():
+            show_halted("HALTED — Scout diagnostic drained; explicit offline resume required.")
+        else:
+            for button in (launch,importer,simulator,*diagnostic_buttons):
+                button.configure(state="normal")
+            halt_status.configure(text="Offline ready — commercial actions disabled")
     def recover_council():
-        if future is not None or not stop.is_set():
+        if busy() or not stop.is_set():
             halt_status.configure(text="Halt and wait for workers to drain before Council recovery.")
             return None
         try:
@@ -310,7 +341,7 @@ def main(*, data_directory=None, gui_smoke=False):
             f"{result['escalated']} escalated; Resume offline explicitly.")
         return result
     def resume():
-        if future is not None:
+        if busy():
             halt_status.configure(text="Wait for interrupted worker to finish; then resume offline.")
             return
         try:
@@ -325,13 +356,13 @@ def main(*, data_directory=None, gui_smoke=False):
             button.configure(state="normal")
         halt_status.configure(text="Offline ready — commercial actions disabled")
     def import_file():
-        if stop.is_set() or future is not None:
+        if stop.is_set() or busy():
             return
         path = filedialog.askopenfilename(parent=root,filetypes=[("Compiled snapshot manifest","*.json")])
         if path:
             run(partial(evaluate_file,path),target="Local compiled snapshot import")
     def import_scenario():
-        if stop.is_set() or future is not None:
+        if stop.is_set() or busy():
             return
         path = filedialog.askopenfilename(parent=root,filetypes=[("Deal scenario JSON","*.json")])
         if path:
@@ -520,7 +551,7 @@ def main(*, data_directory=None, gui_smoke=False):
             if source is None or source.id!="ted":
                 write_details("Select EU TED before starting its keyless search.")
                 return
-            if stop.is_set() or future is not None:
+            if stop.is_set() or busy():
                 write_details("Halted or busy. Resume or finish the current task first.")
                 return
             prefix=simpledialog.askstring("TED public search",
@@ -549,7 +580,7 @@ def main(*, data_directory=None, gui_smoke=False):
             if source is None or source.id!="uk_tender":
                 write_details("Select UK Find a Tender before starting its public search.")
                 return
-            if stop.is_set() or future is not None:
+            if stop.is_set() or busy():
                 write_details("Halted or busy. Resume or finish the current task first.")
                 return
             if not messagebox.askyesno("Authorize one UK procurement search",
@@ -569,7 +600,7 @@ def main(*, data_directory=None, gui_smoke=False):
             if source is None or source.id!="canada":
                 write_details("Select CanadaBuys before starting its public dataset search.")
                 return
-            if stop.is_set() or future is not None:
+            if stop.is_set() or busy():
                 write_details("Halted or busy. Resume or finish the current task first.")
                 return
             keyword=simpledialog.askstring("CanadaBuys public search",
@@ -597,7 +628,7 @@ def main(*, data_directory=None, gui_smoke=False):
             if source is None or source.id!="usaspending":
                 write_details("Select USAspending to research historical prime contractors.")
                 return
-            if stop.is_set() or future is not None:
+            if stop.is_set() or busy():
                 write_details("Halted or busy. Resume or finish the current task first.")
                 return
             code=simpledialog.askstring("USAspending contractor research",
@@ -701,7 +732,7 @@ def main(*, data_directory=None, gui_smoke=False):
         for flag in flags.values():
             flag.trace_add("write",lambda *unused:refresh_plan())
         def run_sam():
-            if stop.is_set() or future is not None:
+            if stop.is_set() or busy():
                 result.configure(text="Halted or busy. Resume or finish the current task first.")
                 return
             if source.get()!="sam":
@@ -1193,15 +1224,37 @@ def main(*, data_directory=None, gui_smoke=False):
             raise RuntimeError("desktop smoke resume failed")
         if any(str(button.cget("state"))!="normal" for button in diagnostic_buttons):
             raise RuntimeError("Scout diagnostic did not enable after resume")
+        from time import monotonic,sleep
+        def wait_for_diagnostic():
+            deadline=monotonic()+20
+            while stop.browser_process_pending():
+                if monotonic()>=deadline:
+                    raise RuntimeError("Scout GUI diagnostic did not drain")
+                root.update()
+                sleep(0.01)
+            root.update()
         for fixture_id in ("procurement","digital_services"):
-            report=browser_diagnostic(fixture_id)
-            if (report is None or report["fixture_id"]!=fixture_id or report["attempts"]!=2
-                    or report["network_enabled"] or report["browser_executed"]
-                    or "OWNED_FIXTURE_COMPLETED" not in output.get("1.0","end")):
-                raise RuntimeError("Scout native diagnostic smoke failed")
+            if not browser_diagnostic(fixture_id) or not stop.browser_process_pending():
+                raise RuntimeError("Scout native process did not reserve")
+            if not council_blocked() or any(str(button.cget("state"))!="disabled"
+                                          for button in diagnostic_buttons):
+                raise RuntimeError("Scout concurrent controls not blocked")
+            wait_for_diagnostic()
+            shown=output.get("1.0","end")
+            report=json.loads(shown.split("\n",1)[1])
+            if (report["fixture_id"]!=fixture_id or not report["child_process_completed"]
+                    or report["worker_pid"]==os.getpid() or report["network_enabled"]
+                    or report["fixture_report"]["attempts"]!=2):
+                raise RuntimeError("Scout native process smoke failed")
+        if not browser_diagnostic("procurement"):
+            raise RuntimeError("Scout cancellation fixture did not reserve")
         halt()
+        resume()
+        if not stop.is_set() or not stop.browser_process_pending():
+            raise RuntimeError("Scout halt did not block resume before drain")
+        wait_for_diagnostic()
         if (any(str(button.cget("state"))!="disabled" for button in diagnostic_buttons)
-                or browser_diagnostic("procurement") is not None
+                or browser_diagnostic("procurement")
                 or output.get("1.0","end").strip()):
             raise RuntimeError("Scout diagnostic halt suppression failed")
         resume()
