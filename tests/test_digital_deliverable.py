@@ -10,7 +10,7 @@ from datetime import timedelta
 from nexus_exchange import sam_search
 from nexus_exchange.checklist_store import context_for
 from nexus_exchange.digital_deliverable import (
-    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES,
+    build_contract, produce_csv, verify_csv, DeliverableError, MAX_INPUT_BYTES, JSON_FORMAT, JSON_SOURCE,
 )
 from nexus_exchange.lead_store import _digest,_json
 from nexus_exchange.owner_profile import ProfileStore
@@ -24,6 +24,7 @@ import test_sam_search as sam
 
 RAW=b'name,id,category\n"Beta, Inc",002,Research\nAlpha,001,Design\n'
 EXPECTED=b'"id","name","category"\r\n"001","Alpha","Design"\r\n"002","Beta, Inc","Research"\r\n'
+JSON_RAW=b'[{"name":"Beta, Inc","id":"002","category":"Research"},{"category":"Design","id":"001","name":"Alpha"}]'
 
 
 def spec(raw=RAW,**changes):
@@ -72,6 +73,93 @@ class DigitalDeliverableTests(unittest.TestCase):
             self.assertIs(result["report"][flag],False)
         self.assertEqual(self.call(),result)
         self.assertFalse((self.directory/"operator.sqlite3").exists())
+
+    def json_call(self,raw=JSON_RAW,**changes):
+        return self.guard.produce_csv_deliverable(self.key,raw=raw,
+            specification=spec(raw,**changes),source_format=JSON_SOURCE,confirmed=True)
+
+    def test_json_conversion_exact_values_and_qa(self):
+        result=self.json_call()
+        self.assertEqual(result["artifact"],EXPECTED)
+        self.assertEqual(result["contract"]["format"],JSON_FORMAT)
+        self.assertIn("NO_DUPLICATE_JSON_MEMBERS",result["report"]["checks"])
+        self.assertEqual(result["report"],verify_csv(result["contract"],JSON_RAW,EXPECTED,halted=False))
+        self.assertEqual(self.json_call(),result)
+        self.assertFalse(result["report"]["external_authority"])
+        self.assertFalse(result["report"]["buyer_accepted"])
+        self.assertFalse(result["report"]["revenue_realized"])
+        with self.assertRaises(DeliverableError):
+            verify_csv(result["contract"],JSON_RAW,EXPECTED.replace(b"Alpha",b"Other"),halted=False)
+        with self.assertRaises(DeliverableError):
+            produce_csv(result["contract"],JSON_RAW+b" ",halted=False)
+
+    def test_json_rejects_ambiguous_or_unsafe_input(self):
+        for raw in (
+                JSON_RAW.replace(b'"id":"002"',b'"id":"002","id":"099"'),
+                JSON_RAW.replace(b'"002"',b'2'),
+                JSON_RAW.replace(b'"Alpha"',b'null'),
+                JSON_RAW.replace(b'"Alpha"',b'true'),
+                JSON_RAW.replace(b'"Alpha"',b'["Alpha"]'),
+                JSON_RAW.replace(b'"Alpha"',b'{"name":"Alpha"}'),
+                JSON_RAW.replace(b'"Alpha"',b'NaN'),
+                JSON_RAW.replace(b'"Alpha"',b'"=1+1"'),
+                JSON_RAW.replace(b'"Alpha"',b'"\\u0000"'),
+                JSON_RAW.replace(b'"001"',b'"002"'),
+                JSON_RAW.replace(b'"name":"Alpha"',b'"other":"Alpha"'),
+                JSON_RAW[:-1],b'{}',b'\xff'):
+            with self.subTest(raw=raw),self.assertRaises(DeliverableError):
+                self.json_call(raw)
+        with self.assertRaises(DeliverableError):
+            self.json_call(expected_rows=1)
+        with self.assertRaises(DeliverableError):
+            self.json_call(b"x"*(MAX_INPUT_BYTES+1))
+
+    def test_json_file_preview_export_and_durable_obligation(self):
+        from nexus_exchange.csv_workspace import CsvWorkspace
+        source=self.directory/"sample.json"
+        target=self.directory/"sample.csv"
+        source.write_bytes(JSON_RAW)
+        workspace=CsvWorkspace(self.key,action=self.guard.csv_file_action,
+                               blocked_check=self.guard.is_set,source_format=JSON_SOURCE)
+        reviewed=workspace.preview(source,"id,name,category","id","2")
+        self.assertEqual(reviewed["artifact"],EXPECTED)
+        self.assertTrue(workspace.export(target,confirmed=True)["exported"])
+        self.assertEqual(target.read_bytes(),EXPECTED)
+        workspace.preview(source,"id,name,category","id","2")
+        saved=workspace.register(target,confirmed=True)
+        self.assertFalse(saved["buyer_accepted"])
+        self.assertEqual(saved["binding"]["contract"]["format"],JSON_FORMAT)
+        historical=self.guard.csv_obligation_action("history",self.key,
+            obligation_id=saved["obligation_id"])
+        self.assertEqual(historical,saved)
+        # A legacy CSV with the same output is a different source contract.
+        source_csv=self.directory/"original.csv"
+        source_csv.write_bytes(RAW)
+        legacy=CsvWorkspace(self.key,action=self.guard.csv_file_action,blocked_check=self.guard.is_set)
+        old=legacy.preview(source_csv,"id,name,category","id","2")
+        self.assertEqual(old["artifact"],reviewed["artifact"])
+        self.assertNotEqual(old["contract"]["contract_sha256"],reviewed["contract"]["contract_sha256"])
+
+    def test_json_file_format_pin_halt_and_changed_source(self):
+        from nexus_exchange.deliverable_files import preview_pins
+        source=self.directory/"sample.json"
+        target=self.directory/"sample.csv"
+        source.write_bytes(JSON_RAW)
+        inputs=dict(source_path=source,columns=["id","name","category"],
+                    key_column="id",expected_rows=2,source_format=JSON_SOURCE)
+        result=self.guard.csv_file_action("preview",self.key,confirmed=True,**inputs)
+        source.write_bytes(JSON_RAW+b" ")
+        with self.assertRaises(ValueError):
+            self.guard.csv_file_action("export",self.key,confirmed=True,destination_path=target,
+                                       **inputs,**preview_pins(result))
+        self.assertFalse(target.exists())
+        with self.assertRaises(ValueError):
+            self.guard.csv_file_action("preview",self.key,confirmed=True,**dict(inputs,source_format="OTHER"))
+        with self.assertRaises(ValueError):
+            self.guard.csv_file_action("preview",self.key,confirmed=True,**dict(inputs,source_format="UTF8_CSV"))
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.json_call()
 
     def test_changed_input_or_artifact_rejected(self):
         contract=self.contract()

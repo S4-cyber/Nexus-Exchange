@@ -6,6 +6,7 @@ No file I/O, network, model API, invoice, or commercial dispatch occurs.
 import csv
 from hashlib import sha256
 import io
+import json
 import re
 import unicodedata
 
@@ -15,6 +16,9 @@ from .governor import Action, decide
 from .lead_store import _digest, _json
 
 FORMAT="nexus-csv-deliverable-contract-v2"
+JSON_FORMAT="nexus-json-records-to-csv-contract-v1"
+CSV_SOURCE="UTF8_CSV"
+JSON_SOURCE="UTF8_JSON_RECORDS"
 REPORT="nexus-csv-deliverable-report-v1"
 MAX_INPUT_BYTES=256*1024
 MAX_OUTPUT_BYTES=512*1024
@@ -70,14 +74,20 @@ def _schedule_scope(plan_id,context,scenario_sha256):
         scenario_sha256=_hash(scenario_sha256))))
 
 
-def build_contract(snapshot,specification,*,halted=None):
+def _source_contract_format(source_format):
+    if type(source_format) is not str or source_format not in (CSV_SOURCE,JSON_SOURCE):
+        raise DeliverableError("UNSUPPORTED_SOURCE_FORMAT")
+    return FORMAT if source_format==CSV_SOURCE else JSON_FORMAT
+
+
+def build_contract(snapshot,specification,*,halted=None,source_format=CSV_SOURCE):
     """Bind explicit work-sample requirements to one current local saved-plan view."""
     _permit(halted)
     snap=validate_snapshot(snapshot)
     if snap["source_hold"] is not None:
         raise DeliverableError("CURRENT_SOURCE_REVIEW_REQUIRED")
     spec=_spec(specification)
-    payload=dict(format=FORMAT,plan_id=snap["plan_id"],context=dict(snap["context"]),
+    payload=dict(format=_source_contract_format(source_format),plan_id=snap["plan_id"],context=dict(snap["context"]),
                  scenario_sha256=snap["scenario_sha256"],
                  schedule_scope_sha256=_schedule_scope(snap["plan_id"],snap["context"],snap["scenario_sha256"]),
                  specification=spec,**dict.fromkeys(_FLAGS,False))
@@ -89,9 +99,9 @@ def _contract(raw):
     ctx=_context(raw["context"])
     if ctx["profile_revision"] is None:
         raise DeliverableError("CURRENT_DECLARED_PROFILE_REQUIRED")
-    if raw["format"]!=FORMAT or any(raw[k] is not False for k in _FLAGS):
+    if raw["format"] not in (FORMAT,JSON_FORMAT) or any(raw[k] is not False for k in _FLAGS):
         raise DeliverableError("DELIVERABLE_AUTHORITY_OR_SCOPE_MISMATCH")
-    payload=dict(format=FORMAT,plan_id=_hash(raw["plan_id"]),context=ctx,
+    payload=dict(format=raw["format"],plan_id=_hash(raw["plan_id"]),context=ctx,
                  scenario_sha256=_hash(raw["scenario_sha256"]),
                  schedule_scope_sha256=_schedule_scope(raw["plan_id"],ctx,raw["scenario_sha256"]),
                  specification=_spec(raw["specification"]),**dict.fromkeys(_FLAGS,False))
@@ -149,12 +159,64 @@ def _table(raw,spec,*,maximum,ordered,halted,halt_check):
         raise DeliverableError("CSV_PARSE_INVALID") from None
 
 
+def _json_table(raw,spec,halted,halt_check):
+    """Accept only a bounded array of flat, exact-schema string records."""
+    _permit(halted,halt_check)
+    def pairs(items):
+        if len(items)>MAX_COLUMNS:
+            raise DeliverableError("JSON_RECORD_SCHEMA_MISMATCH")
+        record={}
+        for key,value in items:
+            if key in record:
+                raise DeliverableError("JSON_DUPLICATE_MEMBER")
+            if type(value) is not str:
+                raise DeliverableError("JSON_NON_STRING_VALUE")
+            record[key]=value
+        return record
+    def reject_number(_value):
+        raise DeliverableError("JSON_NON_STRING_VALUE")
+    try:
+        records=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,
+                           parse_int=reject_number,parse_float=reject_number,
+                           parse_constant=reject_number)
+    except (UnicodeError,json.JSONDecodeError,RecursionError):
+        raise DeliverableError("JSON_PARSE_INVALID") from None
+    _permit(halted,halt_check)
+    if type(records) is not list or len(records)!=spec["expected_rows"]:
+        raise DeliverableError("JSON_ROW_COUNT_OR_SHAPE_MISMATCH")
+    cols=spec["columns"]
+    key_index=cols.index(spec["key_column"])
+    rows={}
+    for record in records:
+        _permit(halted,halt_check)
+        if type(record) is not dict or set(record)!=set(cols):
+            raise DeliverableError("JSON_RECORD_SCHEMA_MISMATCH")
+        values=tuple(_cell(record[col]) for col in cols)
+        key=values[key_index]
+        if not key or key!=key.strip() or key in rows:
+            raise DeliverableError("CSV_KEY_EMPTY_OR_DUPLICATE")
+        rows[key]=values
+    _permit(halted,halt_check)
+    return rows
+
+
+def _checks(contract):
+    checks=["EXACT_INPUT_PIN","COLUMN_SCHEMA","EXPECTED_ROW_COUNT","UNIQUE_KEYS",
+            "NO_FORMULA_SHAPED_CELLS","EXACT_CELL_PRESERVATION",
+            "CANONICAL_ORDER_AND_SERIALIZATION"]
+    if contract["format"]==JSON_FORMAT:
+        checks.extend(["EXACT_JSON_RECORD_SCHEMA","STRING_VALUES_ONLY","NO_DUPLICATE_JSON_MEMBERS"])
+    return checks
+
+
 def _input(contract,raw,halted,halt_check):
     spec=contract["specification"]
     if type(raw) is not bytes or not 1<=len(raw)<=MAX_INPUT_BYTES:
         raise DeliverableError("CSV_BYTE_LIMIT")
     if sha256(raw).hexdigest()!=spec["input_sha256"]:
         raise DeliverableError("CSV_INPUT_FINGERPRINT_MISMATCH")
+    if contract["format"]==JSON_FORMAT:
+        return _json_table(raw,spec,halted,halt_check)
     return _table(raw,spec,maximum=MAX_INPUT_BYTES,ordered=False,
                   halted=halted,halt_check=halt_check)
 
@@ -181,9 +243,7 @@ def verify_csv(contract,raw,artifact,*,halted=None,halt_check=None):
                 artifact_sha256=sha256(artifact).hexdigest(),
                 input_bytes=len(raw),artifact_bytes=len(artifact),rows=len(output),
                 columns=list(spec["columns"]),key_column=spec["key_column"],
-                checks=["EXACT_INPUT_PIN","COLUMN_SCHEMA","EXPECTED_ROW_COUNT",
-                        "UNIQUE_KEYS","NO_FORMULA_SHAPED_CELLS","EXACT_CELL_PRESERVATION",
-                        "CANONICAL_ORDER_AND_SERIALIZATION"],
+                checks=_checks(checked),
                 local_criteria_passed=True,**dict.fromkeys(_FLAGS,False))
     _permit(halted,halt_check)
     return dict(result,report_sha256=_digest(_json(result)))

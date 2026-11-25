@@ -5,7 +5,7 @@ import re
 import sqlite3
 
 from .checklist_store import _hash
-from .digital_deliverable import _spec
+from .digital_deliverable import _spec, _source_contract_format, CSV_SOURCE, JSON_SOURCE, JSON_FORMAT
 from .deliverable_files import preview_pins
 from .obligation_workspace import validate_record, open_obligation_window
 
@@ -20,8 +20,10 @@ def parse_fields(columns,key,rows):
 
 
 class CsvWorkspace:
-    def __init__(self,plan_id,*,action,blocked_check):
+    def __init__(self,plan_id,*,action,blocked_check,source_format=CSV_SOURCE):
         self.plan_id=_hash(plan_id)
+        self.source_format=source_format
+        self.contract_format=_source_contract_format(source_format)
         if not callable(action) or not callable(blocked_check):
             raise ValueError("trusted desktop callbacks required")
         self.action=action
@@ -41,10 +43,13 @@ class CsvWorkspace:
         self.clear()
         self._permit()
         inputs=dict(source_path=source_path,**parse_fields(columns,key,rows))
+        if self.source_format!=CSV_SOURCE:
+            inputs["source_format"]=self.source_format
         result=self.action("preview",self.plan_id,confirmed=True,**inputs)
         self._permit()
         pins=preview_pins(result)
-        if result["contract"]["plan_id"]!=self.plan_id:
+        if (result["contract"]["plan_id"]!=self.plan_id or
+                result["contract"]["format"]!=self.contract_format):
             raise ValueError("CSV preview outside selected plan")
         self._pins=pins
         self._inputs=inputs
@@ -94,6 +99,7 @@ def preview_text(result):
     report=result["report"]
     reader=csv.reader(io.StringIO(result["artifact"].decode("utf-8"),newline=""))
     lines=["LOCAL WORK SAMPLE — not customer acceptance or commercial authority",
+           "Source: "+("flat JSON string records" if result["contract"]["format"]==JSON_FORMAT else "CSV"),
            "Rows: "+str(report["rows"])+" | bytes: "+str(report["artifact_bytes"]),
            "Contract: "+pins["expected_contract"],"Artifact: "+pins["expected_artifact"],
            "QA: "+", ".join(report["checks"]),"",
@@ -105,26 +111,28 @@ def preview_text(result):
     return "\n".join(lines)
 
 
-def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke_evidence=None):
+def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke_evidence=None,
+                    source_format=CSV_SOURCE):
     import tkinter as tk
     from tkinter import ttk,filedialog,messagebox
     from tkinter.scrolledtext import ScrolledText
 
-    workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check)
+    workspace=CsvWorkspace(plan_id,action=action,blocked_check=blocked_check,source_format=source_format)
+    json_source=source_format==JSON_SOURCE
     from .cockpit import install_cockpit, fit_geometry
     window=tk.Toplevel(parent)
     content=install_cockpit(window).content
-    window.title("Nexus Exchange | Operator CSV deliverable")
+    window.title("Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
     window.geometry(fit_geometry(window,1000,650))
-    ttk.Label(content,text="OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
+    ttk.Label(content,text="OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(content,text="Saved plan: "+plan_id,wraplength=950).pack()
-    ttk.Label(content,text="Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment.",wraplength=950).pack(pady=4)
+    ttk.Label(content,text=("Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)
     form=ttk.Frame(content); form.pack(fill="x",padx=12,pady=5)
     source=tk.StringVar(master=window)
     columns=tk.StringVar(master=window)
     key=tk.StringVar(master=window)
     rows=tk.StringVar(master=window)
-    for i,(label,var) in enumerate((("Source CSV",source),("Output columns (comma separated)",columns),
+    for i,(label,var) in enumerate((("Source JSON" if json_source else "Source CSV",source),("Output columns (comma separated)",columns),
                                    ("Unique key column",key),("Expected data rows (1–2000)",rows))):
         ttk.Label(form,text=label).grid(row=i,column=0,sticky="w",pady=4)
         ttk.Entry(form,textvariable=var,width=66,state="readonly" if i==0 else "normal").grid(row=i,column=1,sticky="ew",padx=6)
@@ -155,7 +163,7 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
         if blocked_check() is not False:
             clear("Halted or busy.")
             return
-        path=filedialog.askopenfilename(parent=window,filetypes=[("CSV","*.csv")])
+        path=filedialog.askopenfilename(parent=window,filetypes=[("JSON","*.json")] if json_source else [("CSV","*.csv")])
         if path and blocked_check() is False:
             source.set(path)
 
