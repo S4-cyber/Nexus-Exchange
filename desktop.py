@@ -2037,6 +2037,17 @@ def main(*, data_directory=None, gui_smoke=False):
         with AdvisoryAttemptStore(directory/DB_NAME,existing_only=True) as advisory_store:
             if advisory_store.status(key,halted=False)["state"]!="INTERRUPTED":
                 raise RuntimeError("Advisory reservation replay or recovery mismatch")
+        # Run only an owned deterministic child in the GUI/frozen smoke.
+        # This does not dispatch a real model or consume a saved-plan attempt.
+        from nexus_exchange.advisory_process import run_advisory_fixture
+        advisory_fixture=run_advisory_fixture(stop.council_action("inspect",key),
+                                             approved=True,halt_check=stop.is_set)
+        if (advisory_fixture["worker_pid"]==os.getpid()
+                or advisory_fixture["child_process_completed"] is not True
+                or advisory_fixture["review"]["source_hold"] is None
+                or advisory_fixture["model_executed"] is not False
+                or advisory_fixture["external_authority"] is not False):
+            raise RuntimeError("Advisory child fixture scope or lifecycle mismatch")
         # Separate synthetic research-candidate fixture: keep earlier source-held
         # scenario and ranking smoke unchanged. Never query a live source.
         operator_stamp=datetime.now(timezone.utc)
