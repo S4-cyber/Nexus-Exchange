@@ -143,3 +143,27 @@ class RankingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.rank(**kw)
         self.assertFalse(self.store.db.in_transaction)
+
+    def test_genesis_rejects_positive_cash_exposure(self):
+        costs=scenario()["costs"]
+        costs["platform_fees"]="0.01"
+        key=self.save(0,scenario(compensation="999999",costs=costs))
+        row=next(r for r in self.rank()["rows"] if r["plan_id"]==key)
+        self.assertEqual(row["review_tier"],"MODEL_DOES_NOT_FIT")
+        self.assertFalse(row["modeled_budget_fit"])
+        self.assertFalse(row["genesis_verified"])
+
+    def test_payment_wait_includes_delayed_start(self):
+        first=self.save(0,scenario(payment_days_after_delivery=10))
+        second=self.save(1,scenario(payment_days_after_delivery=1),
+            plan(delivery_start="2026-12-20T12:00:00Z",delivery_deadline="2026-12-28T12:00:00Z"))
+        rows=self.rank()["rows"]
+        self.assertEqual([r["plan_id"] for r in rows[:2]],[first,second])
+        self.assertLess(rows[0]["modeled_collection_wait_us"],rows[1]["modeled_collection_wait_us"])
+
+    def test_corrupt_plan_fails_closed_and_read_transaction_rolls_back(self):
+        key=self.save(0)
+        self.store.db.execute("UPDATE scout_scenarios_v1 SET payload='{}' WHERE plan_id=?",(key,))
+        with self.assertRaises(ValueError):
+            self.rank()
+        self.assertFalse(self.store.db.in_transaction)
