@@ -1,7 +1,7 @@
 """Read user-selected compiled snapshots, never fetch URLs or execute input."""
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from .governor import Action, decide
 from .pipeline import evaluate_snapshots
@@ -27,7 +27,10 @@ def _integer(token):
 def _decimal(token):
     if len(token) > 64:
         raise ValueError("decimal outside import limits")
-    value = Decimal(token)
+    try:
+        value = Decimal(token)
+    except InvalidOperation as exc:
+        raise ValueError("invalid decimal") from exc
     if not value.is_finite() or not -12 <= value.as_tuple().exponent <= 12 or value.adjusted() > 12:
         raise ValueError("decimal outside import limits")
     return value
