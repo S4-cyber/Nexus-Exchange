@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import partial
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
+from nexus_exchange.lead_store import LeadStore, SOURCES as LEAD_FORMATS
 from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
@@ -32,7 +33,7 @@ def demo(*, halted=False):
         value=dict(amount=1000,currency="USD")))
     return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=halted)
 
-def run_logged(store, stop=None, archive=None, *, work=None, target="Offline screening"):
+def run_logged(store, stop=None, archive=None, *, work=None, target="Offline screening", lead_store=None):
     task = uuid4().hex
     def record(state):
         store.append(dict(task_id=task,target=target,state=state,
@@ -49,6 +50,8 @@ def run_logged(store, stop=None, archive=None, *, work=None, target="Offline scr
             return ()
         if archive is not None:
             archive.record(tuple(item.observation for item in result))
+        if lead_store is not None and type(result) is dict and result.get("format") in LEAD_FORMATS:
+            lead_store.record(result,now=datetime.now(timezone.utc),halted=stop.is_set() if stop is not None else False)
         if stop is not None and stop.is_set():
             record("cancelled")
             return ()
@@ -109,7 +112,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
     ttk.Label(root,text="NEXUS EXCHANGE",font=("Segoe UI",24)).pack(pady=20)
-    ttk.Label(root,text="OFFLINE RESEARCH — External actions disabled").pack()
+    ttk.Label(root,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
     tasks = ttk.LabelFrame(root,text="Active tasks")
     tasks.pack(fill="x",padx=20,pady=8)
     slots = []
@@ -158,7 +161,8 @@ def main(*, data_directory=None, gui_smoke=False):
         local = EventStore(directory / "events.sqlite3")
         try:
             if scenario:
-                return run_logged(local, stop, work=work, target=target)
+                with LeadStore(directory / "scout-leads.sqlite3") as leads:
+                    return run_logged(local, stop, work=work, target=target, lead_store=leads)
             with OpportunityArchive(directory / "archive.sqlite3") as archive:
                 return run_logged(local, stop, archive, work=work, target=target)
         finally:
@@ -597,6 +601,98 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Global trade catalog",command=trade_catalog).pack(side="left")
         refresh_plan()
         return window
+    def browse_leads():
+        window=tk.Toplevel(root)
+        window.title("Nexus Exchange | Unified Scout history")
+        window.geometry("1050x720")
+        ttk.Label(window,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
+        ttk.Label(window,text="Saved observations only. Every lead requires current verification.").pack()
+        filters=ttk.Frame(window)
+        filters.pack(fill="x",padx=12,pady=8)
+        source=tk.StringVar(value="All")
+        search=tk.StringVar(value="")
+        ttk.Combobox(filters,textvariable=source,values=["All","sam","ted","uk_tender","canada"],
+            state="readonly",width=18).pack(side="left",padx=5)
+        ttk.Entry(filters,textvariable=search,width=40).pack(side="left",padx=5)
+        summary=ttk.Label(window)
+        summary.pack()
+        tree=ttk.Treeview(window,columns=("source","title","retrieved","deadline"),show="headings",height=10)
+        for col,label,width in (("source","Source",105),("title","Notice",420),
+                ("retrieved","Retrieved UTC",205),("deadline","Reported deadline",210)):
+            tree.heading(col,text=label)
+            tree.column(col,width=width,anchor="w")
+        tree.pack(fill="x",padx=12,pady=6)
+        details=ScrolledText(window,height=15,wrap="word",state="disabled")
+        details.pack(fill="both",expand=True,padx=12,pady=8)
+        report=None
+        rows={}
+        def write(value):
+            details.configure(state="normal")
+            details.delete("1.0","end")
+            details.insert("end",value)
+            details.configure(state="disabled")
+        def selected():
+            selection=tree.selection()
+            return rows.get(selection[0]) if selection else None
+        def display(event=None):
+            row=selected()
+            if row is not None:
+                write("\n".join([row["title"],row["source_url"],"Historical only; execution blocked.",
+                    "Verification blockers: "+", ".join(row["blockers"]),"","TO DO",
+                    *("[ ] "+t["instruction"] for t in row["todo"])]))
+        def reload():
+            nonlocal report
+            report=None
+            rows.clear()
+            for item in tree.get_children():
+                tree.delete(item)
+            try:
+                with LeadStore(directory / "scout-leads.sqlite3") as store:
+                    report=store.browse(now=datetime.now(timezone.utc),
+                        source=None if source.get()=="All" else source.get(),
+                        query=search.get(),halted=stop.is_set())
+                for i,row in enumerate(report["leads"]):
+                    rows[str(i)]=row
+                    tree.insert("","end",iid=str(i),values=(row["source"],row["title"],
+                        row["retrieved_at"],row["deadline"] or row["earliest_deadline_date"] or "Unverified"))
+                summary.configure(text=f"{report['returned']} shown / {report['matched']} matching historical notices")
+                if rows:
+                    tree.selection_set("0")
+                    display()
+                else:
+                    write("No saved discoveries match.")
+            except (ValueError,PermissionError,OSError) as exc:
+                summary.configure(text="Archive unavailable")
+                write(type(exc).__name__)
+            except Exception as exc:
+                summary.configure(text="Archive unavailable")
+                write(type(exc).__name__)
+        def open_selected():
+            row=selected()
+            if row is not None and not stop.is_set():
+                try:
+                    _,link_for=LEAD_FORMATS[row["format"]]
+                    webbrowser.open(link_for(row["notice_id"]),new=2)
+                except (ValueError,OSError):
+                    write("Official notice unavailable.")
+        def export():
+            if report is None or stop.is_set():
+                return
+            path=filedialog.asksaveasfilename(parent=window,defaultextension=".json",
+                filetypes=[("JSON","*.json")],initialfile="nexus-scout-history.json")
+            if path:
+                try:
+                    export_report(path,report)
+                except OSError as exc:
+                    messagebox.showerror("Export failed",type(exc).__name__,parent=window)
+        ttk.Button(filters,text="Filter / refresh",command=reload).pack(side="left",padx=5)
+        buttons=ttk.Frame(window)
+        buttons.pack(pady=6)
+        ttk.Button(buttons,text="Open official notice",command=open_selected).pack(side="left")
+        ttk.Button(buttons,text="Export history JSON",command=export).pack(side="left",padx=5)
+        tree.bind("<<TreeviewSelect>>",display)
+        reload()
+        return window
     def browse_archive():
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Historical opportunities")
@@ -652,10 +748,12 @@ def main(*, data_directory=None, gui_smoke=False):
     exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
     exporter.pack(side="left")
     ttk.Button(simulation_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
+    ttk.Button(simulation_controls,text="Scout lead history",command=browse_leads).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
     if gui_smoke:
         window = browse_archive()
+        leads_window = browse_leads()
         pathway_window = revenue_workspace()
         trade_window = trade_catalog()
         routes_window = trade_routes_window()
@@ -678,6 +776,7 @@ def main(*, data_directory=None, gui_smoke=False):
             requests=0,leads=[canada_sample],truncated=False))
         root.update_idletasks()
         root.update()
+        leads_window.destroy()
         canada_window.destroy()
         fts_window.destroy()
         ted_window.destroy()

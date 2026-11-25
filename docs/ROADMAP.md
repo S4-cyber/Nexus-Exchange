@@ -202,3 +202,9 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - Reuse: pinned Maple Procure 21bd93119fd6fe2300361ac3cc6be13024af21a0 (MIT) reviewed for factual CSV schema and provenance architecture only. Official data dictionary unavailable in research environment; live schema validation required. No new dependencies or paid service.
 - Prior UK FTS exact-head Windows run 45532095669 succeeded; artifact 14985632150. Unit suite 146 passing at 45532095611/45532107958.
 - Main formal acceptance 0/42. Next: unify source reports into bounded persistent lead archive and add USAspending award/subaward intelligence; verify actual provider connectivity, source data lifecycle and owner evidence before promotion.
+
+
+## Unified Scout historical lead memory
+- R05/R06/E18/E31/E33: unified source-scoped historical observation store for four procurement adapters, automatic guarded persistence before successful task logging, bounded SQLite transactions, canonical report projection, replay and conflict protection, source/title search and explicit export. Historical display rechecks stale/expired records and known later UK events; no previous eligibility or authority persisted as current. Nine new regression methods; CI/build pending.
+- Previous CanadaBuys candidate 45bc03d707d468bf75d3a1552b796aca00a98dbd passed 158 tests (45532423219) and Windows 45532423258 (artifact 14985557823). No new dependencies or paid service. Existing compiled OCDS archive unchanged. Main accepted gates remain 0/42.
+- Next: live source validation and lifecycle reconciliation, USAspending contractor intelligence, durable lead-bound To Do and owner profile evidence, safe restart/interrupt handling, consolidation. See docs/SCOUT_LEAD_MEMORY.md.
