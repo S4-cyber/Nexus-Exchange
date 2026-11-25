@@ -210,7 +210,7 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     table.columnconfigure(0,weight=1)
     table.rowconfigure(0,weight=1)
     buttons=ttk.Frame(content)
-    buttons.pack(pady=6)
+    buttons.pack(before=table, pady=4)
     details=ScrolledText(content,height=12,wrap="word",state="disabled")
     details.pack(fill="both",expand=True,padx=12,pady=6)
     report=None

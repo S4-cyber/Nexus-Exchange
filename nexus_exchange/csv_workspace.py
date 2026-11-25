@@ -182,7 +182,7 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     status=ttk.Label(content,wraplength=950); status.pack(fill="x",padx=12,pady=4)
     output=ScrolledText(content,state="disabled",wrap="word")
     output.pack(fill="both",expand=True,padx=12,pady=6)
-    bar=ttk.Frame(content); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(before=form, pady=4)
     timer=None
 
     def write(text):

@@ -200,7 +200,7 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
     output.pack(fill="both",expand=True,padx=12,pady=5)
     status=ttk.Label(content,text="Refresh to load local records.",wraplength=1000)
     status.pack(fill="x",padx=12,pady=4)
-    bar=ttk.Frame(content); bar.pack(pady=7)
+    bar=ttk.Frame(content); bar.pack(before=tree, pady=4)
     kind=tk.StringVar(master=window,value=NOTE_KINDS[0])
     timer=None
     displayed=None

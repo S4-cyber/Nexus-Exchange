@@ -113,13 +113,16 @@ def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
-    from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit
+    from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit, action_menu
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
     root.geometry(fit_geometry(root,1120,820))
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
+    root.minsize(540, 420)
     if gui_smoke:
         root.withdraw()
+    elif sys.platform == "win32":
+        root.state("zoomed")
     directory.mkdir(parents=True, exist_ok=True)
     try:
         stop=RuntimeGuard(directory)
@@ -150,33 +153,70 @@ def main(*, data_directory=None, gui_smoke=False):
             root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
     chrome=install_cockpit(root,command_deck=True)
-    content=chrome.content
-    ttk.Label(content,text="NEXUS EXCHANGE",foreground="#39ff70",font=("Segoe UI",22,"bold")).pack(pady=6)
-    ttk.Label(content,text="RESEARCH PREVIEW — Commercial actions disabled").pack()
-    tasks = ttk.LabelFrame(content,text="Active tasks")
-    tasks.pack(fill="x",padx=20,pady=8)
+    tabs = ttk.Notebook(chrome.content)
+    tabs.pack(fill="both", expand=True, padx=6, pady=(0, 5))
+    pages = {}
+    for name in ("Home", "Research", "Reports", "Settings", "Help"):
+        pages[name] = ttk.Frame(tabs, padding=(14, 10))
+        tabs.add(pages[name], text=name)
+    tabs.enable_traversal()
+    home, research, reports, settings, help_page = pages.values()
+
+    def heading(parent, text):
+        ttk.Label(parent, text=text, font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(5, 3))
+
+    def action_row(parent):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(0, 7))
+        return row
+
+    heading(home, "Review an opportunity")
+    ttk.Label(home, text="Try a sample locally or explore sources for your own research.",
+              wraplength=440, justify="left").pack(anchor="w", pady=(0, 7))
+    home_actions = action_row(home)
+    activity = ttk.Frame(home)
+    activity.pack(fill="x")
+    tasks = ttk.Frame(activity)
     slots = []
     for i in range(10):
-        cell = ttk.Label(tasks,text="Idle",width=24,anchor="center",relief="groove")
-        cell.grid(row=i//5,column=i%5,sticky="ew",padx=3,pady=4)
-        tasks.columnconfigure(i%5,weight=1)
+        cell = ttk.Label(tasks, anchor="w")
+        cell.grid(row=i//2, column=i%2, sticky="ew", padx=5)
+        tasks.columnconfigure(i%2, weight=1)
         slots.append(cell)
-    filters = ttk.Frame(content)
-    filters.pack(fill="x", padx=20)
-    ttk.Label(filters, text="Search history by target, status, date or task ID").pack(side="left")
+    result_panel = ttk.Frame(home)
+    heading(result_panel, "Latest result")
+    output = ScrolledText(result_panel, width=1, height=5, wrap="word", padx=10, pady=8)
+    output.pack(fill="both", expand=True)
+    recent = ttk.LabelFrame(home, text="Recent activity", padding=10)
+    recent.pack(fill="x", pady=8)
+    recent_text = ttk.Label(recent, justify="left", wraplength=430)
+    recent_text.pack(anchor="w")
+    output.configure(state="disabled")
+
+    report_actions = action_row(reports)
+    filters = ttk.Frame(reports)
+    filters.pack(fill="x")
+    ttk.Label(filters, text="Search task history").pack(side="left")
     history_query = tk.StringVar()
     history_search = ttk.Entry(filters, textvariable=history_query)
     history_search.pack(side="left", fill="x", expand=True, padx=6)
-    history = ttk.Treeview(content,columns=("time","target","state","task_id"),show="headings",height=7)
-    for key,label in (("time","UTC timestamp"),("target","Target"),("state","Status"),("task_id","Task ID")):
+    status = ttk.Label(reports)
+    status.pack(anchor="w", pady=4)
+    table = ttk.Frame(reports)
+    table.pack(fill="both", expand=True)
+    table.rowconfigure(0, weight=1)
+    table.columnconfigure(0, weight=1)
+    history = ttk.Treeview(table, columns=("time","target","state","task_id"), show="headings", height=6)
+    for key,label,width in (("time","UTC timestamp",170),("target","Target",200),
+                            ("state","Status",95),("task_id","Task ID",220)):
         history.heading(key,text=label)
-        history.column(key,width=220 if key=="time" else 160)
-    history.pack(fill="both",padx=20,pady=8)
-    output = ScrolledText(content,height=8,wrap="word")
-    output.pack(fill="both",expand=True,padx=14,pady=6)
-    output.configure(state="disabled")
-    status = ttk.Label(content)
-    status.pack()
+        history.column(key,width=width,minwidth=70,anchor="w")
+    history.grid(row=0,column=0,sticky="nsew")
+    ybar = ttk.Scrollbar(table, orient="vertical", command=history.yview)
+    ybar.grid(row=0,column=1,sticky="ns")
+    xbar = ttk.Scrollbar(table, orient="horizontal", command=history.xview)
+    xbar.grid(row=1,column=0,sticky="ew")
+    history.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
     page = 1
     journal = ()
     def display_history(*_):
@@ -197,14 +237,28 @@ def main(*, data_directory=None, gui_smoke=False):
         first = project(events)
         page = min(page,first["pages"])
         view = project(events,page)
-        for i,slot in enumerate(slots):
-            slot.configure(text=(view["tasks"][i].target+" | "+view["tasks"][i].state) if i<len(view["tasks"]) else "Idle")
+        if view["tasks"]:
+            tasks.pack(fill="x")
+        else:
+            tasks.pack_forget()
+        for i, slot in enumerate(slots):
+            if i < len(view["tasks"]):
+                task = view["tasks"][i]
+                slot.configure(text=f"{task.target} · {task.state}")
+                slot.grid()
+            else:
+                slot.grid_remove()
+        if view["pages"] > 1:
+            navigation.pack(before=tasks, anchor="w")
+        else:
+            navigation.pack_forget()
         page_label.configure(text=f"Page {page} / {view['pages']}")
         journal = view["history"]
+        last_events = [f"{event.target} · {event.state}" for event in reversed(journal[-3:])]
+        recent_text.configure(text="\n".join(last_events) or "Your activity will appear here after your first task.")
         display_history()
         status.configure(text=f"Successful tasks: {view['successful_tasks']} | Recorded events: {len(view['history'])}")
-    navigation = ttk.Frame(content)
-    navigation.pack()
+    navigation = ttk.Frame(activity)
     def move(delta):
         nonlocal page
         page = max(1,min(page+delta,project(store.read())["pages"]))
@@ -214,6 +268,11 @@ def main(*, data_directory=None, gui_smoke=False):
     page_label.pack(side="left",padx=8)
     ttk.Button(navigation,text="Next",command=lambda:move(1)).pack(side="left")
     refresh()
+    def show_result_panel():
+        recent.pack_forget()
+        result_panel.pack(fill="both", expand=True)
+        tabs.select(home)
+
     def worker(work=None, target="Offline screening", scenario=False,discovery=None):
         local = EventStore(directory / "events.sqlite3")
         try:
@@ -235,6 +294,11 @@ def main(*, data_directory=None, gui_smoke=False):
             button.configure(state="disabled")
         scenario_report = None
         exporter.configure(state="disabled")
+        show_result_panel()
+        output.configure(state="normal")
+        output.delete("1.0", "end")
+        output.insert("end", f"Running {target}…")
+        output.configure(state="disabled")
         future = executor.submit(worker, work, target, scenario,discovery)
         poll()
     def poll():
@@ -280,6 +344,8 @@ def main(*, data_directory=None, gui_smoke=False):
         output.configure(state="normal")
         output.delete("1.0","end")
         output.configure(state="disabled")
+        result_panel.pack_forget()
+        recent.pack(fill="x", pady=8)
         launch.configure(state="disabled")
         importer.configure(state="disabled")
         simulator.configure(state="disabled")
@@ -333,6 +399,7 @@ def main(*, data_directory=None, gui_smoke=False):
         nonlocal scenario_report
         if council_blocked():
             return False
+        show_result_panel()
         scenario_report=None
         exporter.configure(state="disabled")
         output.configure(state="normal")
@@ -489,7 +556,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 except (ValueError,OSError):
                     messagebox.showerror("Browser unavailable","Unable to open official notice.",parent=window)
         tree.bind("<<TreeviewSelect>>",display)
-        ttk.Button(content,text="Open selected official notice",command=open_notice).pack(pady=8)
+        ttk.Button(content,text="Open selected official notice",command=open_notice).pack(before=tree, anchor="w", padx=12, pady=4)
         if leads:
             tree.selection_set(next(iter(leads)))
             display()
@@ -812,19 +879,16 @@ def main(*, data_directory=None, gui_smoke=False):
             write_details("Company research requested. See main dashboard; no identity or counterparty clearance.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(content)
-        buttons.pack(pady=8)
+        buttons.pack(before=tree, anchor="w", padx=12, pady=4)
         ttk.Button(buttons,text="Open official source",command=open_selected).pack(side="left")
-        ttk.Button(buttons,text="Open integration documentation",command=lambda:open_selected(True)).pack(side="left",padx=5)
-        ttk.Button(buttons,text="Commercial routes",command=trade_routes_window).pack(side="left",padx=5)
-        ttk.Button(buttons,text="Search EU TED (keyless)",command=run_ted).pack(side="left",padx=5)
-        ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
-        ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
-        ttk.Button(buttons,text="Research USAspending",command=run_spending).pack(side="left",padx=5)
-        supplemental=ttk.Frame(content)
-        supplemental.pack(pady=4)
-        ttk.Button(supplemental,text="Reference FX to USD (keyless)",command=run_fx).pack(side="left",padx=4)
-        ttk.Button(supplemental,text="Atlas SEC company lookup",command=run_sec).pack(side="left",padx=4)
-        ttk.Button(supplemental,text="Search UK Contracts Finder",command=run_cf).pack(side="left",padx=4)
+        action_menu(buttons, "Search public sources", (
+            ("EU tenders", run_ted), ("UK Find a Tender", run_fts), ("CanadaBuys", run_canada),
+            ("USAspending awards", run_spending), ("UK Contracts Finder", run_cf),
+        )).pack(side="left", padx=4)
+        action_menu(buttons, "Reference tools", (
+            ("Commercial routes", trade_routes_window), ("Company filings", run_sec),
+            ("Exchange rates", run_fx), ("Source documentation", lambda: open_selected(True)),
+        )).pack(side="left")
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
@@ -872,7 +936,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 result.configure(text="Blocked: "+str(exc))
         procurement_type = tk.StringVar(value="Combined synopsis/solicitation")
         selector = ttk.Frame(content)
-        selector.pack(fill="x",padx=15,pady=4)
+        selector.pack(before=prerequisites, fill="x",padx=15,pady=4)
         ttk.Label(selector,text="SAM notice type").pack(side="left")
         ttk.Combobox(selector,textvariable=procurement_type,values=["Combined synopsis/solicitation","Solicitation"],state="readonly",width=32).pack(side="left",padx=8)
         def reset_checks(*unused):
@@ -926,7 +990,7 @@ def main(*, data_directory=None, gui_smoke=False):
             run(work,target="SAM read-only notice discovery",scenario=True)
             result.configure(text="Search requested. See the main dashboard for results.")
         buttons=ttk.Frame(content)
-        buttons.pack(pady=8)
+        buttons.pack(before=settings, anchor="w", padx=15, pady=4)
         ttk.Button(buttons,text="Open official source",command=open_source).pack(side="left")
         ttk.Button(buttons,text="Search SAM (read only)",command=run_sam).pack(side="left")
         ttk.Button(buttons,text="Refresh checklist",command=refresh_plan).pack(side="left")
@@ -1022,7 +1086,7 @@ def main(*, data_directory=None, gui_smoke=False):
                     store.clear(halted=stop.is_set())
                 load()
         buttons=ttk.Frame(content)
-        buttons.pack(pady=10)
+        buttons.pack(before=form, anchor="w", padx=20, pady=4)
         ttk.Button(buttons,text="Save local profile",command=save).pack(side="left",padx=6)
         ttk.Button(buttons,text="Reload",command=load).pack(side="left",padx=6)
         ttk.Button(buttons,text="Clear profile",command=clear).pack(side="left",padx=6)
@@ -1061,7 +1125,7 @@ def main(*, data_directory=None, gui_smoke=False):
         instruction=ttk.Label(content,wraplength=940,justify="left")
         instruction.pack(fill="x",padx=12,pady=4)
         editor=ttk.Frame(content)
-        editor.pack(fill="x",padx=12,pady=8)
+        editor.pack(before=tree, fill="x",padx=12,pady=4)
         labels={"pending":"Pending","needs_followup":"Needs follow-up","evidence_noted":"Evidence noted"}
         values={v:k for k,v in labels.items()}
         state=tk.StringVar(value=labels["pending"])
@@ -1172,7 +1236,7 @@ def main(*, data_directory=None, gui_smoke=False):
                 message.configure(text="Unable to check local evidence.")
                 return None
         buttons=ttk.Frame(content)
-        buttons.pack(pady=6)
+        buttons.pack(before=tree, anchor="w", padx=12, pady=4)
         ttk.Button(buttons,text="Fingerprint evidence file",command=pick_evidence).pack(side="left",padx=5)
         ttk.Button(buttons,text="Check saved fingerprint",command=check_evidence).pack(side="left",padx=5)
         ttk.Button(buttons,text="Save selected task",command=save).pack(side="left")
@@ -1293,7 +1357,7 @@ def main(*, data_directory=None, gui_smoke=False):
                     messagebox.showerror("Export failed",type(exc).__name__,parent=window)
         ttk.Button(filters,text="Filter / refresh",command=reload).pack(side="left",padx=5)
         buttons=ttk.Frame(content)
-        buttons.pack(pady=6)
+        buttons.pack(before=tree, anchor="w", padx=12, pady=4)
         ttk.Button(buttons,text="Open official notice",command=open_selected).pack(side="left")
         def review_tasks():
             row=selected()
@@ -1360,48 +1424,67 @@ def main(*, data_directory=None, gui_smoke=False):
                 except OSError as exc:
                     messagebox.showerror("Export failed",type(exc).__name__,parent=window)
         buttons = ttk.Frame(content)
-        buttons.pack(pady=8)
+        buttons.pack(before=view, anchor="w", padx=12, pady=4)
         ttk.Button(buttons,text="Search / refresh",command=reload).pack(side="left")
         ttk.Button(buttons,text="Export displayed JSON",command=export).pack(side="left")
         reload()
         return window
-    controls = ttk.Frame(content)
-    controls.pack(pady=4)
-    launch = ttk.Button(controls,text="Run offline demonstration",command=run)
+    safety_buttons = ttk.Frame(chrome.safety)
+    safety_buttons.pack(fill="x")
+    ttk.Label(safety_buttons, text="Nexus Exchange", font=("Segoe UI", 15, "bold")).pack(side="left")
+    halt_button = ttk.Button(safety_buttons, text="Emergency halt", command=halt, style="Halt.TButton")
+    halt_button.pack(side="right")
+    resume_button = ttk.Button(safety_buttons, text="Resume offline", command=resume)
+    resume_button.pack(side="right", padx=6)
+    halt_status = ttk.Label(chrome.safety, text="Halted · Select Resume offline to begin.")
+    halt_status.pack(fill="x", pady=(2, 0))
+    if stop.recovered_count or stop.council_recovered_count:
+        halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks and "
+                              f"{stop.council_recovered_count} Council attempts. Select Resume offline to begin.")
+    chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
+
+    launch = ttk.Button(home_actions, text="Run example", command=run)
     launch.pack(side="left")
-    importer = ttk.Button(controls,text="Import compiled JSON",command=import_file)
+    ttk.Button(home_actions, text="Find opportunities", command=lambda: tabs.select(research)).pack(side="left", padx=6)
+
+    heading(research, "Find opportunities")
+    find_actions = action_row(research)
+    ttk.Button(find_actions, text="Explore sources", command=revenue_workspace).pack(side="left")
+    ttk.Button(find_actions, text="Plan a search", command=discovery_window).pack(side="left", padx=5)
+    heading(research, "Review saved leads")
+    lead_actions = action_row(research)
+    ttk.Button(lead_actions, text="Browse leads", command=browse_leads).pack(side="left")
+    ttk.Button(lead_actions, text="Compare leads", command=ranked_matrix).pack(side="left", padx=5)
+    heading(research, "Work from a file")
+    file_actions = action_row(research)
+    importer = ttk.Button(file_actions, text="Import opportunities", command=import_file)
     importer.pack(side="left")
-    safety_buttons=ttk.Frame(chrome.safety)
-    safety_buttons.pack(anchor="w")
-    halt_button=ttk.Button(safety_buttons,text="Emergency halt",command=halt,style="Halt.TButton")
-    halt_button.pack(side="left",padx=4)
-    ttk.Button(safety_buttons,text="Resume offline",command=resume).pack(side="left")
-    ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
-    simulation_controls = ttk.Frame(content)
-    simulation_controls.pack(pady=5)
-    simulator = ttk.Button(simulation_controls,text="Evaluate deal scenario JSON",command=import_scenario)
-    simulator.pack(side="left")
-    exporter = ttk.Button(simulation_controls,text="Export report JSON",command=export_scenario,state="disabled")
-    exporter.pack(side="left")
-    scout_controls=ttk.Frame(content)
-    scout_controls.pack(pady=3)
-    ttk.Button(scout_controls,text="Scout revenue pathways",command=revenue_workspace).pack(side="left")
-    ttk.Button(scout_controls,text="Scout lead history",command=browse_leads).pack(side="left")
-    ttk.Button(scout_controls,text="Ranked Matrix",command=ranked_matrix).pack(side="left")
-    ttk.Button(scout_controls,text="Owner profile",command=owner_profile_window).pack(side="left")
-    ttk.Button(scout_controls,text="Capability search planner",command=discovery_window).pack(side="left")
-    diagnostics=ttk.LabelFrame(content,text="Scout browser diagnostics (offline synthetic fixtures)")
-    diagnostics.pack(pady=4)
+    simulator = ttk.Button(file_actions, text="Evaluate a scenario", command=import_scenario)
+    simulator.pack(side="left", padx=5)
+
+    ttk.Button(report_actions, text="Opportunity archive", command=browse_archive).pack(side="left")
+    exporter = ttk.Button(report_actions, text="Export latest report", command=export_scenario, state="disabled")
+    exporter.pack(side="left", padx=5)
+
+    heading(settings, "Research preferences")
+    ttk.Button(settings, text="Edit owner profile", command=owner_profile_window).pack(anchor="w")
+    heading(settings, "Appearance")
+    ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
+    heading(settings, "Recovery")
+    ttk.Button(settings, text="Recover interrupted Council attempts", command=recover_council).pack(anchor="w")
+
+    heading(help_page, "Getting started")
+    for line in ("1. On Home, select Resume offline and then Run example. The result appears below.",
+                 "2. To find leads, open Research. Use Explore sources to browse or Plan a search to choose a service.",
+                 "3. In Reports, search by target, status, date or task ID. Open the archive to review saved opportunities."):
+        ttk.Label(help_page, text=line, wraplength=440, justify="left").pack(anchor="w", pady=2)
+    heading(help_page, "Check the local research tools")
+    diagnostics = action_row(help_page)
     diagnostic_buttons=[]
     for fixture_id,label in (("procurement","Run procurement fixture"),("digital_services","Run digital services fixture")):
         button=ttk.Button(diagnostics,text=label,command=partial(browser_diagnostic,fixture_id))
-        button.pack(side="left",padx=4)
+        button.pack(side="left",padx=2)
         diagnostic_buttons.append(button)
-    ttk.Button(chrome.safety,text="Recover interrupted Council attempts",command=recover_council).pack(anchor="w",padx=4,pady=2)
-    halt_status = ttk.Label(chrome.safety,text=f"HALTED — {stop.recovered_count} journal tasks, "
-        f"{stop.council_recovered_count} Council attempts reconciled; Resume offline to begin",wraplength=1040)
-    halt_status.pack(anchor="w",padx=4,fill="x")
-    chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
     for button in (launch,importer,simulator,*diagnostic_buttons):
         button.configure(state="disabled")
     if gui_smoke:
@@ -1412,12 +1495,30 @@ def main(*, data_directory=None, gui_smoke=False):
             raise
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
             raise RuntimeError("desktop did not start halted")
-        resume()
+        from time import monotonic, sleep
+        root.geometry("800x550")
+        root.deiconify()
+        for tab_name, page_widget in pages.items():
+            tabs.select(page_widget)
+            root.update_idletasks()
+            if (tabs.tab(tabs.select(), "text") != tab_name or not halt_button.winfo_ismapped()
+                    or halt_button.winfo_rooty() >= page_widget.winfo_rooty() or not stop.is_set()):
+                raise RuntimeError("Tab navigation lost the global halt control or changed runtime state")
+        tabs.select(home)
+        resume_button.invoke()
         if stop.is_set() or str(launch.cget("state"))!="normal":
             raise RuntimeError("explicit offline resume failed")
-        run_logged(store, stop, target="Review search fixture")
-        refresh()
-        history_query.set("REVIEW SEARCH")
+        launch.invoke()
+        deadline = monotonic() + 20
+        while future is not None:
+            if monotonic() >= deadline:
+                raise RuntimeError("Home example did not finish")
+            root.update()
+            sleep(0.01)
+        if not result_panel.winfo_ismapped() or not output.get("1.0", "end").strip():
+            raise RuntimeError("Home did not show the example result")
+        tabs.select(reports)
+        history_query.set("OFFLINE SCREENING")
         if len(history.get_children()) != 3:
             raise RuntimeError("Dashboard history search missed fixture events")
         history_query.set("no such event")
@@ -1434,7 +1535,7 @@ def main(*, data_directory=None, gui_smoke=False):
             raise RuntimeError("desktop smoke resume failed")
         if any(str(button.cget("state"))!="normal" for button in diagnostic_buttons):
             raise RuntimeError("Scout diagnostic did not enable after resume")
-        from time import monotonic,sleep
+        root.withdraw()
         def wait_for_diagnostic():
             deadline=monotonic()+20
             while stop.browser_process_pending():

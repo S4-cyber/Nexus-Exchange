@@ -318,7 +318,7 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     attempt_button.pack(side="left",padx=4)
     ttk.Button(controls,text="Refresh historical audit",command=history).pack(side="left",padx=4)
     context_controls=ttk.Frame(local)
-    context_controls.pack(side="bottom",pady=4)
+    context_controls.pack(before=current, pady=4)
     ttk.Label(context_controls,text="Fresh local context:").pack(side="left",padx=4)
     for level in LEVELS:
         ttk.Button(context_controls,text=level.title(),command=lambda chosen=level:show_context(chosen)).pack(side="left",padx=3)
