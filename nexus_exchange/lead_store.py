@@ -58,6 +58,23 @@ def _hashes(values):
         raise ValueError("invalid page digests")
     return list(values)
 
+def _report_inputs(report):
+    if type(report) is not dict or report.get("format") not in SOURCES:
+        raise ValueError("supported source report required")
+    rows=report.get("leads")
+    if type(rows) is not list or len(rows)>MAX_BATCH or type(report.get("returned")) is not int or report["returned"]!=len(rows):
+        raise ValueError("invalid report count")
+    hashes=_hashes(report.get("page_sha256"))
+    truncated=report.get("truncated")
+    if type(truncated) is not bool:
+        raise ValueError("invalid truncation state")
+    return rows, hashes, truncated
+
+
+class ResultChangedError(ValueError):
+    """The displayed result no longer matches the current archived observation."""
+
+
 def _project(fmt,lead,hashes,truncated):
     if type(lead) is not dict or fmt not in SOURCES:
         raise ValueError("unknown lead source")
@@ -153,15 +170,7 @@ class LeadStore:
     def record(self,report,*,now,halted=None,discovery=None,halt_check=None):
         _permit(halted)
         now=_now(now)
-        if type(report) is not dict or report.get("format") not in SOURCES:
-            raise ValueError("supported source report required")
-        rows=report.get("leads")
-        if type(rows) is not list or len(rows)>MAX_BATCH or type(report.get("returned")) is not int or report["returned"]!=len(rows):
-            raise ValueError("invalid report count")
-        hashes=_hashes(report.get("page_sha256"))
-        truncated=report.get("truncated")
-        if type(truncated) is not bool:
-            raise ValueError("invalid truncation state")
+        rows, hashes, truncated = _report_inputs(report)
         records=[]
         seen=set()
         for lead in rows:
@@ -200,6 +209,20 @@ class LeadStore:
                 self.db.execute("ROLLBACK")
             raise
         return inserted
+
+    def resolve_result(self, report, index, *, now, profile=None, halted=None):
+        """Resolve a displayed search row to its current, archive-backed checklist input."""
+        _permit(halted)
+        rows, hashes, truncated = _report_inputs(report)
+        if type(index) is not int or not 0 <= index < len(rows):
+            raise ValueError("Select a search result.")
+        observation, encoded = _project(report["format"], rows[index], hashes, truncated)
+        result = self.browse(now=now, source=observation["source"], lead_key=observation["key"],
+                             profile=profile, limit=1, halted=halted)
+        matches = result["leads"]
+        if not matches or matches[0]["observation_sha256"] != _digest(encoded):
+            raise ResultChangedError("The selected result does not match the latest saved observation.")
+        return matches[0]
 
     def search_history(self,*,now,limit=100,halted=None):
         from .discovery_history import read_history
