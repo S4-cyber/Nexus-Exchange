@@ -1,11 +1,13 @@
 """Windows desktop preview; no external operations."""
 import sys
 import os
+import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from pathlib import Path
 from uuid import uuid4
 from nexus_exchange.event_store import EventStore
+from nexus_exchange.opportunity_archive import OpportunityArchive
 from nexus_exchange.dashboard_events import project
 from datetime import datetime, timezone, timedelta
 from nexus_exchange.pipeline import evaluate_snapshots
@@ -19,7 +21,7 @@ def demo(*, halted=False):
         value=dict(amount=1000,currency="USD")))
     return evaluate_snapshots("demo",[release],"https://example.org/demo",stamp,now=now,halted=halted)
 
-def run_logged(store, stop=None):
+def run_logged(store, stop=None, archive=None):
     task = uuid4().hex
     def record(state):
         store.append(dict(task_id=task,target="Offline screening",state=state,
@@ -31,6 +33,11 @@ def run_logged(store, stop=None):
     record("running")
     try:
         result = demo(halted=stop.is_set() if stop is not None else False)
+        if stop is not None and stop.is_set():
+            record("cancelled")
+            return ()
+        if archive is not None:
+            archive.record(tuple(item.observation for item in result))
         if stop is not None and stop.is_set():
             record("cancelled")
             return ()
@@ -46,13 +53,38 @@ def run_logged(store, stop=None):
     record("succeeded")
     return result
 
-def main():
+def archive_report(path, *, now, query=""):
+    """Bounded historical search; screening is current, not permission."""
+    if type(query) is not str or len(query) > 256:
+        raise ValueError("invalid search")
+    with OpportunityArchive(path) as archive:
+        recent = archive.recent(now=now, limit=100)
+    rows = []
+    for item in recent:
+        o = item.observation.opportunity
+        if query.casefold() not in " ".join((o.title,o.source,o.key,o.external_id)).casefold():
+            continue
+        rows.append(dict(key=o.key, title=o.title, source=o.source, source_url=o.source_url,
+            external_id=o.external_id, published_at=item.observation.published_at.isoformat(),
+            retrieved_at=o.retrieved_at.isoformat(), deadline=o.deadline.isoformat() if o.deadline else None,
+            currency=o.currency, amount=str(o.amount) if o.amount is not None else None,
+            eligible_for_review=item.screening.eligible_for_review, reasons=list(item.screening.reasons)))
+    return dict(scope="Historical observations; review only; no commercial authority",
+        evaluated_at=now.isoformat(), search_scope="Newest 100 observations", rows=rows)
+
+def export_report(path, report):
+    Path(path).write_text(json.dumps(report,ensure_ascii=True,indent=2),encoding="utf-8")
+
+def main(*, data_directory=None, gui_smoke=False):
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, filedialog, messagebox
+    from tkinter.scrolledtext import ScrolledText
     root = tk.Tk()
     root.title("Nexus Exchange | Offline preview")
     root.geometry("980x760")
-    directory = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
+    directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
+    if gui_smoke:
+        root.withdraw()
     directory.mkdir(parents=True, exist_ok=True)
     store = EventStore(directory / "events.sqlite3")
     executor = ThreadPoolExecutor(max_workers=1)
@@ -113,7 +145,8 @@ def main():
     def worker():
         local = EventStore(directory / "events.sqlite3")
         try:
-            return run_logged(local, stop)
+            with OpportunityArchive(directory / "archive.sqlite3") as archive:
+                return run_logged(local, stop, archive)
         finally:
             local.close()
     def run():
@@ -152,17 +185,69 @@ def main():
             stop.clear()
             launch.configure(state="normal")
             halt_status.configure(text="Offline ready")
+    def browse_archive():
+        window = tk.Toplevel(root)
+        window.title("Nexus Exchange | Historical opportunities")
+        window.geometry("850x600")
+        ttk.Label(window,text="Historical observations — newest 100, re-screened on refresh; not live offers").pack(pady=8)
+        search = ttk.Entry(window)
+        search.pack(fill="x",padx=12,pady=4)
+        view = ScrolledText(window,wrap="word")
+        view.pack(fill="both",expand=True,padx=12,pady=8)
+        report = None
+        def reload():
+            nonlocal report
+            try:
+                report = archive_report(directory / "archive.sqlite3",
+                    now=datetime.now(timezone.utc),query=search.get())
+                value = json.dumps(report,ensure_ascii=True,indent=2)
+            except Exception as exc:
+                report = None
+                value = "Archive unavailable: " + type(exc).__name__
+            view.configure(state="normal")
+            view.delete("1.0","end")
+            view.insert("end",value)
+            view.configure(state="disabled")
+        def export():
+            if report is None:
+                return
+            path = filedialog.asksaveasfilename(parent=window,defaultextension=".json",
+                filetypes=[("JSON","*.json")],initialfile="nexus-exchange-archive.json")
+            if path:
+                try:
+                    export_report(path, report)
+                except OSError as exc:
+                    messagebox.showerror("Export failed",type(exc).__name__,parent=window)
+        buttons = ttk.Frame(window)
+        buttons.pack(pady=8)
+        ttk.Button(buttons,text="Search / refresh",command=reload).pack(side="left")
+        ttk.Button(buttons,text="Export displayed JSON",command=export).pack(side="left")
+        reload()
+        return window
     controls = ttk.Frame(root)
     controls.pack(pady=10)
     launch = ttk.Button(controls,text="Run offline demonstration",command=run)
     launch.pack(side="left")
     ttk.Button(controls,text="Emergency halt",command=halt).pack(side="left")
     ttk.Button(controls,text="Resume offline",command=resume).pack(side="left")
+    ttk.Button(controls,text="Opportunity archive",command=browse_archive).pack(side="left")
     halt_status = ttk.Label(root,text="Offline ready")
     halt_status.pack()
+    if gui_smoke:
+        window = browse_archive()
+        root.update_idletasks()
+        root.update()
+        window.destroy()
+        close()
+        return
     root.mainloop()
 
 if __name__ == "__main__":
+    if "--gui-self-test" in sys.argv:
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as directory:
+            main(data_directory=directory,gui_smoke=True)
+        sys.exit(0)
     if "--self-test" in sys.argv:
         import tkinter
         result=demo()
