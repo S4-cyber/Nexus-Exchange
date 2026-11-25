@@ -6,13 +6,13 @@ without optimizing over alternative owner-declared assumptions.
 """
 from decimal import Decimal
 from .cash_feasibility import assess
-from .checklist_store import context_for
-from .lead_store import _now, _permit
+from .checklist_store import _context, context_for
+from .lead_store import _digest, _json, _now, _permit
 from .owner_profile import normalize_profile, BLOCKED_REASONS
 from .scenario_store import ScenarioStore
 from .schedule_feasibility import assess_schedule, _iso
 from .scout import _timestamp
-from .operator_capabilities import assess_lead, catalog as capability_catalog
+from .operator_capabilities import assess_lead, assess_requirements, catalog as capability_catalog
 
 MAX_SCAN=100
 TIERS=(
@@ -99,6 +99,47 @@ class RankingStore(ScenarioStore):
             implemented_hint_count=sum(row["operator_capability"]["state"]=="IMPLEMENTED_TITLE_HINT_ONLY" for row in rows),
             rows=rows[:limit],independently_verified=False,
             execution_eligible=False,external_authority=False)
+
+    def review_requirements(self, context, requirements, *, profile, now, halted=None):
+        """Bind declared service structure to a current exact Scout observation.
+
+        This is a read-only advisory projection, never an execution contract.
+        The caller supplies the trusted local profile, clock and halt state.
+        No title match or declaration overrides the independently derived hold.
+        """
+        _permit(halted)
+        context = _context(context)
+        profile = normalize_profile(profile)
+        now = _now(now)
+        self.db.execute("BEGIN")
+        try:
+            lead = self._current(context, profile, now, halted)
+            hold = _source_tier(lead)
+            hint = assess_lead(lead, source_hold=hold, halted=halted)
+            declaration = assess_requirements(requirements, halted=halted)
+            if hint["catalog_sha256"] != declaration["catalog_sha256"]:
+                raise ValueError("capability catalogue changed during review")
+            held = hint["state"] == "SOURCE_HELD"
+            state = ("SOURCE_HELD" if held else
+                     "DECLARED_STRUCTURE_FITS" if declaration["declared_structure_fits"]
+                     else "DECLARED_STRUCTURE_UNRESOLVED_OR_UNSUPPORTED")
+            payload = dict(format="nexus-scoped-service-review-v1",
+                context=context, evaluated_at=_iso(now), state=state,
+                source_hold=hold, source_blockers=list(lead["blockers"]),
+                title_assessment_sha256=hint["assessment_sha256"],
+                title_hint_matches_declared_service=declaration["capability_id"] in hint["capability_ids"],
+                requirements_assessment=declaration,
+                source_bytes_checked=False, requirements_verified=False,
+                commercial_facts_verified=False, zero_capital_verified=False,
+                delivery_feasibility_verified=False, independently_verified=False,
+                execution_eligible=False, external_authority=False, dispatch_enabled=False)
+            result = dict(payload, review_sha256=_digest(_json(payload)))
+            self.db.execute("COMMIT")
+            return result
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
 
     def _rank_row(self,lead,profile,now,halted):
         context=context_for(lead)

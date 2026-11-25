@@ -17,6 +17,7 @@ from test_cash_feasibility import scenario
 from test_schedule_feasibility import plan
 from test_lead_store import NOW
 from test_owner_profile import profile
+from test_operator_capabilities import requirements
 
 
 class RankingWorkspaceTests(unittest.TestCase):
@@ -107,6 +108,76 @@ class RankingWorkspaceTests(unittest.TestCase):
         row=next(row for row in result["rows"] if row["plan_id"]==self.key)
         self.assertEqual(row["review_tier"],"SOURCE_REVIEW_REQUIRED")
         self.assertIn("OBSERVATION_STALE",row_details(row,result))
+
+    def test_scoped_declared_requirements_are_advisory_even_without_title_hint(self):
+        context = self.workspace.refresh()["rows"][0]["context"]
+        raw = requirements()
+        result = self.workspace.review_requirements(context, raw)
+        self.assertEqual(result["context"], context)
+        self.assertEqual(result["state"], "DECLARED_STRUCTURE_FITS")
+        self.assertFalse(result["title_hint_matches_declared_service"])
+        self.assertTrue(result["requirements_assessment"]["declared_structure_fits"])
+        for flag in ("source_bytes_checked", "requirements_verified",
+                     "commercial_facts_verified", "zero_capital_verified",
+                     "delivery_feasibility_verified", "independently_verified",
+                     "execution_eligible", "external_authority", "dispatch_enabled"):
+            self.assertIs(result[flag], False)
+        self.assertEqual(result, self.workspace.review_requirements(context, raw))
+        raw["specification"]["expected_rows"] = 3
+        changed = self.workspace.review_requirements(context, raw)
+        self.assertNotEqual(result["review_sha256"], changed["review_sha256"])
+        self.assertEqual(result["requirements_assessment"]["declared_input"]["specification"]["expected_rows"], 2)
+
+    def test_scoped_requirements_never_override_source_staleness(self):
+        context = self.workspace.refresh()["rows"][0]["context"]
+        self.now += timedelta(days=2)
+        result = self.workspace.review_requirements(context, requirements())
+        self.assertEqual(result["state"], "SOURCE_HELD")
+        self.assertEqual(result["source_hold"], "SOURCE_REVIEW_REQUIRED")
+        self.assertIn("OBSERVATION_STALE", result["source_blockers"])
+        self.assertTrue(result["requirements_assessment"]["declared_structure_fits"])
+        self.assertFalse(result["execution_eligible"])
+
+    def test_scoped_requirements_unknown_and_malformed_declarations(self):
+        context = self.workspace.refresh()["rows"][0]["context"]
+        result = self.workspace.review_requirements(context, requirements(input_bytes=None))
+        self.assertEqual(result["state"], "DECLARED_STRUCTURE_UNRESOLVED_OR_UNSUPPORTED")
+        self.assertIn("DECLARED_SIZE_UNKNOWN", result["requirements_assessment"]["reasons"])
+        with self.assertRaises(ValueError):
+            self.workspace.review_requirements(context, requirements(external_authority=True))
+        # A failed read transaction must not poison subsequent review.
+        self.assertEqual(self.workspace.review_requirements(context, requirements())["state"],
+                         "DECLARED_STRUCTURE_FITS")
+
+    def test_scoped_requirements_reject_changed_observation_profile_and_halt(self):
+        context = self.workspace.refresh()["rows"][0]["context"]
+        for state in (True, None, 0):
+            self.halted = state
+            with self.assertRaises(PermissionError):
+                self.workspace.review_requirements(context, requirements())
+        self.halted = False
+        later = NOW + timedelta(minutes=1)
+        newer = copy.deepcopy(self.report)
+        for row in newer["leads"]:
+            row["retrieved_at"] = later.isoformat()
+        with ScenarioStore(self.directory/"scout-leads.sqlite3") as store:
+            store.record(newer, now=later, halted=False)
+        self.now = later
+        with self.assertRaises(ValueError):
+            self.workspace.review_requirements(context, requirements())
+        current = self.workspace.refresh()["rows"][0]["context"]
+        with ProfileStore(self.directory/"owner-profile.sqlite3") as profiles:
+            profiles.save(profile(mode="catalyst", budget="50"), halted=False)
+        with self.assertRaises(ValueError):
+            self.workspace.review_requirements(current, requirements())
+
+    def test_scoped_requirements_detect_profile_change_during_review(self):
+        from unittest.mock import patch
+        context = self.workspace.refresh()["rows"][0]["context"]
+        with patch.object(self.workspace, "_profile",
+                          side_effect=[self.profile, profile(mode="catalyst", budget="50")]):
+            with self.assertRaises(ValueError):
+                self.workspace.review_requirements(context, requirements())
 
     def test_display_does_not_round_to_zero_or_infer_missing_values(self):
         self.assertEqual(display_amount(None),"Unknown")

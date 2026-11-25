@@ -59,6 +59,20 @@ class RankingWorkspace:
         self._confirm(profile)
         return report
 
+    def review_requirements(self, context, requirements):
+        """Review explicit service declarations against the current local archive."""
+        self._permit()
+        context = _context(context)
+        profile = self._profile()
+        if profile_revision(profile) != context["profile_revision"]:
+            raise ValueError("Owner profile changed. Refresh ranking.")
+        self._permit()
+        with RankingStore(self.directory/"scout-leads.sqlite3") as store:
+            result = store.review_requirements(context, requirements, profile=profile,
+                now=self.clock(), halted=False)
+        self._confirm(profile)
+        return result
+
     def resolve(self,context):
         self._permit()
         context=_context(context)
