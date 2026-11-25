@@ -1,0 +1,1 @@
+Offline candidate screening for E13–E14. Freshness, deadline and value checks only; no scoring, verified eligibility, source authentication or dispatch authority. Four test methods authored; CI pending. Requires normalized trusted-boundary input and integration review. No gate accepted.
