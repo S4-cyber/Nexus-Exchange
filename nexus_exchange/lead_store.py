@@ -13,6 +13,7 @@ from .ted_search import notice_url as ted_url
 from .fts_search import notice_url as fts_url
 from .canada_search import notice_url as canada_url
 from .usaspending_search import award_url, metadata as award_metadata, CONTRACTOR_TASKS
+from .owner_profile import reported_codes, rank_history, profile_revision
 
 SOURCES=MappingProxyType({
     "nexus-sam-research-v1":("sam",sam_url),
@@ -104,6 +105,9 @@ def _project(fmt,lead,hashes,truncated):
         payload["award_metadata"]=award_metadata(lead.get("award_metadata"))
         if payload["award_metadata"]["recipient"]!=op.title:
             raise ValueError("award recipient mismatch")
+    codes=reported_codes(source,lead)
+    if codes:
+        payload["reported_codes"]=codes
     encoded=_json(payload)
     if len(encoded)>MAX_PAYLOAD:
         raise ValueError("lead payload exceeds limit")
@@ -188,7 +192,7 @@ class LeadStore:
             raise
         return inserted
 
-    def browse(self,*,now,source=None,query="",limit=100,halted=None):
+    def browse(self,*,now,source=None,query="",limit=100,profile=None,halted=None):
         _permit(halted)
         now=_now(now)
         if source is not None and (type(source) is not str or source not in {v[0] for v in SOURCES.values()}):
@@ -245,6 +249,9 @@ class LeadStore:
             output.append(dict(p,blockers=list(dict.fromkeys(reasons)),research_candidate=False,
                 execution_eligible=False,external_authority=False,cash_exposure=None,
                 todo=[dict(key=k,instruction=t,status="needs independent evidence") for k,t in (CONTRACTOR_TASKS if p["source"]=="usaspending" else CHECKS)]))
+        if profile is not None:
+            output=rank_history(profile,output)
         return dict(format="nexus-scout-history-v1",scope="Historical source observations; no current eligibility or authority",
-            evaluated_at=now.isoformat(),source_filter=source,matched=len(output),returned=min(len(output),limit),
+            evaluated_at=now.isoformat(),source_filter=source,profile_revision=profile_revision(profile) if profile is not None else None,
+            matched=len(output),returned=min(len(output),limit),
             truncated=len(output)>limit,leads=output[:limit])
