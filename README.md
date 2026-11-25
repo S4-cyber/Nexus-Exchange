@@ -40,3 +40,9 @@ Historical source assertions and simulated economics are not verified commercial
 
 ## Integration
 See [integration baseline](docs/INTEGRATION_BASELINE.md) for branch lineage, acceptance criteria and known blockers. Formal release gates are separate from prototype CI.
+
+## Development resource library
+
+See the [Awesome engineering resource catalogue](resources/awesome/README.md) for pinned references, offline filtering, and a gated local-agent adoption plan. Nothing in the catalogue grants runtime authority or installs dependencies.
+
+Development workspace instructions: [AGENTS.md](AGENTS.md) and [development protocol](docs/DEVELOPMENT_PROTOCOL.md).

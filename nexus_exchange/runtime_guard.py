@@ -12,6 +12,7 @@ import os
 
 from .event_store import EventStore
 from .council_attempts import CouncilAttemptStore
+from .advisory_attempts import AdvisoryAttemptStore, DB_NAME as ADVISORY_DB
 from .scenario_council import ScenarioCouncil
 from .dashboard_events import project
 from .scout import _timestamp
@@ -54,6 +55,8 @@ class RuntimeGuard:
         self._browser_executor=None
         self.council_recovered_count=0
         self.council_escalated_count=0
+        self.advisory_recovered_count=0
+        self.advisory_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
         directory=Path(directory).resolve()
         self._directory=directory
@@ -72,6 +75,7 @@ class RuntimeGuard:
             self._persist("halted","startup")
             self.recovered_count=self.events.recover_interrupted(now=self._clock())
             self.recover_council()
+            self.recover_advisory()
         except BaseException:
             try:
                 if self.events is not None:
@@ -131,6 +135,45 @@ class RuntimeGuard:
                 result=store._runtime_recover_all(now=self._clock())
             self.council_recovered_count+=result["recovered"]
             self.council_escalated_count+=result["escalated"]
+            return result
+        except BaseException:
+            self._stop.set()
+            self._faulted=True
+            raise
+
+    def _advisory_path(self):
+        path=self._directory/ADVISORY_DB
+        if not os.path.lexists(path):
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("invalid local advisory database path")
+        return path
+
+    def _advisory_pending(self):
+        path=self._advisory_path()
+        if path is None:
+            return 0
+        with AdvisoryAttemptStore(path,existing_only=True) as store:
+            return store._runtime_pending(now=self._clock())
+
+    def recover_advisory(self):
+        """Reconcile ledger reservations under halted owner-thread/idle lock.
+
+        No advisory worker exists yet. Before dispatch is implemented, extend
+        this boundary to prove child cleanup and exclude its active supervisor.
+        The desktop additionally excludes unjournaled worker futures.
+        """
+        self._require_idle()
+        if self._faulted or not self.is_set():
+            raise PermissionError("halted healthy runtime required for advisory recovery")
+        try:
+            path=self._advisory_path()
+            if path is None:
+                return dict(recovered=0,escalated=0)
+            with AdvisoryAttemptStore(path,existing_only=True) as store:
+                result=store._runtime_recover_all(now=self._clock())
+            self.advisory_recovered_count+=result["recovered"]
+            self.advisory_escalated_count+=result["escalated"]
             return result
         except BaseException:
             self._stop.set()
@@ -697,7 +740,9 @@ class RuntimeGuard:
             state="halted" if self.is_set() else previous["state"],
             reason="persistence_fault" if self._faulted else previous["reason"],
             council_recovered_count=self.council_recovered_count,
-            council_escalated_count=self.council_escalated_count,external_authority=False)
+            council_escalated_count=self.council_escalated_count,
+            advisory_recovered_count=self.advisory_recovered_count,
+            advisory_escalated_count=self.advisory_escalated_count,external_authority=False)
 
     def _persist(self,state,reason):
         now=self._clock()
@@ -744,6 +789,8 @@ class RuntimeGuard:
         try:
             if self._council_pending():
                 raise PermissionError("unfinished Council reservations require halted recovery")
+            if self._advisory_pending():
+                raise PermissionError("unfinished advisory reservations require halted recovery")
             self._persist("offline_ready","explicit_resume")
         except PermissionError:
             raise
