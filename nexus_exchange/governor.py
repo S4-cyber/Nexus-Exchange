@@ -65,3 +65,12 @@ def decide_ted_read(*, approved=None, halted=None):
     if approved is not True:
         return Decision(False, 'TED_READ_CONSENT_REQUIRED')
     return Decision(True, 'TED_PUBLIC_SEARCH_ONLY')
+
+
+def decide_fts_read(*, approved=None, halted=None):
+    """Trusted UI consent for one public UK release collection only."""
+    if halted is not False:
+        return Decision(False, "HALTED_OR_UNKNOWN")
+    if approved is not True:
+        return Decision(False, "FTS_READ_CONSENT_REQUIRED")
+    return Decision(True, "FTS_PUBLIC_RELEASES_ONLY")

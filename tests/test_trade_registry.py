@@ -46,6 +46,7 @@ class TradeRegistryTests(unittest.TestCase):
             self.assertEqual(len(source_tasks(source.id,halted=False)),4)
         self.assertIn("mock",readiness("sam",halted=False)["adapter_status"])
         self.assertIn("TED adapter",readiness("ted",halted=False)["adapter_status"])
+        self.assertIn("FTS release adapter",readiness("uk_tender",halted=False)["adapter_status"])
         self.assertEqual(readiness("canada",halted=False)["adapter_status"],"catalog only")
 
     def test_fail_closed_halt_and_unknown_status(self):
