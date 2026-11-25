@@ -201,3 +201,48 @@ class CouncilAuditTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     store.complete(ticket,"RETRY","b"*64,now=self.now,halted=False)
                 self.assertEqual(store.status(self.task,halted=False)["state"],"RESERVED")
+
+    def test_legacy_task_upgrades_without_inventing_prior_snapshot(self):
+        from nexus_exchange.council_coordinator import CouncilCoordinator
+        with self.council._snapshot(self.key) as (_snapshot,task,artifacts):
+            with CouncilAttemptStore(self.db) as store:
+                legacy=CouncilCoordinator(store,halt_check=lambda:False,clock=lambda:self.now)
+                first=legacy.run_once(task,artifacts)
+                self.assertEqual(first["ledger"]["attempts_used"],1)
+                encoded=store.db.execute("SELECT payload FROM council_attempts_v1").fetchone()[0]
+                self.assertEqual(json.loads(encoded)["version"],1)
+        self.now+=timedelta(seconds=1)
+        self.run_review()
+        history=self.history()
+        self.assertEqual([row["audit_state"] for row in history["attempts"]],
+                         ["LEGACY_DIGEST_ONLY","RECORDED"])
+        self.assertIsNone(history["attempts"][0]["audit"])
+        with CouncilAttemptStore(self.db) as store:
+            encoded=store.db.execute("SELECT payload FROM council_attempts_v1").fetchone()[0]
+            self.assertEqual(json.loads(encoded)["version"],2)
+
+    def test_exact_audit_replay_is_idempotent_and_changed_snapshot_rejected(self):
+        result=self.run_review()
+        entry=result["ledger"]["attempts"][0]
+        ticket=dict(task_id=self.task,attempt=entry["attempt"],reservation_id=entry["reservation_id"])
+        self.now+=timedelta(seconds=1)
+        with CouncilAttemptStore(self.db) as store:
+            replay=store.complete(ticket,result["review"]["status"],result["report_sha256"],
+                now=self.now,halted=False,audit_snapshot=result["snapshot"],review_report=result["review"])
+            self.assertEqual(replay,result["ledger"])
+            changed=dict(result["snapshot"],modeled_expected_net="999.00")
+            changed["snapshot_sha256"]=_digest(_json(
+                {k:v for k,v in changed.items() if k!="snapshot_sha256"}))
+            with self.assertRaises(ValueError):
+                store.complete(ticket,result["review"]["status"],result["report_sha256"],
+                    now=self.now,halted=False,audit_snapshot=changed,review_report=result["review"])
+            self.assertEqual(store.db.execute("SELECT COUNT(*) FROM council_review_audit_v1").fetchone()[0],1)
+
+    def test_orphaned_audit_for_unreserved_attempt_is_rejected(self):
+        self.run_review()
+        with CouncilAttemptStore(self.db) as store:
+            payload,digest=store.db.execute("SELECT payload,digest FROM council_review_audit_v1").fetchone()
+            store.db.execute("INSERT INTO council_review_audit_v1 VALUES (?,?,?,?)",
+                             (self.task,2,payload,digest))
+            with self.assertRaises(ValueError):
+                store.status(self.task,halted=False)
