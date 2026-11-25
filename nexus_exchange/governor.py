@@ -101,3 +101,12 @@ def decide_fx_read(*, approved=None, halted=None):
     if approved is not True:
         return Decision(False, "FX_READ_CONSENT_REQUIRED")
     return Decision(True, "FX_REFERENCE_READ_ONLY")
+
+
+def decide_sec_read(*, approved=None, halted=None):
+    """One explicit owner-requested public company metadata GET."""
+    if halted is not False:
+        return Decision(False,"HALTED_OR_UNKNOWN")
+    if approved is not True:
+        return Decision(False,"SEC_READ_CONSENT_REQUIRED")
+    return Decision(True,"SEC_PUBLIC_COMPANY_METADATA_ONLY")

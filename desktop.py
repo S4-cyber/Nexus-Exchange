@@ -479,6 +479,7 @@ def main(*, data_directory=None, gui_smoke=False):
         return window
     def trade_catalog():
         from nexus_exchange.fx_reference import CURRENCIES, fetch_reference
+        from nexus_exchange.sec_company import fetch_company, normalize_cik, _declared_agent
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Scout global trade catalog")
         window.geometry("1050x760")
@@ -684,6 +685,46 @@ def main(*, data_directory=None, gui_smoke=False):
                 return fetch_reference(base,amount,approved=True,halt_check=stop.is_set)
             run(work,target="Frankfurter reference FX estimate",scenario=True)
             write_details("Reference lookup requested. See main dashboard; no settlement or revenue claim.")
+        def run_sec():
+            source=selected()
+            if source is None or source.id!="sec_edgar":
+                write_details("Select SEC EDGAR for corporate filer research.")
+                return
+            if stop.is_set() or busy():
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            cik=simpledialog.askstring("Atlas SEC lookup","Known company CIK (1–10 digits). Operating company only.",parent=window)
+            if cik is None:
+                return
+            try:
+                cik=normalize_cik(cik)
+            except ValueError:
+                write_details("Invalid company CIK.")
+                return
+            expected=simpledialog.askstring("Atlas SEC lookup","Optional declared company name to compare locally (not transmitted).",parent=window)
+            if expected is None:
+                return
+            organization=simpledialog.askstring("SEC declared requester","Your real requesting business name for the required SEC User-Agent header.",parent=window)
+            if organization is None:
+                return
+            email=simpledialog.askstring("SEC declared requester","Your real business contact email for the SEC request header. Not saved in report.",parent=window)
+            if email is None:
+                return
+            try:
+                _declared_agent(organization,email)
+            except ValueError:
+                write_details("Valid declared business name and contact required.")
+                return
+            if not messagebox.askyesno("Authorize one SEC company lookup",
+                    "Send the selected company CIK and declared requester name/email to data.sec.gov? One public read-only request. No filings submitted, no contact with company, no clearance or fees.",parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return fetch_company(cik,organization,email,expected_name=expected.strip() or None,
+                                     approved=True,halt_check=stop.is_set)
+            run(work,target="Atlas SEC public company metadata research",scenario=True)
+            write_details("Company research requested. See main dashboard; no identity or counterparty clearance.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
@@ -694,7 +735,10 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
         ttk.Button(buttons,text="Research USAspending",command=run_spending).pack(side="left",padx=5)
-        ttk.Button(window,text="Reference FX to USD (keyless)",command=run_fx).pack(pady=4)
+        supplemental=ttk.Frame(window)
+        supplemental.pack(pady=4)
+        ttk.Button(supplemental,text="Reference FX to USD (keyless)",command=run_fx).pack(side="left",padx=4)
+        ttk.Button(supplemental,text="Atlas SEC company lookup",command=run_sec).pack(side="left",padx=4)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
