@@ -2,11 +2,11 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
-import http.client
+from .public_feeds import read_feed
 import json
 import re
 from time import sleep
-from urllib.parse import urlencode, urlsplit, parse_qsl
+from urllib.parse import urlsplit, parse_qsl
 from .governor import decide_fts_read
 from .local_import import _pairs, _integer, _decimal, _constant
 from .ocds_identity import release_identity
@@ -49,24 +49,11 @@ def notice_url(notice_id):
     return "https://"+HOST+"/Notice/"+notice_id
 
 def _request(params):
-    connection=http.client.HTTPSConnection(HOST,443,timeout=10)
     try:
-        connection.request("GET",PATH+"?"+urlencode(params),headers={
-            "Accept":"application/json","Accept-Encoding":"identity",
-            "User-Agent":"NexusExchange-Preview/1"})
-        response=connection.getresponse()
-        if response.status!=200:
-            return response.status,b""
-        raw=response.read(MAX_BYTES+1)
-        if len(raw)>MAX_BYTES:
-            raise SearchError("FTS_RESPONSE_TOO_LARGE")
-        return response.status,raw
-    except SearchError:
-        raise
+        return read_feed("uk_tender", params)[:2]
     except Exception:
         raise SearchError("FTS_TRANSPORT_FAILURE") from None
-    finally:
-        connection.close()
+
 
 def _next_cursor(package, base):
     links=package.get("links",{})

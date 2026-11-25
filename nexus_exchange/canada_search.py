@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import csv
 import hashlib
-import http.client
+from .public_feeds import read_feed
 import io
 import re
 from threading import Lock
@@ -46,7 +46,7 @@ class CanadaQuery:
         return keyword.casefold()
 
 def notice_url(reference):
-    if type(reference) is not str or not re.fullmatch("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",reference):
+    if type(reference) is not str or not re.fullmatch(r"(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}|SSC-[0-9]{2}-[0-9]{8}:T)",reference):
         raise ValueError("invalid CanadaBuys reference")
     if reference.startswith(("MX-","cb-","WS")):
         return "https://"+HOST+"/en/tender-opportunities/tender-notice/"+reference
@@ -54,23 +54,11 @@ def notice_url(reference):
     return "https://"+HOST+"/en/tender-opportunities"
 
 def _request():
-    connection=http.client.HTTPSConnection(HOST,443,timeout=15)
     try:
-        connection.request("GET",PATH,headers={"Accept":"text/csv, application/octet-stream",
-            "Accept-Encoding":"identity","User-Agent":"NexusExchange-Preview/1"})
-        response=connection.getresponse()
-        if response.status!=200:
-            return response.status,b"",None
-        raw=response.read(MAX_BYTES+1)
-        if len(raw)>MAX_BYTES:
-            raise SearchError("CANADA_RESPONSE_TOO_LARGE")
-        return response.status,raw,response.getheader("Last-Modified")
-    except SearchError:
-        raise
+        return read_feed("canada")
     except Exception:
         raise SearchError("CANADA_TRANSPORT_FAILURE") from None
-    finally:
-        connection.close()
+
 
 def _dataset_time(header,now):
     try:

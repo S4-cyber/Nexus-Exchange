@@ -1,9 +1,13 @@
-"""Windows desktop preview; no external operations."""
+"""Nexus Exchange Windows desktop review application."""
 import sys
 import os
 import json
 import sqlite3
 import webbrowser
+from queue import Empty, SimpleQueue
+from nexus_exchange import engagement
+from nexus_exchange.engagement_files import folder as work_folder, INBOX, OUTPUTS
+from nexus_exchange.accounts_panel import install as install_accounts
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from functools import partial
@@ -116,7 +120,7 @@ def main(*, data_directory=None, gui_smoke=False):
     from tkinter.scrolledtext import ScrolledText
     from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit, action_menu
     root = tk.Tk()
-    root.title("Nexus Exchange | Offline preview")
+    root.title("Nexus Exchange | Scout preview")
     root.geometry(fit_geometry(root,1120,820))
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
     root.minsize(540, 420)
@@ -138,6 +142,9 @@ def main(*, data_directory=None, gui_smoke=False):
     store=stop.events
     executor = ThreadPoolExecutor(max_workers=1)
     future = None
+    engaged = False
+    timer = None
+    updates = SimpleQueue()
     scenario_report = None
     latest_results_window = None
     def busy():
@@ -158,11 +165,11 @@ def main(*, data_directory=None, gui_smoke=False):
     tabs = ttk.Notebook(chrome.content)
     tabs.pack(fill="both", expand=True, padx=6, pady=(0, 5))
     pages = {}
-    for name in ("Home", "Research", "Reports", "Settings", "Help"):
+    for name in ("Home", "Research", "Reports", "Accounts", "Settings", "Help"):
         pages[name] = ttk.Frame(tabs, padding=(14, 10))
         tabs.add(pages[name], text=name)
     tabs.enable_traversal()
-    home, research, reports, settings, help_page = pages.values()
+    home, research, reports, accounts, settings, help_page = pages.values()
 
     def heading(parent, text):
         ttk.Label(parent, text=text, font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(5, 3))
@@ -172,10 +179,12 @@ def main(*, data_directory=None, gui_smoke=False):
         row.pack(fill="x", pady=(0, 7))
         return row
 
-    heading(home, "Review an opportunity")
-    ttk.Label(home, text="Try a sample locally or explore sources for your own research.",
+    heading(home, "Scout overview")
+    ttk.Label(home, text="Engage searches public sources, checks saved leads and prepares your review brief every hour while this window is open.",
               wraplength=440, justify="left").pack(anchor="w", pady=(0, 7))
     home_actions = action_row(home)
+    cycle_status = ttk.Label(home, wraplength=490, justify="left")
+    cycle_status.pack(anchor="w", pady=(0, 6))
     activity = ttk.Frame(home)
     activity.pack(fill="x")
     tasks = ttk.Frame(activity)
@@ -378,6 +387,13 @@ def main(*, data_directory=None, gui_smoke=False):
             button.configure(state="disabled")
         halt_status.configure(text=message)
     def halt():
+        nonlocal engaged, timer
+        engaged = False
+        if timer is not None:
+            root.after_cancel(timer)
+            timer = None
+        engage_button.configure(text="Engage", state="normal")
+        cycle_status.configure(text="Paused. Select Engage to start a new cycle.")
         message="HALTED — new tasks blocked"
         try:
             stop.set()
@@ -1553,23 +1569,149 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Export displayed JSON",command=export).pack(side="left")
         reload()
         return window
+    def read_brief():
+        try:
+            with (directory / engagement.BRIEF).open(encoding="utf-8") as handle:
+                return json.loads(handle.read(262144))
+        except FileNotFoundError:
+            return None
+
+    def summarize(brief):
+        found = sum(item["found"] for item in brief["sources"])
+        return (f"{brief['status']} · {found} notices returned · {len(brief['shortlist'])} saved leads shortlisted"
+                + f" · {brief['jobs']['produced']} local files produced"
+                + ("\n" + " ".join(brief["notes"]) if brief["notes"] else ""))
+
+    def open_brief():
+        try:
+            brief = read_brief()
+            text = engagement.brief_text(brief) if brief else "Engage Scout on Home to prepare your first brief."
+        except (OSError, ValueError, TypeError, KeyError):
+            text = "The saved brief could not be read. Engage Scout to rebuild it from your lead archive."
+        window = tk.Toplevel(root)
+        window.title("Latest Scout brief")
+        window.geometry(fit_geometry(root, 760, 540))
+        body = ScrolledText(window, wrap="word", padx=14, pady=10)
+        body.pack(fill="both", expand=True)
+        body.insert("1.0", text)
+        body.configure(state="disabled")
+
+    def start_cycle():
+        nonlocal future, timer
+        timer = None
+        if not engaged or stop.is_set():
+            return
+        if busy():
+            timer = root.after(1000, start_cycle)
+            return
+        kwargs = {}
+        if gui_smoke:
+            def fixture_search(source, *args):
+                fmt = {"uk_tender": "nexus-fts-research-v1", "canada": "nexus-canada-research-v1"}[source]
+                return dict(format=fmt, returned=0, leads=[], truncated=False, page_sha256=["0"*64])
+            kwargs["default_search"] = fixture_search
+        future = executor.submit(engagement.cycle, directory, stop.is_set, updates.put, **kwargs)
+        root.after(100, poll_cycle)
+
+    def poll_cycle():
+        nonlocal future, timer
+        while True:
+            try:
+                stage = updates.get_nowait()
+            except Empty:
+                break
+            if engaged:
+                cycle_status.configure(text=stage + "…")
+        if not future.done():
+            root.after(100, poll_cycle)
+            return
+        try:
+            brief = future.result()
+            next_status = summarize(brief)
+        except Exception:
+            next_status = "Cycle interrupted. Review Reports for the recorded task status."
+        future = None
+        refresh()
+        if engaged and not stop.is_set():
+            next_time = (datetime.now().astimezone() + timedelta(hours=1)).strftime("%H:%M")
+            cycle_status.configure(text=next_status + f"\nNext search at {next_time} local time.")
+            refresh_accounts()
+            timer = root.after(3600000, start_cycle)
+
+    def engage():
+        nonlocal engaged
+        if engaged:
+            return
+        if busy():
+            cycle_status.configure(text="A task is finishing. Select Engage when it is done.")
+            return
+        resume()
+        if stop.is_set():
+            return
+        engaged = True
+        engage_button.configure(text="Engaged", state="disabled")
+        halt_status.configure(text="Scout is engaged · Emergency halt stops this session.")
+        cycle_status.configure(text="Starting baseline research…")
+        start_cycle()
+
+    def account_task(work, done):
+        nonlocal future
+        if busy():
+            done("A task is running. Try again after it finishes.")
+            return False
+        resume()
+        if stop.is_set():
+            done("Account setup is paused pending runtime recovery.")
+            return False
+        if engaged:
+            halt_status.configure(text="Scout is engaged · Account setup in progress.")
+        future = executor.submit(work, stop.is_set)
+        def finish():
+            nonlocal future
+            if not future.done():
+                root.after(125, finish)
+                return
+            try:
+                message = future.result()
+            except Exception:
+                message = "Connection incomplete. Check provider access in Accounts and reconnect if needed."
+            future = None
+            done("Account setup stopped." if stop.is_set() else message)
+            if engaged:
+                halt_status.configure(text="Scout is engaged · Emergency halt stops this session.")
+        root.after(125, finish)
+        return True
+
     safety_buttons = ttk.Frame(chrome.safety)
     safety_buttons.pack(fill="x")
     ttk.Label(safety_buttons, text="Nexus Exchange", font=("Segoe UI", 15, "bold")).pack(side="left")
     halt_button = ttk.Button(safety_buttons, text="Emergency halt", command=halt, style="Halt.TButton")
     halt_button.pack(side="right")
-    resume_button = ttk.Button(safety_buttons, text="Resume offline", command=resume)
-    resume_button.pack(side="right", padx=6)
-    halt_status = ttk.Label(chrome.safety, text="Halted · Select Resume offline to begin.")
+    resume_button = ttk.Button(settings, text="Resume offline", command=resume)
+    # Advanced manual tools can be enabled separately in Settings.
+    halt_status = ttk.Label(chrome.safety, text="Ready · Select Engage on Home.")
     halt_status.pack(fill="x", pady=(2, 0))
     if stop.recovered_count or stop.council_recovered_count:
         halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks and "
-                              f"{stop.council_recovered_count} Council attempts. Select Resume offline to begin.")
+                              f"{stop.council_recovered_count} Council attempts. Select Engage on Home.")
     chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
 
-    launch = ttk.Button(home_actions, text="Run example", command=run)
-    launch.pack(side="left")
-    ttk.Button(home_actions, text="Find opportunities", command=lambda: tabs.select(research)).pack(side="left", padx=6)
+    engage_button = ttk.Button(home_actions, text="Engage", command=engage)
+    engage_button.pack(side="left")
+    ttk.Button(home_actions, text="View latest brief", command=open_brief).pack(side="left", padx=5)
+    try:
+        previous = read_brief()
+        cycle_status.configure(text=("Last cycle · " + summarize(previous)) if previous else "Ready for the first search.")
+    except (OSError, ValueError, TypeError, KeyError):
+        cycle_status.configure(text="Select Engage to rebuild the latest brief.")
+    ttk.Button(report_actions, text="Scout brief", command=open_brief).pack(side="left", padx=3)
+    refresh_accounts = install_accounts(accounts, directory, account_task, busy, webbrowser.open)
+    def open_work_folder(name):
+        try:
+            if not webbrowser.open(work_folder(directory, name).as_uri()):
+                raise OSError()
+        except (OSError, ValueError):
+            messagebox.showinfo(name, f"Work folder: {directory / name}", parent=root)
 
     heading(research, "Find opportunities")
     find_actions = action_row(research)
@@ -1590,20 +1732,27 @@ def main(*, data_directory=None, gui_smoke=False):
     exporter = ttk.Button(report_actions, text="Export latest report", command=export_scenario, state="disabled")
     exporter.pack(side="left", padx=5)
 
-    heading(settings, "Research preferences")
+    heading(settings, "Advanced preferences")
+    resume_button.pack(anchor="w", pady=(0,4))
     ttk.Button(settings, text="Search settings", command=owner_profile_window).pack(anchor="w")
+    work_actions = action_row(settings)
+    ttk.Button(work_actions, text="Open work inbox", command=lambda: open_work_folder(INBOX)).pack(side="left")
+    ttk.Button(work_actions, text="Open completed files", command=lambda: open_work_folder(OUTPUTS)).pack(side="left", padx=4)
     heading(settings, "Appearance")
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
     ttk.Button(settings, text="Recover interrupted Council attempts", command=recover_council).pack(anchor="w")
 
     heading(help_page, "Getting started")
-    for line in ("1. On Home, select Resume offline and then Run example. The result appears below.",
-                 "2. In Research, choose Plan a search. Use Search settings to add your available hours and preferred sources.",
-                 "3. In Reports, search by target, status, date or task ID. Open the archive to review saved opportunities."):
+    for line in ("1. Choose Engage on Home. Scout starts immediately and repeats hourly while the application stays open.",
+                 "2. Read the latest brief and source coverage on Home. Accounts and advanced search settings are optional.",
+                 "3. Emergency halt stops scheduling. After closing and reopening the application, choose Engage to start again."):
         ttk.Label(help_page, text=line, wraplength=440, justify="left").pack(anchor="w", pady=2)
+    ttk.Label(help_page, text="Local file jobs: place CSVs in Settings → Open work inbox. Each cycle writes a checked column-quality report to Completed files. Use UTF-8, up to 2,000 rows and 16 unique column names starting with a letter. Formulas and oversized files are held.", wraplength=490, justify="left").pack(anchor="w", pady=4)
     heading(help_page, "Check the local research tools")
     diagnostics = action_row(help_page)
+    launch = ttk.Button(diagnostics, text="Run example", command=run)
+    launch.pack(side="left")
     diagnostic_buttons=[]
     for fixture_id,label in (("procurement","Run procurement fixture"),("digital_services","Run digital services fixture")):
         button=ttk.Button(diagnostics,text=label,command=partial(browser_diagnostic,fixture_id))
@@ -1629,6 +1778,24 @@ def main(*, data_directory=None, gui_smoke=False):
                     or halt_button.winfo_rooty() >= page_widget.winfo_rooty() or not stop.is_set()):
                 raise RuntimeError("Tab navigation lost the global halt control or changed runtime state")
         tabs.select(home)
+        if os.name == "nt":
+            from nexus_exchange.account_vault import AccountVault
+            native = AccountVault(directory)
+            native.save("sam", {"key": "synthetic-gui-check"})
+            if native.load("sam") != {"key": "synthetic-gui-check"}:
+                raise RuntimeError("Packaged Windows credential protection round trip failed")
+            native.forget("sam")
+        engage_button.invoke()
+        deadline = monotonic() + 20
+        while future is not None and monotonic() < deadline:
+            root.update()
+            sleep(0.01)
+        brief = read_brief()
+        if future is not None or not engaged or not brief or len(brief["sources"]) != 2 or timer is None:
+            raise RuntimeError("One-click first-run engagement did not compile and schedule the next search")
+        halt_button.invoke()
+        if timer is not None or engaged or not stop.is_set():
+            raise RuntimeError("Emergency halt did not cancel recurring engagement")
         resume_button.invoke()
         if stop.is_set() or str(launch.cget("state"))!="normal":
             raise RuntimeError("explicit offline resume failed")
@@ -1649,7 +1816,7 @@ def main(*, data_directory=None, gui_smoke=False):
         if history.get_children():
             raise RuntimeError("Dashboard history search retained unrelated events")
         history_query.set("")
-        if len(history.get_children()) != 3:
+        if len(history.get_children()) != 6:
             raise RuntimeError("Dashboard history search failed to clear")
         halt()
         if not stop.is_set() or str(launch.cget("state"))!="disabled":
