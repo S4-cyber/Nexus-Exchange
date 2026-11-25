@@ -57,7 +57,7 @@ def install(parent, directory, submit, blocked, open_browser):
         label = LABELS[kind]
         server = None
         if kind == "bank":
-            value = ask(label, "Paste your SimpleFIN Bridge setup token. Use Get bank token to obtain one.", show="•")
+            value = ask(label, "Paste your SimpleFIN Bridge setup token for read-only balances. Share one USD operating account to use a planning ceiling. Provider fees may apply.", show="•")
             if not value:
                 return
             def work(stopped):
@@ -88,7 +88,7 @@ def install(parent, directory, submit, blocked, open_browser):
                 existing = {}
             client = os.environ.get("NEXUS_DOCUSIGN_CLIENT_ID") or existing.get("client")
             if not client:
-                client = ask(label, "Enter the production public integration key registered for Nexus Exchange. Your administrator can supply it.")
+                client = ask(label, "Enter the production public integration key registered for Nexus Exchange. Your administrator can supply it. Consent verifies account identity.")
             if not client:
                 return
             try:
@@ -123,25 +123,21 @@ def install(parent, directory, submit, blocked, open_browser):
             server.server_close()
 
     ttk.Label(parent, text="Accounts", font=("Segoe UI", 14, "bold")).pack(anchor="w")
-    ttk.Label(parent, text="Scout can run without accounts. Connect a service when you need it. Windows protects saved access on this device.",
-              wraplength=490).pack(anchor="w", pady=(3, 8))
-    descriptions = {"bank": "Use SimpleFIN for read-only balance access. For a planning budget, share one USD operating account and set a spending ceiling in Settings. Provider fees may apply.",
-                    "docusign": "Verify your identity and renew eSignature access. This preview only checks account identity.",
-                    "sam": "Include US federal opportunities in your searches."}
+    ttk.Label(parent, text="Optional connections. Windows protects access on this device.",
+              wraplength=480).pack(anchor="w", pady=(2, 3))
+    feedback = ttk.Label(parent, wraplength=460, justify="left")
+    feedback.pack(anchor="w")
     for kind, label in LABELS.items():
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(5, 1))
         ttk.Label(row, text=label, font=("Segoe UI", 10, "bold")).pack(side="left")
-        statuses[kind] = ttk.Label(row)
-        statuses[kind].pack(side="left", padx=8)
-        actions = ttk.Frame(parent)
-        actions.pack(fill="x")
+        actions = ttk.Frame(row)
+        actions.pack(side="right")
         ttk.Button(actions, text="Connect", command=lambda k=kind: connect(k)).pack(side="left")
         ttk.Button(actions, text="Forget", command=lambda k=kind: forget(k)).pack(side="left", padx=3)
         if kind == "bank":
             ttk.Button(actions, text="Get bank token", command=lambda: open_browser(api.BANK_SIGNUP)).pack(side="left", padx=3)
-        ttk.Label(parent, text=descriptions[kind], wraplength=490).pack(anchor="w")
-    feedback = ttk.Label(parent, wraplength=490)
-    feedback.pack(anchor="w", pady=5)
+        statuses[kind] = ttk.Label(parent, wraplength=460)
+        statuses[kind].pack(anchor="w")
     refresh()
     return refresh
