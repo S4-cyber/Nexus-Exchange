@@ -140,3 +140,12 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - E22 remains pending: declared capacity and tender amount are not quotes, revenue or economic forecasts. E20/E21 remain partial until verified organization/source linkage, profile persistence and user interface are implemented.
 - Prior E40 evidence: import-enabled Windows build 45523381631 completed successfully, including GUI smoke checks and artifact 14980484368. Formal main acceptance remains 0/42; integration stack not merged.
 - Next: integrate Atlas with archive and explicit user requirements, persistent halt/recovery, then source adapters and evidence-based economics.
+
+
+## Fee-only scenario economics candidate
+- Prior Atlas head 030919eff3b46d3d6980d97f9f3473181c3a3d7c passed PR CI run 45523816491 (67-test code suite previously observed passing on 45523776844).
+- E22: explicit fee, upfront and completion cost, conditional collection probability, completion probability and modeled exposure limit. Decimal arithmetic; no tender budget treated as revenue; Atlas reasons are preserved; Governor blocks simulation when halted/unknown. Nonpositive expected net or excessive modeled loss blocks review eligibility. No financial commitment or authority.
+- E38: ten new regression test methods, including low ambient precision, failed matching, zero completion, input validation and halt precedence. Test-first commit 7b448b8; implementation 37edfe0. CI for the implementation pending at documentation time.
+- Reuse: existing Atlas, Governor and Scout, Python Decimal context. No third-party dependency or code copy; no additional spending. See docs/ECONOMICS.md for formulas, assumptions and limitations.
+- E22 remains partial: assumption evidence, legal liability modeling, UI integration, scenario persistence and actual quote verification pending. E20/E21 remain partial pending source verification and desktop integration. Main accepted gates remain 0/42; all implementation branches are review candidates.
+- Next: local scenario input bound to archived observations, integrate Atlas/economics into Windows preview; consolidate branch stack; durable halt and recovery; permitted source collection.
