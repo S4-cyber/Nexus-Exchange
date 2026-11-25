@@ -92,3 +92,12 @@ def decide_usaspending_read(*, approved=None, halted=None):
     if approved is not True:
         return Decision(False, "USASPENDING_READ_CONSENT_REQUIRED")
     return Decision(True, "USASPENDING_PRIME_AWARD_RESEARCH_ONLY")
+
+
+def decide_fx_read(*, approved=None, halted=None):
+    """One explicit owner-requested reference-rate GET, not payment authority."""
+    if halted is not False:
+        return Decision(False, "HALTED_OR_UNKNOWN")
+    if approved is not True:
+        return Decision(False, "FX_READ_CONSENT_REQUIRED")
+    return Decision(True, "FX_REFERENCE_READ_ONLY")

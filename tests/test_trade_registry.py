@@ -5,7 +5,7 @@ from nexus_exchange.trade_registry import (SOURCES,KINDS,ACCESS,catalog,get_sour
 
 class TradeRegistryTests(unittest.TestCase):
     def test_unique_and_bounded_registry(self):
-        self.assertEqual(len(SOURCES),24)
+        self.assertEqual(len(SOURCES),33)
         self.assertEqual(len({s.id for s in SOURCES}),len(SOURCES))
         self.assertTrue(all(s.kind in KINDS and s.access in ACCESS for s in SOURCES))
 
@@ -49,6 +49,17 @@ class TradeRegistryTests(unittest.TestCase):
         self.assertIn("FTS release adapter",readiness("uk_tender",halted=False)["adapter_status"])
         self.assertIn("CanadaBuys CSV adapter",readiness("canada",halted=False)["adapter_status"])
         self.assertIn("award intelligence adapter",readiness("usaspending",halted=False)["adapter_status"])
+
+    def test_public_api_directory_adoption(self):
+        self.assertEqual(get_source("freelancer").kind,"earned")
+        self.assertEqual(get_source("freelancer").access,"approved_api")
+        self.assertEqual(get_source("adzuna").access,"restricted_research")
+        self.assertEqual(get_source("tenders_guru").kind,"intelligence")
+        self.assertEqual(get_source("census").access,"key_api")
+        self.assertEqual(get_source("companies_house").access,"key_api")
+        self.assertEqual(get_source("sec_edgar").kind,"compliance")
+        self.assertIn("Frankfurter v2",readiness("frankfurter",halted=False)["adapter_status"])
+        self.assertTrue(all(s.kind!="earned" for s in catalog(query="reference-rate",halted=False)))
 
     def test_fail_closed_halt_and_unknown_status(self):
         for state in (True,None,0):

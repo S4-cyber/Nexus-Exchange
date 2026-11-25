@@ -478,6 +478,7 @@ def main(*, data_directory=None, gui_smoke=False):
         show()
         return window
     def trade_catalog():
+        from nexus_exchange.fx_reference import CURRENCIES, fetch_reference
         window = tk.Toplevel(root)
         window.title("Nexus Exchange | Scout global trade catalog")
         window.geometry("1050x760")
@@ -652,6 +653,37 @@ def main(*, data_directory=None, gui_smoke=False):
                 return search_spending(request,approved=True,halt_check=stop.is_set)
             run(work,target="USAspending contractor research",scenario=True)
             write_details("Research requested. See the dashboard for results.")
+        def run_fx():
+            source=selected()
+            if source is None or source.id!="frankfurter":
+                write_details("Select Frankfurter FX for a reference conversion.")
+                return
+            if stop.is_set() or busy():
+                write_details("Halted or busy. Resume or finish the current task first.")
+                return
+            base=simpledialog.askstring("Reference FX","Source currency: "+", ".join(c for c in CURRENCIES if c!="USD"),
+                                        initialvalue="EUR",parent=window)
+            if base not in CURRENCIES or base=="USD":
+                return
+            amount=simpledialog.askstring("Reference FX","Hypothetical amount (decimal, no commas). Not sent to provider.",
+                                           initialvalue="1000",parent=window)
+            if amount is None:
+                return
+            from nexus_exchange.fx_reference import _amount
+            try:
+                _amount(amount)
+            except ValueError:
+                write_details("Invalid amount.")
+                return
+            if not messagebox.askyesno("Authorize one reference-rate lookup",
+                    "One public Frankfurter HTTPS request for "+base+"/USD. No amount transmitted, no account, fee or payment. Reference estimate only.",parent=window):
+                return
+            def work(*,halted):
+                if halted is not False:
+                    raise PermissionError("HALTED_OR_UNKNOWN")
+                return fetch_reference(base,amount,approved=True,halt_check=stop.is_set)
+            run(work,target="Frankfurter reference FX estimate",scenario=True)
+            write_details("Reference lookup requested. See main dashboard; no settlement or revenue claim.")
         ttk.Button(filters,text="Filter sources",command=reload).pack(side="left")
         buttons=ttk.Frame(window)
         buttons.pack(pady=8)
@@ -662,6 +694,7 @@ def main(*, data_directory=None, gui_smoke=False):
         ttk.Button(buttons,text="Search UK FTS",command=run_fts).pack(side="left",padx=5)
         ttk.Button(buttons,text="Search CanadaBuys",command=run_canada).pack(side="left",padx=5)
         ttk.Button(buttons,text="Research USAspending",command=run_spending).pack(side="left",padx=5)
+        ttk.Button(window,text="Reference FX to USD (keyless)",command=run_fx).pack(pady=4)
         tree.bind("<<TreeviewSelect>>",display)
         reload()
         return window
