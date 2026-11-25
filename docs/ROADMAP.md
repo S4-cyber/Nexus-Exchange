@@ -195,3 +195,10 @@ Use relevant installed plugins where access and task fit are confirmed: Superpow
 - S02/R03/E10–E12: anonymous official UK OCDS release-package collection candidate, frozen update window, same-origin cursor validation, bounded requests, source-scoped release identity, lifecycle-aware blocking and native source search. Thirteen new mocked regression methods; exact-head results pending.
 - E14/R05: historical tender events generate verification tasks; reject superseded, ambiguous, incomplete-window and non-active events. Full record rehydration, current-state compilation, persistent source evidence and independent eligibility/cash exposure verification remain pending. Official help returned 403; parameters corroborated by published secondary documentation, not live provider tests.
 - Prior TED head e31ac801ff8e7d25958b970ea92e55c0417e7767 passed 133-test CI (45531803268, 45531817458) and Windows run 45531803354 (artifact 14984567823). No new paid dependencies. Main accepted gates 0/42 pending integration; next: CanadaBuys, source lifecycle reconstruction and unified lead archive.
+
+
+## CanadaBuys keyless dataset pilot
+- S02/R03/E10–E12: fixed public open-tender CSV download with one-request budget, bounded strict bilingual parsing, transport freshness, timezone-conservative deadline screening, schema drift and duplicate checks; native search/result/checklist UI. Twelve new regression methods; exact-head CI and Windows build pending.
+- Reuse: pinned Maple Procure 21bd93119fd6fe2300361ac3cc6be13024af21a0 (MIT) reviewed for factual CSV schema and provenance architecture only. Official data dictionary unavailable in research environment; live schema validation required. No new dependencies or paid service.
+- Prior UK FTS exact-head Windows run 45532095669 succeeded; artifact 14985632150. Unit suite 146 passing at 45532095611/45532107958.
+- Main formal acceptance 0/42. Next: unify source reports into bounded persistent lead archive and add USAspending award/subaward intelligence; verify actual provider connectivity, source data lifecycle and owner evidence before promotion.
