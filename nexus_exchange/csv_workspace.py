@@ -7,6 +7,7 @@ import sqlite3
 from .checklist_store import _hash
 from .digital_deliverable import _spec
 from .deliverable_files import preview_pins
+from .obligation_workspace import validate_record, open_obligation_window
 
 
 def parse_fields(columns,key,rows):
@@ -70,6 +71,23 @@ class CsvWorkspace:
             raise ValueError("CSV export result mismatch")
         return result
 
+    def register(self,artifact_path,*,confirmed=None):
+        self._permit()
+        if confirmed is not True or not self.ready:
+            raise PermissionError("explicit registration of a current preview required")
+        pins,inputs=self._pins,self._inputs
+        self.clear()
+        result=self.action("register",self.plan_id,confirmed=True,
+                           artifact_path=artifact_path,**inputs,**pins)
+        self._permit()
+        record=validate_record(result,self.plan_id)
+        binding=record["binding"]
+        if (binding["contract"]["contract_sha256"]!=pins["expected_contract"]
+                or binding["qa_report"]["report_sha256"]!=pins["expected_report"]
+                or binding["qa_report"]["artifact_sha256"]!=pins["expected_artifact"]):
+            raise ValueError("registered obligation differs from reviewed preview")
+        return record
+
 
 def preview_text(result):
     pins=preview_pins(result)
@@ -87,7 +105,7 @@ def preview_text(result):
     return "\n".join(lines)
 
 
-def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
+def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke_evidence=None):
     import tkinter as tk
     from tkinter import ttk,filedialog,messagebox
     from tkinter.scrolledtext import ScrolledText
@@ -125,6 +143,7 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
         workspace.clear()
         write("")
         export_button.configure(state="disabled")
+        register_button.configure(state="disabled")
         status.configure(text=message)
 
     def error(exc):
@@ -144,7 +163,8 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
             result=workspace.preview(source.get(),columns.get(),key.get(),rows.get())
             write(preview_text(result))
             export_button.configure(state="normal")
-            status.configure(text="Local QA passed. Export to a new name only; source and plan will be rechecked.")
+            register_button.configure(state="normal")
+            status.configure(text="Local QA passed. Export a new CSV or register an existing exact-match artifact; source and plan will be rechecked.")
             return result
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             if smoke_paths is not None:
@@ -173,10 +193,39 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
                 "Recheck the exact preview and create this new CSV without replacing any file?",parent=window):
             export_to(path,True)
 
+    def register_to(path,confirmed):
+        try:
+            record=workspace.register(path,confirmed=confirmed)
+            clear("Local artifact registered: "+record["obligation_id"][:12]+"... Open obligation history to review.")
+            return record
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            if smoke_paths is not None:
+                raise
+            error(exc)
+            return None
+
+    def register():
+        if not workspace.ready or blocked_check() is not False:
+            clear("Preview unavailable or halted.")
+            return
+        path=filedialog.askopenfilename(parent=window,filetypes=[("CSV","*.csv")])
+        if path and messagebox.askyesno("Register matching artifact",
+                "Recheck the reviewed preview and register the selected matching file fingerprint? No actual contract or buyer acceptance.",parent=window):
+            register_to(path,True)
+
+    def history():
+        if blocked_check() is not False:
+            clear("Halted or busy.")
+            return
+        return open_obligation_window(window,plan_id=plan_id,action=action,blocked_check=blocked_check)
+
     ttk.Button(form,text="Select file",command=choose).grid(row=0,column=2,padx=4)
     ttk.Button(bar,text="Produce and preview",command=preview).pack(side="left",padx=5)
     export_button=ttk.Button(bar,text="Export new CSV",command=export,state="disabled")
     export_button.pack(side="left",padx=5)
+    register_button=ttk.Button(bar,text="Register matching CSV",command=register,state="disabled")
+    register_button.pack(side="left",padx=5)
+    ttk.Button(bar,text="Obligation history",command=history).pack(side="left",padx=5)
     for var in (source,columns,key,rows):
         var.trace_add("write",lambda *_:clear())
     def check():
@@ -200,4 +249,13 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None):
             raise RuntimeError("CSV native export failed")
         if workspace.ready or str(export_button.cget("state"))!="disabled":
             raise RuntimeError("CSV native preview not consumed")
+        if smoke_evidence is not None:
+            if preview() is None:
+                raise RuntimeError("CSV registration preview failed")
+            record=register_to(str(dest),True)
+            if record is None or record["buyer_accepted"] or workspace.ready:
+                raise RuntimeError("CSV native registration failed")
+            history_window=open_obligation_window(window,plan_id=plan_id,action=action,
+                blocked_check=blocked_check,smoke=(record["obligation_id"],smoke_evidence))
+            history_window.destroy()
     return window
