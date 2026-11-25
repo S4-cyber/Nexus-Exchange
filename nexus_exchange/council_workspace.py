@@ -6,6 +6,7 @@ No automatic registration, retry, dispatch or commercial authorization.
 import sqlite3
 
 from .council_audit import scope_for, validate_snapshot
+from .context_packet import build_packet, packet_text, LEVELS
 
 CHECK_LABELS={
     "source_and_capability":"Source / declared capability",
@@ -55,6 +56,14 @@ class CouncilWorkspace:
 
     def inspect(self):
         return self._snapshot(self._call("inspect"))
+
+    def context(self,level):
+        """Fresh, bounded local context; does not register or consume an attempt."""
+        self._permit()
+        snapshot=self.inspect()
+        result=build_packet(snapshot,level,halted=False)
+        self._permit()
+        return result, snapshot
 
     def register(self):
         return self._call("register")
@@ -206,6 +215,19 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
             error(exc)
             return None
 
+    def show_context(level):
+        nonlocal has_data
+        write(current,"")
+        try:
+            packet,snapshot=workspace.context(level)
+            write(current,packet_text(packet,snapshot,halted=False))
+            has_data=True
+            tabs.select(local)
+            return packet
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+            return None
+
     def register():
         nonlocal has_data
         try:
@@ -293,6 +315,11 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     attempt_button=ttk.Button(controls,text="Run one review attempt",command=run_once,state="disabled")
     attempt_button.pack(side="left",padx=4)
     ttk.Button(controls,text="Refresh historical audit",command=history).pack(side="left",padx=4)
+    context_controls=ttk.Frame(local)
+    context_controls.pack(side="bottom",pady=4)
+    ttk.Label(context_controls,text="Fresh local context:").pack(side="left",padx=4)
+    for level in LEVELS:
+        ttk.Button(context_controls,text=level.title(),command=lambda chosen=level:show_context(chosen)).pack(side="left",padx=3)
     tree.bind("<<TreeviewSelect>>",display)
     window.bind("<Destroy>",destroyed,add="+")
     initial=inspect()
@@ -300,6 +327,11 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     if smoke:
         if initial is None or initial["independently_verified_count"]!=0:
             raise RuntimeError("Council GUI initial inspection failed")
+        for level in LEVELS:
+            packet=show_context(level)
+            if (packet is None or packet["level"]!=level or packet["external_authority"]
+                    or "NOT INSTRUCTIONS" not in current.get("1.0","end")):
+                raise RuntimeError("Council GUI context projection failed")
         state=register()
         if state is None or state["attempts_used"]!=0:
             raise RuntimeError("Council GUI explicit registration failed")
