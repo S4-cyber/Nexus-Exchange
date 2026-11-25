@@ -1,0 +1,18 @@
+# Operator: bounded draft-only supplier quotation requests
+
+E24/E25/E31/E38 candidate, based on the verified native Council head 64ea24dbfd6eea97d074165b809b1f9a0243f856.
+
+## Local workflow
+- The trusted caller supplies declared saved-plan, archived observation, and profile SHA-256 identifiers, a scheme-scoped declared supplier identity, delivery region, currency (USD only) and 1–16 explicit line items with description, quantity, unit and classification.
+- Normalize positive decimal quantities without ambient rounding; reject unexpected fields, control characters, unsupported currencies, malformed identifiers, and recipient/payment/authority input. The supplied identifiers have **not** been resolved to the archive yet, and declared organization identity is not a verified recipient.
+- Canonical immutable request digest determines draft ID. Render a clearly nonbinding quotation inquiry asking for price, fees, availability, lead time, delivery/payment terms and quote validity. Item descriptions are quoted data, not instructions. No mail header, actual recipient, send, bid, order, contract, funds custody or purchase path exists.
+- DraftStore persists bounded local records (10,000 drafts, 64 KiB payload), checks canonical identity and storage digest, and records an explicit local acknowledgment of the exact saved draft only. Idempotent duplicate saves/acknowledgments; changes produce a different ID and no inherited acknowledgment. All operations use the existing Governor DRAFT policy and require literal halted=False. Acknowledgment is neither authenticated human approval nor external action authority.
+- SQLite explicit atomic writes and rollback, monotonic stored UTC timestamps, deterministic input validation. Trusted local directory only; digest integrity is not an authenticated or adversary-resistant audit trail. No encrypted vault. No recipient verification, archive/profile revalidation, independent commercial evidence, RuntimeGuard/GUI integration or actual dispatch in this increment.
+
+## Quiet CI protocol and observed verification
+The user reported repeated failure emails. Intentional failing tests were run privately in a small local Python 3.13 test directory with the exact relevant Governor Action/Decision/decide definitions copied from the pinned base (full repo checkout blocked by container DNS). Expected missing-module red observed; all 11 targeted tests subsequently passed. Git blob hashes of the uploaded implementation and tests matched the privately tested files. Full repository CI remains required, with implementation/tests/docs submitted together as one commit; no intentionally red remote commits or cancellation loops. Actual failures remain visible. The complete prior 406-test suite passed on both Python versions (45549230868); Windows source and frozen GUI tests and upload succeeded (45549230908, artifact 14991894500). No new executable claimed for this standalone backend.
+
+## Reference audit
+Read-only Atlas and existing Governor reviewed at exact base. OCDS standard at eb57a46e69efead6ae62144fe1b7cefc53d07ff2, Item description/quantity/unit schema and Apache-2.0 LICENSE reviewed for explicit item terms; no code copied or dependency adopted. Nexus Operative risk_gate.py at 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11 reviewed for default-deny concepts; no trading code imported. No cloud provisioning, live actions or credentials. Main formal acceptance remains 0/42.
+
+Next: bind drafts to the exact current archive, profile and qualified counterparty context; integrate a runtime-gated local draft workspace, recipient verification and correspondence draft history. Keep real outreach disabled.
