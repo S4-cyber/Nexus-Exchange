@@ -197,6 +197,7 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
         displayed=None
         write("")
         note_button.configure(state="disabled")
+        finance_button.configure(state="disabled")
         if rows:
             for item in tree.get_children():
                 tree.delete(item)
@@ -232,6 +233,7 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
             displayed=record["obligation_id"]
             write(record_text(record))
             note_button.configure(state="normal" if len(record["notes"])<MAX_NOTES else "disabled")
+            finance_button.configure(state="normal")
             status.configure(text="Historical record inspected. Any new note must be explicitly confirmed.")
             return record
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
@@ -266,11 +268,22 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
         if displayed is not None and tree.selection()!=(displayed,):
             clear("Selection changed. Inspect the exact obligation.")
 
+    def finance(smoke_test=False):
+        if blocked_check() is not False or workspace.selected is None or tree.selection()!=(displayed,):
+            clear("Inspect exact obligation before opening simulation.")
+            return None
+        from .finance_workspace import open_finance_window
+        return open_finance_window(window,obligation=workspace.selected,
+            action=lambda operation,key,**inputs:action("sim_"+operation,key,**inputs),
+            blocked_check=blocked_check,smoke=smoke_test)
+
     ttk.Button(bar,text="Refresh history",command=refresh).pack(side="left",padx=4)
     ttk.Button(bar,text="Inspect selected",command=inspect).pack(side="left",padx=4)
     ttk.Combobox(bar,textvariable=kind,values=NOTE_KINDS,state="readonly",width=26).pack(side="left",padx=4)
     note_button=ttk.Button(bar,text="Record evidence note",command=add_note,state="disabled")
     note_button.pack(side="left",padx=4)
+    finance_button=ttk.Button(bar,text="Simulated finance",command=finance,state="disabled")
+    finance_button.pack(side="left",padx=4)
     tree.bind("<<TreeviewSelect>>",selection_changed)
 
     def check():
@@ -302,4 +315,8 @@ def open_obligation_window(parent,*,plan_id,action,blocked_check,smoke=None):
             raise RuntimeError("obligation native note failed")
         if inspect()!=current:
             raise RuntimeError("obligation native persistence failed")
+        finance_window=finance(smoke_test=True)
+        if finance_window is None:
+            raise RuntimeError("native finance workspace unavailable")
+        finance_window.destroy()
     return window
