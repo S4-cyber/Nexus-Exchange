@@ -139,6 +139,8 @@ class LeadStore:
                 PRIMARY KEY(source,lead_key,retrieved_at))""")
             self.db.execute("""CREATE INDEX IF NOT EXISTS scout_recent_v1
                 ON scout_observations_v1(retrieved_at DESC,source,lead_key)""")
+            from .discovery_history import initialize
+            initialize(self.db)
         except BaseException:
             self.db.close()
             raise
@@ -148,7 +150,7 @@ class LeadStore:
     def __exit__(self,*exc):
         self.db.close()
 
-    def record(self,report,*,now,halted=None):
+    def record(self,report,*,now,halted=None,discovery=None,halt_check=None):
         _permit(halted)
         now=_now(now)
         if type(report) is not dict or report.get("format") not in SOURCES:
@@ -187,12 +189,21 @@ class LeadStore:
                 self.db.execute("INSERT INTO scout_observations_v1 VALUES (?,?,?,?,?)",
                     (source,key,stamp,payload,digest))
                 inserted+=1
+            if discovery is not None:
+                from .discovery_history import insert_receipt
+                insert_receipt(self.db,discovery,report,records,inserted,now=now)
+            if halt_check is not None and (not callable(halt_check) or halt_check() is not False):
+                raise PermissionError("Archive commit withheld after halt.")
             self.db.execute("COMMIT")
         except BaseException:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
         return inserted
+
+    def search_history(self,*,now,limit=100,halted=None):
+        from .discovery_history import read_history
+        return read_history(self.db,now=now,limit=limit,halted=halted)
 
     def browse(self,*,now,source=None,query="",limit=100,profile=None,lead_key=None,halted=None):
         _permit(halted)
