@@ -12,6 +12,10 @@ from .owner_profile import BLOCKED_REASONS, PROFILE_SOURCES, reported_codes
 FORMAT="nexus-operator-capabilities-v1"
 CSV_ID="csv_preserve_and_standardize_v2"
 JSON_ID="json_string_records_to_csv_v1"
+PROFILE_ID="csv_column_quality_profile_v1"
+_PROFILE_HINTS=(("CSV_QUALITY_REPORT",r"\bcsv\s+(?:column\s+)?quality\s+report\b"),
+                ("CSV_COMPLETENESS_REPORT",r"\bcsv\s+(?:column\s+)?completeness\s+report\b"),
+                ("CSV_DATA_PROFILING",r"\bcsv\s+data\s+profiling\b"))
 _JSON_HINTS=(("JSON_TO_CSV",r"\bjson(?:\s*-\s*|\s+)to(?:\s*-\s*|\s+)csv\b"),)
 _HINTS=(
     ("CSV_SORT",r"\bcsv\s+(?:row\s+)?sort(?:ing)?\b"),
@@ -39,6 +43,14 @@ _JSON_TASKS=(
 )
 
 
+_PROFILE_TASKS=(
+    "Obtain authorized UTF-8 CSV with exact declared columns, unique key and row count.",
+    "Confirm aggregate empty, whitespace-only, nonblank, distinct nonblank and length statistics are the required output.",
+    "No row-level values, inferred corrections, factual accuracy certification or external delivery.",
+    "Verify permissions, actual payment terms, costs and delivery requirements separately.",
+)
+
+
 def _permit(halted):
     decision=decide(Action.RESEARCH_LOCAL,halted=halted)
     if not decision.allowed:
@@ -49,7 +61,7 @@ def catalog(*,halted=None):
     """Construct fresh data from implemented backend constants, not marketing labels."""
     _permit(halted)
     from .digital_deliverable import (
-        FORMAT as CONTRACT_FORMAT, JSON_FORMAT, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES,
+        FORMAT as CONTRACT_FORMAT, JSON_FORMAT, PROFILE_FORMAT, PROFILE_COLUMNS, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES,
         MAX_ROWS, MAX_COLUMNS, MAX_CELL_CHARS,
     )
     entry=dict(capability_id=CSV_ID,label="CSV preservation and standardization",
@@ -69,7 +81,14 @@ def catalog(*,halted=None):
         excluded=["NESTED_JSON","NON_STRING_VALUES","DUPLICATE_JSON_MEMBERS","DEDUPLICATION",
                   "DATA_CLEANSING","MISSING_VALUE_INFERENCE","FORMULA_EXECUTION","EXTERNAL_DELIVERY"],
         title_hint_codes=[k for k,_ in _JSON_HINTS],review_tasks=list(_JSON_TASKS))
-    payload=dict(format=FORMAT,capabilities=[entry,json_entry],**dict.fromkeys(_FLAGS,False))
+    profile_entry=dict(entry,capability_id=PROFILE_ID,label="CSV column completeness and distinctness report",
+        contract_format=PROFILE_FORMAT,output_columns=list(PROFILE_COLUMNS),
+        operations=["EXACT_COLUMN_COUNTS","EXACT_DISTINCT_NONBLANK_COUNTS","EXACT_LENGTH_RANGE",
+                    "CANONICAL_CSV_SERIALIZATION"],
+        excluded=["ROW_LEVEL_OUTPUT","FACTUAL_ACCURACY_CERTIFICATION","DATA_CLEANSING","DEDUPLICATION",
+                  "MISSING_VALUE_INFERENCE","FORMULA_EXECUTION","NON_CSV_INPUT","EXTERNAL_DELIVERY"],
+        title_hint_codes=[k for k,_ in _PROFILE_HINTS],review_tasks=list(_PROFILE_TASKS))
+    payload=dict(format=FORMAT,capabilities=[entry,json_entry,profile_entry],**dict.fromkeys(_FLAGS,False))
     return dict(payload,catalog_sha256=_digest(_json(payload)))
 
 
@@ -96,9 +115,10 @@ def assess_lead(lead,*,source_hold,halted=None):
     # query strings or owner keywords. Only literal bounded title hints.
     csv_matches=[key for key,pattern in _HINTS if re.search(pattern,title,re.IGNORECASE|re.ASCII)]
     json_matches=[key for key,pattern in _JSON_HINTS if re.search(pattern,title,re.IGNORECASE|re.ASCII)]
-    matches=csv_matches+json_matches
-    ids=([CSV_ID] if csv_matches else [])+([JSON_ID] if json_matches else [])
-    tasks=(list(_TASKS) if csv_matches else [])+(list(_JSON_TASKS) if json_matches else [])
+    profile_matches=[key for key,pattern in _PROFILE_HINTS if re.search(pattern,title,re.IGNORECASE|re.ASCII)]
+    matches=csv_matches+json_matches+profile_matches
+    ids=([CSV_ID] if csv_matches else [])+([JSON_ID] if json_matches else [])+([PROFILE_ID] if profile_matches else [])
+    tasks=(list(_TASKS) if csv_matches else [])+(list(_JSON_TASKS) if json_matches else [])+(list(_PROFILE_TASKS) if profile_matches else [])
     codes=reported_codes(source,lead)
     status=("SOURCE_HELD" if held else
             "IMPLEMENTED_TITLE_HINT_ONLY" if matches else "NO_IMPLEMENTED_TITLE_HINT")
@@ -128,7 +148,7 @@ def assess_requirements(raw,*,halted=None):
             "requires_formulas","specification"}
     if type(raw) is not dict or set(raw)!=fields:
         raise ValueError("complete declared capability requirements required")
-    if type(raw["capability_id"]) is not str or raw["capability_id"] not in (CSV_ID,JSON_ID):
+    if type(raw["capability_id"]) is not str or raw["capability_id"] not in (CSV_ID,JSON_ID,PROFILE_ID):
         raise ValueError("unknown implemented capability")
     if type(raw["input_format"]) is not str or raw["input_format"] not in ("UTF8_CSV","UTF8_JSON_RECORDS","OTHER"):
         raise ValueError("unknown declared input format")
@@ -141,7 +161,7 @@ def assess_requirements(raw,*,halted=None):
             raise ValueError("bounded declared size or unknown required")
     spec=raw["specification"]
     reasons=[]
-    if raw["input_format"]!=("UTF8_CSV" if raw["capability_id"]==CSV_ID else "UTF8_JSON_RECORDS"):
+    if raw["input_format"]!=("UTF8_JSON_RECORDS" if raw["capability_id"]==JSON_ID else "UTF8_CSV"):
         reasons.append("UNSUPPORTED_INPUT_FORMAT")
     if raw["input_bytes"] is None or raw["max_cell_chars"] is None:
         reasons.append("DECLARED_SIZE_UNKNOWN")
@@ -149,7 +169,10 @@ def assess_requirements(raw,*,halted=None):
         reasons.append("INPUT_SIZE_OUTSIDE_CAPABILITY")
     if raw["max_cell_chars"] is not None and raw["max_cell_chars"]>MAX_CELL_CHARS:
         reasons.append("CELL_SIZE_OUTSIDE_CAPABILITY")
-    if not raw["preserve_all_fields"]:
+    if raw["capability_id"]==PROFILE_ID:
+        if raw["preserve_all_fields"]:
+            reasons.append("ROW_LEVEL_OUTPUT_UNSUPPORTED_FOR_PROFILE")
+    elif not raw["preserve_all_fields"]:
         reasons.append("FIELD_TRANSFORMATION_UNSUPPORTED")
     for key,reason in (("requires_deduplication","DEDUPLICATION_UNSUPPORTED"),
                        ("requires_inference","INFERENCE_UNSUPPORTED"),

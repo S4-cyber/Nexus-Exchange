@@ -1520,6 +1520,15 @@ def main(*, data_directory=None, gui_smoke=False):
             json_window.destroy()
             if json_destination.read_bytes()!=csv_destination.read_bytes():
                 raise RuntimeError("JSON conversion native output mismatch")
+            profile_destination=directory/"synthetic-csv-profile.csv"
+            profile_window=open_csv_window(root,plan_id=operator_key,action=csv_action,
+                blocked_check=council_blocked,operation="COLUMN_PROFILE",
+                smoke_paths=(csv_source,profile_destination))
+            profile_window.destroy()
+            expected_profile=(b'"column","row_count","empty_count","whitespace_only_count","nonblank_count","distinct_nonblank_count","min_chars","max_chars"\r\n'
+                b'"id","2","0","0","2","2","3","3"\r\n"name","2","0","0","2","2","4","5"\r\n')
+            if profile_destination.read_bytes()!=expected_profile:
+                raise RuntimeError("CSV quality report native output mismatch")
         except BaseException:
             close()
             raise
