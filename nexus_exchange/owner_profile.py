@@ -7,7 +7,7 @@ import re
 import sqlite3
 from .governor import Action, decide
 
-PROFILE_SOURCES=("sam","ted","uk_tender","canada","usaspending")
+PROFILE_SOURCES=("sam","ted","uk_tender","canada","usaspending","uk_contracts")
 FIELDS={"mode","budget","hours_per_week","sources","naics","cpv","keywords"}
 
 def _permit(halted):
@@ -125,7 +125,7 @@ def reported_codes(source,lead):
             if type(entry) is not dict or set(entry)!={"scheme","code"}:
                 raise ValueError("invalid classification")
             scheme,code=entry["scheme"],entry["code"]
-            allowed={"sam":"NAICS","ted":"CPV"}.get(source)
+            allowed={"sam":"NAICS","ted":"CPV","uk_contracts":"CPV"}.get(source)
             if allowed is None or scheme!=allowed or type(code) is not str or not re.fullmatch(
                     "[0-9]{6}" if scheme=="NAICS" else "[0-9]{8}",code):
                 raise ValueError("invalid source classification")
