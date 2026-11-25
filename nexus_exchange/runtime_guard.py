@@ -334,6 +334,66 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def simulated_invoice_action(self,action,plan_id,*,confirmed=None,**inputs):
+        """Fixed local receivables simulation, never a real invoice or payment."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Operator unavailable while halted or faulted")
+        fields={"preview":{"obligation_id","expected_obligation_head","issue_date"},
+                "create":{"obligation_id","expected_obligation_head","issue_date","expected_invoice_id"},
+                "history":{"invoice_id"},
+                "find":set(),
+                "payment":{"invoice_id","expected_head","sim_reference","amount","paid_on"}}
+        if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
+            raise ValueError("unsupported simulated invoice action or inputs")
+        from .checklist_store import _hash
+        from .simulated_receivables import InvoiceStore, build_invoice
+        from .deliverable_obligations import ObligationStore
+        from .scenario_store import ScenarioStore
+        _hash(plan_id)
+        if action in ("create","payment") and confirmed is not True:
+            raise PermissionError("explicit local simulation confirmation required")
+        self._operator_active=True
+        try:
+            path=self._directory/"operator-simulated-invoices.sqlite3"
+            obligations=self._directory/"operator-obligations.sqlite3"
+            def opts():
+                return dict(now=self._clock(),halted=self.is_set(),halt_check=self.is_set)
+            def obligation(key):
+                with ObligationStore(obligations,existing_only=True) as store:
+                    return store.history(plan_id,key,**opts())
+            if action in ("preview","create"):
+                record=obligation(inputs["obligation_id"])
+                if record["head_sha256"]!=_hash(inputs["expected_obligation_head"]):
+                    raise ValueError("obligation changed; inspect current evidence")
+                with ScenarioStore(self._directory/"scout-leads.sqlite3") as store:
+                    saved=store.get(plan_id,halted=self.is_set())
+                invoice=build_invoice(record,saved,issue_date=inputs["issue_date"],**opts())
+                if action=="preview":
+                    return invoice
+                if invoice["invoice_id"]!=_hash(inputs["expected_invoice_id"]):
+                    raise ValueError("invoice simulation preview changed")
+                if obligation(record["obligation_id"])!=record:
+                    raise ValueError("obligation changed before invoice creation")
+                with InvoiceStore(path,existing_only=os.path.lexists(path)) as store:
+                    return store.create(invoice,confirmed=True,**opts())
+            if action=="find" and not os.path.lexists(path):
+                return None
+            with InvoiceStore(path,existing_only=True) as store:
+                if action=="find":
+                    return store.find(plan_id,**opts())
+                record=store.history(plan_id,inputs["invoice_id"],**opts())
+                if action=="history":
+                    return record
+                invoice=record["invoice"]
+                if obligation(invoice["obligation_id"])["head_sha256"]!=invoice["obligation_head_sha256"]:
+                    raise ValueError("obligation evidence changed; simulation held for review")
+                return store.payment(plan_id,inputs["invoice_id"],
+                    expected_head=inputs["expected_head"],sim_reference=inputs["sim_reference"],
+                    amount=inputs["amount"],paid_on=inputs["paid_on"],confirmed=True,**opts())
+        finally:
+            self._operator_active=False
+
     def browser_fixture(self,fixture_id,*,confirmed=None):
         """Fixed, explicit local diagnostics; no caller URL, plan, clock or callback."""
         self._require_idle()
