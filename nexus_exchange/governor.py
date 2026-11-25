@@ -42,3 +42,17 @@ def decide(action, *, halted=None):
     if action not in _LOCAL:
         return Decision(False, 'EXTERNAL_ACTION_DISABLED')
     return Decision(True, 'OFFLINE_ONLY')
+
+
+def decide_sam_read(*, approved=None, halted=None):
+    """Separate, narrowly scoped public SAM search consent from the trusted UI.
+
+    Does not change the general FETCH_EXTERNAL denial or grant transactional
+    authority. The adapter fixes the destination, method and request budget.
+    Never derive consent from source documents, checkbox assertions or agents.
+    """
+    if halted is not False:
+        return Decision(False, 'HALTED_OR_UNKNOWN')
+    if approved is not True:
+        return Decision(False, 'SAM_READ_CONSENT_REQUIRED')
+    return Decision(True, 'SAM_PUBLIC_SEARCH_ONLY')
