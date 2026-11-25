@@ -359,7 +359,7 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
             write("Search history unavailable. Review local storage and halt state.")
 
 
-    def show_receipt():
+    def show_receipt(choose_index=None):
         try:
             if blocked_check() is not False or halt_check() is not False:
                 raise PermissionError("Local research unavailable.")
@@ -377,10 +377,13 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
                 lines.append(str(number)+". "+item["completed_at"]+" | "+item["scope"]["source"]+
                              " | "+str(item["returned"])+" observations")
             write("\n".join(lines))
-            index=simpledialog.askinteger("Review receipt","Enter the numbered receipt from the displayed list.",
-                                          minvalue=1,maxvalue=len(history["rows"]),parent=window)
+            selector=simpledialog.askinteger if choose_index is None else choose_index
+            index=selector("Review receipt","Enter the numbered receipt from the displayed list.",
+                           minvalue=1,maxvalue=len(history["rows"]),parent=window)
             if index is None:
                 return
+            if type(index) is not int or not 1<=index<=len(history["rows"]):
+                raise ValueError("Invalid receipt selection.")
             if blocked_check() is not False or halt_check() is not False or not archive.is_file():
                 raise PermissionError("Local research unavailable.")
             item=history["rows"][index-1]
@@ -402,9 +405,11 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
     ttk.Button(controls,text="Refresh discovery plan",command=refresh).pack(side="left",padx=4)
     search_button=ttk.Button(controls,text="Search selected plan",command=search_selected,state="disabled")
     search_button.pack(side="left",padx=4)
-    ttk.Button(controls,text="Search history",command=show_history).pack(side="left",padx=4)
-    ttk.Button(controls,text="Review receipt",command=show_receipt).pack(side="left",padx=4)
-    ttk.Button(controls,text="Search performance",command=show_performance).pack(side="left",padx=4)
+    history_controls=ttk.Frame(content)
+    history_controls.pack(fill="x",padx=12,pady=2,before=tree)
+    ttk.Button(history_controls,text="Search history",command=show_history).pack(side="left",padx=4)
+    ttk.Button(history_controls,text="Review receipt",command=show_receipt).pack(side="left",padx=4)
+    ttk.Button(history_controls,text="Search performance",command=show_performance).pack(side="left",padx=4)
     tree.bind("<<TreeviewSelect>>",display,add="+")
     chooser.bind("<<ComboboxSelected>>",lambda _event:refresh(),add="+")
     refresh()
@@ -421,6 +426,18 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,smo
         show_history()
         if "COMPLETED CAPABILITY SEARCHES" not in output.get("1.0","end"):
             raise RuntimeError("Capability discovery GUI history missing")
+        # Exercise the actual review controller with owned local evidence and
+        # a deterministic selection in place of a blocking interactive dialog.
+        show_receipt(choose_index=lambda *args,**kwargs:1)
+        reviewed=output.get("1.0","end")
+        if ("SCOUT — EXACT HISTORICAL SEARCH OBSERVATIONS" not in reviewed
+                or "Synthetic GUI fixture" not in reviewed
+                or "SAME_OBSERVATION" not in reviewed
+                or "HISTORICAL_OBSERVATION_REVALIDATION_REQUIRED" not in reviewed):
+            raise RuntimeError("Capability discovery GUI exact receipt review missing")
+        show_receipt(choose_index=lambda *args,**kwargs:0)
+        if "Receipt review unavailable" not in output.get("1.0","end"):
+            raise RuntimeError("Capability discovery GUI accepted an invalid receipt selection")
         show_performance()
         if ("SCOUT SEARCH PERFORMANCE" not in output.get("1.0","end")
                 or "Explore unmeasured filter" not in output.get("1.0","end")):

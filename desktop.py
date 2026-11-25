@@ -1480,6 +1480,21 @@ def main(*, data_directory=None, gui_smoke=False):
         with ProfileStore(directory / "owner-profile.sqlite3") as fixture_profiles:
             declared=dict(mode="genesis",budget="0",hours_per_week=20,sources=["sam"],naics=[],cpv=[],keywords=[])
             fixture_profiles.save(declared,halted=False)
+        # Bind the existing owned synthetic observation to an exact search receipt.
+        # No provider call, key, or additional observation is needed.
+        from nexus_exchange.scout_discovery import build_plan
+        from nexus_exchange.operator_capabilities import CSV_ID
+        fixture_plan=build_plan(declared,CSV_ID,now=stamp,halted=False)
+        fixture_option=next(row for row in fixture_plan["options"] if row["procurement_type"]=="k")
+        _,fixture_query=resolve_query(fixture_plan,fixture_option["option_id"],declared,now=stamp,halted=False)
+        with LeadStore(directory/"scout-leads.sqlite3") as fixture_store:
+            inserted=fixture_store.record(dict(format="nexus-sam-research-v1",returned=1,
+                leads=[todo_fixture],truncated=False,page_sha256=["0"*64],
+                query=fixture_query.parameters(stamp),requests=1),now=stamp,halted=False,
+                discovery=dict(plan=fixture_plan,option_id=fixture_option["option_id"],
+                               profile=declared,started_at=stamp,task_id=uuid4().hex))
+            if inserted!=0:
+                raise RuntimeError("Synthetic receipt duplicated an existing observation")
         discovery=discovery_window(smoke=True)
         discovery.destroy()
         with LeadStore(directory / "scout-leads.sqlite3") as fixture_store:

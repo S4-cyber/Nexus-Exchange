@@ -148,3 +148,29 @@ Latest verified ancestor: #88 `a67cbcefe26561c4080e74c4033c33f88d855ce1`, 260 co
 - Exact predecessor `8004193d28071b172489f7e6508e70d32e93efbd` passed Python 3.10/3.13 ([45635505020](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45635505020), 772 tests) and [Windows source/frozen/Genesis](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45635525043) (772 tests in Windows log; artifact 15032887793, actual PR checkout fedb13cf0f77af8b9478fabb295fb5edc06fb186).
 - H07/H08, E25/E31/E32/E37/E38/E39/E40: preview verification now requires all 37 ordered owned diagnostic checks, including correspondence scope/replay/recovery, all 15 identity digests, exactly one simulated correspondence event, a bounded positive restored database count, and distinct thread/head identities. CI explicitly pins attempt and event in addition to commit/tree/run. Optional CLI flags `--attempt 1 --event pull_request` permit independent comparison against the CI log. Three additional negative-control test methods. Older artifacts remain evidence of their own revision, not current acceptance.
 - Local full checkout DNS failed; local red/green not executed. Coherent atomic code/tests/docs submission; exact new CI pending. No external authority, signatures, authentication, paid resources, new dependencies, or formal main acceptance (0/42).
+
+
+## RC3 consolidation and exact receipt native acceptance — 2026-11-25
+
+Predecessor #94 `ed5903a66bfaefa7627bcb04029f3d0bb55957cc`:
+[Python CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45652000536)
+passed 806 tests on both Python 3.10 and 3.13, including all five exact
+receipt regression methods. Its [Windows CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45652000623)
+passed source unit, source GUI, source fixture-process, source Genesis and
+source security steps; packaging was in progress when this increment was
+prepared. The earlier #93 Windows artifact 15041705807 is fully verified
+for that revision only. The RC2 main-targeting draft #89 and stacked Scout
+review branches remain available for independent review.
+
+E06/E12/E18/E31/E33/E38/E39/E40, H03/H06/H07:
+the owned desktop smoke now creates a receipt referencing the already
+archived synthetic observation with the exact reviewed SAM query, checks
+no duplicate observation is inserted, exercises the native historical
+receipt review controller and rejects an out-of-range selection. The
+nonblocking synthetic selector exists only in the smoke invocation;
+normal UI uses the numbered owner dialog. Receipt/history controls occupy
+a separate row. Source and frozen GUI smoke must pass for the consolidated
+candidate. No provider calls, new dependencies, live authority or
+financial commitments. Full local checkout failed with GitHub DNS
+resolution; local red/green and independent QA not performed. No formal
+main acceptance (0/42).
