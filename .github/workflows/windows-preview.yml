@@ -2,6 +2,9 @@ name: Windows preview
 on:
   push:
     branches: [review/windows-desktop, review/desktop-opportunity-browser, review/offline-procurement-import, review/desktop-deal-simulator, review/integrated-offline-baseline, review/scout-revenue-pathways, review/scout-sam-readonly-pilot, review/scout-global-trade-registry, review/scout-ted-keyless, review/scout-uk-fts, review/scout-canadabuys, review/scout-unified-lead-memory, review/scout-usaspending-contractors, review/scout-owner-capabilities, review/scout-persistent-todo, review/scout-aegis-file-evidence, main]
+  pull_request:
+    branches: [review/scout-persistent-scenarios]
+    paths: ['desktop.py', 'nexus_exchange/scenario_workspace.py', 'tests/test_scenario_workspace.py', '.github/workflows/windows-preview.yml']
   workflow_dispatch:
 concurrency:
   group: windows-preview-${{ github.ref }}
