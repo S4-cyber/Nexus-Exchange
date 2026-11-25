@@ -126,3 +126,68 @@ class NativeCorrespondenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.save_event(self.record,'unused',dict(expected,head=wrong['head_sha256']),confirmed=True)
         self.assertEqual(self.action.call_args.args[0],'thread_history')
+
+    def _reply_thread(self):
+        thread=open_thread(self.rfq,self.candidate,now=NOW,confirmed=True,halted=False)
+        return append_event(self.rfq,self.candidate,thread,kind='SIMULATED_REPLY',
+            evidence_reference=REFERENCE,expected_head=thread['head_sha256'],
+            now=NOW,confirmed=True,halted=False)
+
+    def test_followup_is_read_only_exact_and_nonbinding(self):
+        thread=self._reply_thread()
+        self.action.return_value=thread
+        preview=self.controller.preview_followup(self.record)
+        self.assertEqual(preview,self.controller.preview_followup(self.record))
+        self.assertEqual(preview['head'],thread['head_sha256'])
+        self.assertEqual(preview['thread_id'],thread['thread_id'])
+        self.assertEqual(preview['recipient_id'],self.candidate['recipient_id'])
+        self.assertEqual(preview['reply_event_sha256'],thread['events'][-1]['event_sha256'])
+        self.assertEqual(preview['evidence_reference'],REFERENCE)
+        self.assertTrue(preview['historical_only'])
+        self.assertTrue(all(preview[k] is False for k in _FLAGS_EXTRA))
+        self.assertIn('DO NOT SEND',preview['body'])
+        self.assertIn('its content was not read',preview['body'])
+        self.assertIn(self.rfq['draft_id'],preview['body'])
+        self.assertTrue(all(call.args[0]=='thread_history' for call in self.action.call_args_list))
+
+    def test_followup_requires_simulated_reply(self):
+        empty=open_thread(self.rfq,self.candidate,now=NOW,confirmed=True,halted=False)
+        declaration=append_event(self.rfq,self.candidate,empty,kind='LOCAL_EVIDENCE_DECLARATION',
+            evidence_reference=REFERENCE,expected_head=empty['head_sha256'],
+            now=NOW,confirmed=True,halted=False)
+        for thread in (None,empty,declaration):
+            self.action.return_value=thread
+            with self.assertRaises(ValueError):
+                self.controller.preview_followup(self.record)
+
+    def test_followup_uses_latest_reply_and_blocks_already_recorded(self):
+        thread=self._reply_thread()
+        completed=append_event(self.rfq,self.candidate,thread,kind='LOCAL_FOLLOWUP_DRAFT',
+            evidence_reference='sha256:'+'b'*64+';bytes:12',expected_head=thread['head_sha256'],
+            now=NOW,confirmed=True,halted=False)
+        self.action.return_value=completed
+        with self.assertRaises(ValueError):
+            self.controller.preview_followup(self.record)
+        latest=append_event(self.rfq,self.candidate,completed,kind='SIMULATED_REPLY',
+            evidence_reference='sha256:'+'c'*64+';bytes:12',expected_head=completed['head_sha256'],
+            now=NOW,confirmed=True,halted=False)
+        self.action.return_value=latest
+        preview=self.controller.preview_followup(self.record)
+        self.assertEqual(preview['reply_event_sha256'],latest['events'][-1]['event_sha256'])
+        self.assertEqual(preview['head'],latest['head_sha256'])
+
+    def test_followup_halt_and_forged_history_fail_closed(self):
+        self.blocked=True
+        with self.assertRaises(PermissionError):
+            self.controller.preview_followup(self.record)
+        self.action.assert_not_called()
+        self.blocked=False
+        self.action.return_value=dict(self._reply_thread(),reply_authenticated=True)
+        with self.assertRaises(ValueError):
+            self.controller.preview_followup(self.record)
+        def halt(*args,**kwargs):
+            self.blocked=True
+            return self._reply_thread()
+        self.action.side_effect=halt
+        with self.assertRaises(PermissionError):
+            self.controller.preview_followup(self.record)

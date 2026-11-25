@@ -126,6 +126,41 @@ class CorrespondenceWorkspace:
         return result
 
 
+    def preview_followup(self, record):
+        """Compose a historical, nonbinding local draft; never read evidence bytes."""
+        self.workspace._permit()
+        candidate=self._record(record)['candidate']
+        current=self.thread(record)
+        if current is None:
+            raise ValueError('saved local thread required')
+        reply=next((event for event in reversed(current['events'])
+                    if event['kind']=='SIMULATED_REPLY'),None)
+        if reply is None:
+            raise ValueError('simulated reply evidence required')
+        if any(event['kind']=='LOCAL_FOLLOWUP_DRAFT' and event['sequence']>reply['sequence']
+               for event in current['events']):
+            raise ValueError('a local follow-up is already recorded after this simulated reply')
+        body='\n'.join((
+            'LOCAL FOLLOW-UP DRAFT — DO NOT SEND',
+            'Declared role mailbox (unverified): '+candidate['recipient']['email'],
+            'Subject: Request for clarification (nonbinding draft)',
+            '',
+            'Reference: '+self.scope['draft_id'],
+            'Please clarify current availability, indicative pricing, delivery timing,',
+            'applicable requirements and any limitations for the referenced request.',
+            'Any information would be for evaluation only. No order, acceptance,',
+            'payment, agreement or authority to proceed is conveyed by this draft.',
+            '',
+            'Local context only: simulated reply evidence exists; its content was not read.',
+            'No external message, recipient identity or permission to contact is verified.'))
+        self.workspace._permit()
+        return dict(draft_id=self.scope['draft_id'],recipient_id=candidate['recipient_id'],
+                    thread_id=current['thread_id'],head=current['head_sha256'],
+                    reply_event_sha256=reply['event_sha256'],
+                    evidence_reference=reply['evidence_reference'],body=body,
+                    historical_only=True,**dict.fromkeys(_FLAGS_EXTRA,False))
+
+
 def open_correspondence_window(parent, controller, *, smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
@@ -214,6 +249,16 @@ def open_correspondence_window(parent, controller, *, smoke=False):
                 lines.append(f"{event['sequence']} | {event['kind']} | {event['recorded_at']} | {event['evidence_reference']}")
         write('\n'.join(lines))
         return thread
+    def followup():
+        invalidate()
+        key=selected.get()
+        if key not in records: raise ValueError('select exact saved recipient')
+        result=controller.preview_followup(records[key])
+        write(result['body']+'\n\nThread: '+result['thread_id']+'\nReviewed head: '+result['head']
+              +'\nSimulated reply event: '+result['reply_event_sha256']
+              +'\nEvidence: '+result['evidence_reference'])
+        status.configure(text='Historical local preview only; no saved draft, message or authority.')
+        return result
     event_kind=tk.StringVar(master=window,value='SIMULATED_REPLY')
     def prepare_event(file=None):
         nonlocal pending_event
@@ -269,6 +314,7 @@ def open_correspondence_window(parent, controller, *, smoke=False):
                  values=tuple(sorted(_KINDS))).pack(side='left',padx=3)
     ttk.Button(event_controls,text='Choose and preview event',command=guarded(prepare_event)).pack(side='left',padx=3)
     ttk.Button(event_controls,text='Record local event',command=guarded(commit_event)).pack(side='left',padx=3)
+    ttk.Button(controls,text='Preview local follow-up',command=guarded(followup)).pack(side='left',padx=3)
     event_kind.trace_add('write',invalidate)
     output.pack(fill='both',expand=True,padx=10,pady=4)
     for var in fields.values(): var.trace_add('write',invalidate)
@@ -314,4 +360,10 @@ def open_correspondence_window(parent, controller, *, smoke=False):
             if (len(updated['events'])!=1 or updated['events'][0]['evidence_reference']!=expected['evidence']
                     or inspect()!=updated or 'SIMULATED_REPLY' not in output.get('1.0','end')):
                 raise RuntimeError('correspondence GUI event readback failed')
+            draft_preview=followup()
+            if (draft_preview['head']!=updated['head_sha256']
+                    or draft_preview['evidence_reference']!=expected['evidence']
+                    or 'LOCAL FOLLOW-UP DRAFT' not in output.get('1.0','end')
+                    or inspect()!=updated):
+                raise RuntimeError('correspondence GUI follow-up preview failed')
     return window
