@@ -5,10 +5,12 @@ import hashlib
 import http.client
 import json
 import re
+from time import sleep
 from urllib.parse import urlencode
 from .governor import decide_sam_read
 from .local_import import _pairs, _integer, _decimal, _constant
 from .scout import _text, _timestamp, normalize
+from .revenue_pathways import CHECKS
 
 HOST = "api.sam.gov"
 PATH = "/opportunities/v2/search"
@@ -59,6 +61,11 @@ def _request(params, api_key):
     finally:
         connection.close()
 
+def notice_url(notice_id):
+    if type(notice_id) is not str or not re.fullmatch("[0-9a-f]{32}",notice_id):
+        raise ValueError("invalid notice ID")
+    return "https://sam.gov/opp/"+notice_id+"/view"
+
 def _notice(raw, now):
     if type(raw) is not dict:
         raise ValueError("invalid notice")
@@ -90,7 +97,7 @@ def _notice(raw, now):
             reasons.append("DEADLINE_PASSED")
     except ValueError:
         reasons.append("DEADLINE_UNVERIFIED")
-    source_url = "https://sam.gov/opp/"+notice+"/view"
+    source_url = notice_url(notice)
     opportunity = normalize(dict(source="sam.gov",external_id=notice,title=title,
         source_url=source_url,retrieved_at=now.isoformat(),
         deadline=deadline.isoformat() if deadline else None,currency=None,amount=None))
@@ -99,7 +106,7 @@ def _notice(raw, now):
     for field in ("solicitationNumber","fullParentPathName","naicsCode","classificationCode",
                   "typeOfSetAside","typeOfSetAsideDescription"):
         value = raw.get(field)
-        if value is not None:
+        if value is not None and value != "":
             info[field] = _text(value,512)
     research_candidate = not reasons
     blockers = reasons+["REQUIREMENTS_UNVERIFIED","ELIGIBILITY_UNVERIFIED",
@@ -109,7 +116,9 @@ def _notice(raw, now):
         retrieved_at=now.isoformat(),posted_date=posted_date.isoformat() if posted_date else None,
         deadline=deadline.isoformat() if deadline else None,notice_type=kind,metadata=info,
         research_candidate=research_candidate,execution_eligible=False,external_authority=False,
-        cash_exposure=None,blockers=blockers)
+        cash_exposure=None,blockers=blockers,
+        todo=[dict(key=key,notice_id=notice,instruction=text,status="needs independent evidence")
+              for key,text in CHECKS])
 
 def search(query, api_key, *, approved=None, halt_check=None, transport=None, clock=None):
     """One owner-initiated search, at most three requests, never auto-executes."""
@@ -140,6 +149,8 @@ def search(query, api_key, *, approved=None, halt_check=None, transport=None, cl
     retried=False
     page_digests=[]
     while calls<MAX_REQUESTS:
+        if calls:
+            sleep(1)
         require_consent()
         calls+=1
         try:
@@ -147,6 +158,8 @@ def search(query, api_key, *, approved=None, halt_check=None, transport=None, cl
         except Exception:
             raise SearchError("SAM_TRANSPORT_FAILURE") from None
         require_consent()
+        if status==404:
+            raise SearchError("SAM_NO_DATA_OR_NOT_FOUND")
         if status==429:
             raise SearchError("SAM_RATE_LIMIT_STOP")
         if status in (500,502,503,504) and not retried and calls<MAX_REQUESTS:
