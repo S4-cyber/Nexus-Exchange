@@ -132,3 +132,74 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(s.read(),(raw,))
         self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),1)
         self.assertEqual(s.read()[-1]["target"],raw["target"])
+
+    def test_aggregate_limit_counts_utf8_bytes_on_all_paths(self):
+        import json
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        first=dict(event("queued"),target="🌳"*100)
+        second=dict(first,state="cancelled")
+        raw=tuple(json.dumps(item,ensure_ascii=False,sort_keys=True) for item in (first,second))
+        s.db.executemany("INSERT INTO events(payload) VALUES (?)", ((item,) for item in raw))
+        size=sum(len(item.encode("utf-8")) for item in raw)
+        with patch("nexus_exchange.event_store.MAX_JOURNAL_BYTES",size,create=True):
+            self.assertEqual(s.read(),(first,second))
+        with patch("nexus_exchange.event_store.MAX_JOURNAL_BYTES",size-1,create=True):
+            for operation in (s.read,lambda:s.append(dict(event("queued"),task_id="b")),
+                              lambda:s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc))):
+                with self.subTest(operation=operation):
+                    with self.assertRaisesRegex(ValueError,"journal byte capacity"):
+                        operation()
+                    self.assertFalse(s.db.in_transaction)
+                    self.assertEqual(tuple(row[0] for row in s.db.execute("SELECT payload FROM events ORDER BY seq")),raw)
+
+    def test_byte_budget_reserves_recovery_at_exact_boundary(self):
+        import json
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        first=dict(event("queued"),task_id="🌱"*128,target="🌳"*256)
+        recovered=dict(first,state="interrupted",timestamp="2026-01-02T00:00:00.000000+00:00")
+        size=sum(len(json.dumps(item,sort_keys=True).encode("utf-8")) for item in (first,recovered))
+        with patch("nexus_exchange.event_store.MAX_JOURNAL_BYTES",size-1,create=True):
+            with self.assertRaisesRegex(ValueError,"journal byte capacity"):
+                s.append(first)
+            self.assertEqual(s.read(),())
+        with patch("nexus_exchange.event_store.MAX_JOURNAL_BYTES",size,create=True):
+            s.append(first)
+            with self.assertRaisesRegex(ValueError,"journal byte capacity"):
+                s.append(dict(event("queued"),task_id="b"))
+            self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),1)
+            self.assertEqual(s.read(),(first,recovered))
+            self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),0)
+
+    def test_legacy_recovery_over_budget_holds_without_mutation(self):
+        import json
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        first=event("queued")
+        s.append(first)
+        size=len(json.dumps(first,sort_keys=True).encode("utf-8"))
+        s.db.execute("CREATE TRIGGER no_write BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT,'unexpected write'); END")
+        with patch("nexus_exchange.event_store.MAX_JOURNAL_BYTES",size,create=True):
+            self.assertEqual(s.read(),(first,))
+            with self.assertRaisesRegex(ValueError,"journal byte capacity"):
+                s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc))
+            self.assertEqual(s.read(),(first,))
+            self.assertFalse(s.db.in_transaction)
+
+    def test_streamed_verification_detects_extra_row_and_rolls_back(self):
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        s.append(event("queued"))
+        s.db.execute("""CREATE TRIGGER extra_event AFTER INSERT ON events BEGIN
+            INSERT INTO events(payload) VALUES (NEW.payload); END""")
+        with self.assertRaisesRegex(ValueError,"journal mutation not persisted"):
+            s.append(event("running"))
+        self.assertEqual(s.read(),(event("queued"),))
+        self.assertFalse(s.db.in_transaction)
