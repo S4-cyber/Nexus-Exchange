@@ -49,3 +49,64 @@ candidate. No provider calls, new dependencies, live authority or
 financial commitments. Full local checkout failed with GitHub DNS
 resolution; local red/green and independent QA not performed. No formal
 main acceptance (0/42).
+
+
+## Scout archive lifecycle continuity — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. Exact RC3 predecessor
+13c7c1903eb76ad993022f64219ac755d3517a44 passed 819 tests on each Python
+3.10 and 3.13 ([45670690819](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690819))
+and full Windows source/frozen/GUI/Genesis/security verification
+([45670690518](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690518),
+artifact 15047864705).
+
+Archive browse now maintains the maximum known UK release time and
+distinct source/key identities at that time across all validated historical
+observations, not just the latest retrieval for each identity. This avoids
+losing an observed later release when a provider subsequently reports an
+older release date for that identity, and avoids false ties from identical
+re-observations. The local archive remains research-only; no cross-source
+identity equivalence, compiled tender state, current eligibility or source
+authenticity is asserted. Exact receipt review remains same-identity only.
+The bounded archive cursor is streamed and closed even on failure; all
+rows are validated before filtering, with the existing maximum-row gate
+preserved. This reduces retained encoded payloads but is not a measured
+performance claim. Three regression methods cover date regression,
+distinct-event ambiguity, cap enforcement and corruption outside filters.
+
+Reference: OCDS 1.1 branch pinned at
+[1e98b792](https://github.com/open-contracting/standard/tree/1e98b792b2d48dfc806d974b08fccc1c50df5740),
+Apache-2.0 LICENSE and schema/release-schema.json inspected: process ID,
+release ID and publication date have distinct meanings. No upstream code
+or schema copied, no packages installed; full dependency/maintenance audit
+would be needed before adopting ocdskit. Rechecked agency-agents pinned
+handoff template and Operative journal blob 59ee08e7734347897b29af33603dffba783ec9ad
+for scoped evidence and bounded persistence; no Operative changes.
+Full local checkout failed GitHub DNS resolution; local red/green and
+independent review not performed. Superpowers unavailable. Atomic review
+candidate requires exact hosted tests and Windows packaging. Formal main
+acceptance remains 0/42. No new services, provider requests, expenditure,
+or commercial execution.
+
+## GRI-8 — snapshot-bound search history (2026-11-25)
+
+Receipt history now streams bounded metadata and checks displayed archive
+references within one explicit read transaction. Every receipt's digest and
+schema is checked even beyond the output limit; only displayed references
+are cross-checked (not a full archive audit). Cursor closure and rollback
+are guaranteed, and a caller-owned transaction is rejected without mutation.
+Three regression methods exercise a concurrent WAL writer, hidden corruption
+and capacity limits, and caller transaction preservation. WAL is used only
+by the synthetic test, not enabled in production by this change.
+
+PR #102 chronology code, tests and Scout receipt documentation are already
+identical at PR #111 head 4916c76fe73a19aa6524757ddec6769a9ca9f58b (blobs 39b8d0712151ed4d7b560c704ec1c14c90804b55,
+f821f74afc2c9776f98ef9b46c6eb69e0abf978a,
+9a3cc50057128ae060bbed8186ced9f22bc88bb8). Its separate Python/Windows
+runs 45671905049 and 45671904645 succeeded. Do not cherry-pick duplicate code.
+The exact integrated predecessor passed 926 tests per Python 3.10/3.13
+(one skipped) and Windows unit/source/frozen/GUI/fixture/Genesis/security
+checks and artifact upload (runs 45746144597, 45746144735). Full local
+checkout DNS failed; new hosted tests and independent review pending.
+No provider calls, actual inference, dependency additions, authority or
+spending; no Operative writes. Formal accepted gates remain 0/42.

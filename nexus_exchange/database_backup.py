@@ -32,6 +32,7 @@ DATABASES={
     "owner-profile.sqlite3":("owner_profile_v1",),
     "scout-todo.sqlite3":("scout_checklists_v1",),
     "council.sqlite3":("council_attempts_v1",),
+    "local-advisory.sqlite3":("advisory_attempts_v1",),
     "operator.sqlite3":("operator_drafts_v1",),
     "operator-recipients.sqlite3":("operator_recipients_v1",),
     "operator-threads.sqlite3":("operator_threads_v1",),

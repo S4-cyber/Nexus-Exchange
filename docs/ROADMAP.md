@@ -470,3 +470,221 @@ failure (matching blob hashes); four integration tests added; exact full
 checkout DNS blocked and hosted candidate checks pending. No new runtime
 dependencies, external actions, cost, Operative changes or formal main
 acceptance (0/42).
+
+## Awesome resource library — 2026-11-25
+- E01/E02/E03/E37/E38, H01-H08: initial targeted survey of GitHub's Awesome topic and related catalogues, 19 exact pinned references, source/blob evidence, license hints and prioritized research steps. All are REFERENCE_ONLY; no upstream code, model, prompt, package, tool or dependency installed. See [resource library](../resources/awesome/README.md) and [adoption plan](../resources/awesome/ADOPTION.md).
+- Local standard-library catalogue CLI supports deterministic workstream/category filtering, strict bounded reference validation and rejects automatic install, execution and authority claims. Five isolated local tests passed after expected missing-module red; tested source and test blob hashes matched. Repository catalogue integration test awaits hosted verification. Full git checkout failed DNS; no full local suite or independent acceptance claimed. No provider calls, spend or changes to Operative. Formal main acceptance 0/42.
+- Exact RC3 base 80ac719f617f4c594212968d545aca12e320683e: both Python jobs passed 828 tests (45674383337); Windows 45674383449 was still running at preflight. Separate review branch preserves that build and avoids interfering with hourly development. Next: independently audit selected security tooling, then mock and benchmark a bounded local inference worker.
+
+## Local advisory protocol foundation — 2026-11-25
+- E13–E16/E27/E37/E38, H01/H04/H06/H07: reference-only local advisory request/response contract, built from the existing exact validated Council evidence projection. Explicit trusted consent, fail-closed Governor state, SHA-256 model/request/snapshot pins, five-minute validity, 64 KiB request and 16 KiB response limits, caller-supplied attempt 1–3, strict bounded JSON output with no arbitrary commands, fabricated evidence, approval, or source-hold removal. Unresolved fields remain visible even if omitted from advice.
+- Five isolated Python 3.13 response parser tests passed after expected missing-module import failure; exact tested code and test blobs matched. Four real Council snapshot integration tests await hosted verification. Full local Git checkout failed DNS. No durable advisory retry counter, IPC, model execution, OS containment, UI dispatch, cloud fallback, or independent review is implemented. Request/response digests are associations, not authentication.
+- Prior resource-library PR #104 head 4e6b0551c424ba7b54d27de96f1e7fe46ee00a83 passed both Python jobs (834 tests each; 45675295438). Windows 45675295364 was in progress at preflight; preserve that run on its own branch. No new packages, providers, cost, external commercial actions, or changes to Nexus Operative. Formal main acceptance 0/42.
+- Next: verified private worker lifecycle with synthetic process-death/timeout/halt fixtures, durable reservations and strict retry accounting, before benchmarking or selecting any model. Continue separate defensive dependency and licensing review.
+
+
+## Durable local advisory attempt ledger — 2026-11-25
+
+- E15/E16/E18/E19/E31/E37/E38/E40; H03/H06/H07. New standalone AdvisoryAttemptStore uses transactional SQLite reservations, canonical bounded digest-checked records and a maximum three attempts per validated plan ID across model or snapshot changes. A successfully validated response terminates that plan's advisory budget; the third failed or interrupted attempt escalates. No reservation replay, automatic retry, reset, model execution or action authority.
+- Explicit Governor consent for reserve/complete/fail; exact current request and snapshot validation on completion; caller must confirm worker drain, and halted recovery requires exclusive ownership and drained workers. These are trusted coordinator assertions, not OS-level proof. The desktop RuntimeGuard does not yet wire this ledger into startup or dispatch. No automatic replay after backup/restore. The closed-instance database backup allowlist now includes local-advisory.sqlite3; only digests, fixed failure codes and timestamps are stored, never raw model output or credentials.
+- Seven isolated Python 3.13 SQLite tests passed after expected missing-module failure, using actual storage/transactions, the Exchange Governor policy and mocked advisory request/response boundary. Exact local code/test blob hashes verified. Three real Council/backup integration methods added; full repository checkout DNS blocked, so hosted CI remains required. No independent review claimed.
+- Parent PR #105 at 5d929b1d2c718c5340179702cd0b36070e18e36e passed both Python jobs (843 tests each; 45676020671). Windows 45676020523 still running at preflight. Preserve parent build; isolated review branch. Prior #104 Windows 45675295364 passed. No paid services, new dependencies, provider/model calls, commercial actions or changes to Operative. Formal main acceptance 0/42.
+- Next: RuntimeGuard owner-thread facade, actual drain/recovery ownership, synthetic isolated worker timeout/process-death checks and bounded IPC; then separately verified local inference benchmark and dependency/license review.
+
+
+## Runtime-owned advisory recovery — 2026-11-25
+
+- E15/E16/E17/E18/E19/E31/E37/E38/E40, H03/H06/H07: bounded all-plan advisory ledger reconciliation in one transaction, preserving completed states and consuming interrupted reservations; third interruption escalates. Corruption, future timestamps, capacity or a later write failure abort the batch. RuntimeGuard acquires its existing directory lock, starts halted, reconciles optional advisory ledger, reports counts, refuses resume while reservations remain, and requires halted owner-thread idle recovery. Missing ledger is not created. Desktop Settings exposes the separate recovery control and owned GUI smoke tests halt/recovery/resume using an actual saved Council snapshot; no model or dispatch.
+- Three focused batch tests failed locally on the absent methods, then all ten isolated ledger tests passed in Python 3.13. Exact local ledger/test Git blob IDs matched. Five actual RuntimeGuard integration tests and native GUI smoke submitted for hosted verification. Full checkout DNS resolution failed; full local regression not performed. This is a cooperating local ownership boundary; future worker integration must prove process death and exclude its supervisor before recovery. Separate event, Council and advisory database recovery operations are not a distributed transaction. Independent review outstanding.
+- Exact parent #106 eafabd9680b29b3dbb4bdd844c9eeef7239c5640: both Python 3.10 and 3.13 passed 853 tests (45676932177); Windows 45676932072 passed, artifact 15052078485. Separate UI PR #107 is based on RC3; preserve it and reconcile desktop edits during consolidation. No formal main acceptance (0/42), dependencies, model calls, provider calls, live commercial actions, paid resources or Operative changes.
+- Next: fixed synthetic worker contract, actual child cleanup/timeout/death/halt, owner-thread supervision, exact scope revalidation independent of inspection timestamp, then approved runtime/model benchmarking.
+
+
+## Owned advisory process fixture — 2026-11-25
+
+- E15/E16/E17/E27/E37/E38/E40, H01/H06/H07: a fixed deterministic spawned Python child accepts an exact synthetic advisory request, returns bounded bytes in shared memory, exits before parent validation and is joined/terminated/killed as required. Deadline, unknown halt, nonzero exit, empty/oversized/forged output all fail closed. Explicit consent and existing Council request reconstruction apply at the public fixture boundary; no public target/command/model choice, no raw response returned by public wrapper. This is process separation and cooperative cleanup, not OS containment. The fixture is not a real model and does not consume a durable plan attempt.
+- Six focused tests run locally against real spawned children on Python 3.13.5, including teardown checks for leaked children; exact local source/test Git blob IDs verified. Three actual Council integration tests plus owned source/frozen GUI smoke submitted for hosted CI. Full local clone fails DNS; no full local regression or independent QA claimed. Parent #108 exact 5dcf6450aaa7d3c93dfe4e46839e5d2daeb5848b passed 861 tests on Python 3.10/3.13 (45680763014); Windows 45680762786 active at preflight. Preserve separate UI PR #107 and ongoing build.
+- No new packages, model calls, provider calls, paid services, actual commercial actions, or Operative changes. Formal main acceptance 0/42. Next: integrate the supervised synthetic worker with owner-thread runtime lifecycle and durable attempt reservations, re-inspect stable current scope independently of timestamp, then benchmark a separately approved locally licensed model under real containment. No automatic retries, cloud fallback, or tool authority.
+
+## Fresh advisory completion scope — 2026-11-25
+
+- E15/E16/E17/E18/E19/E31/E37/E38/E40, H03/H06/H07: new explicit `complete_current` ledger path reconstructs the exact original request and validates a second trusted Council snapshot after reservation. It compares all stable scope fields, with absolute modeled collection instant rather than relative countdown, and permits the clock-dependent snapshot/schedule digests to change only when the evaluation instant changes. Source hold, evidence IDs, criteria, scenario and plan identity changes fail closed. Drift leaves the reservation open. Legacy exact-original completion is retained for historical fixture compatibility, not fresh dispatch.
+- Local TDD: expected absent-module and absent-method red; 16 isolated comparison and SQLite tests pass using actual advisory ledger/clock logic and mocked review boundaries. Three Council-schema integration tests are queued for hosted verification. Exact source/test blob hashes match local. Full checkout unavailable; no full local regression claim. Parent #108 at 5dcf6450aaa7d3c93dfe4e46839e5d2daeb5848b passed the Python 3.10/3.13 hosted checks; Windows preview 45680762786 still running at inspection. Preserve its build and the separate synthetic-worker branch.
+- Trust boundary: fresh snapshots must actually be produced by the idle owner-thread ScenarioCouncil after the child has drained. Digest comparison cannot authenticate that caller, and the new method does not yet wire dispatch/re-inspection or provide OS sandboxing. No model, network, commercial action, spend or Operative changes. Formal main acceptance 0/42. Next: consolidate synthetic child supervision with the new owner-side exact scope completion; test re-inspection against real saved scenarios and process death, then separately review model/runtime dependencies.
+
+## RC3 local intelligence consolidation and free-first coordination — 2026-11-25
+
+E01–E42, H01/H03/H06/H07: preserve the newer RC3 head 1982f28c3aabcac82c40c816fa210464c9cb602a, including merged UI #107, Python 45681195183 and Windows 45681195169 successful. Integrate exact resource/advisory stack #104–#110; #109 (3a23cd7719dbad0814c5d338f45ef200a635c635, Python 45681616604, Windows 45681616516 success) and #110 (825d1f991ac673221da8fea2851b2e74fda13976, Python 45681767340, Windows 45681767251 success). Reconcile desktop by transplanting four unique reviewed recovery/smoke sections, preserving the newer activity UI; preserve original README UI changes and combine resource link. Add AGENTS.md and development protocol for Codex/Codespace/local workflows and legal free-tier use. Both hourly development directives updated independently; no Operative source changes. Separate #102 Scout review remains outstanding. Local full clone DNS failed, so exact integrated CI and independent review remain required. No model execution, external calls, new dependencies, spend or main release acceptance (0/42).
+
+## Scout archive lifecycle continuity — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. Exact RC3 predecessor
+13c7c1903eb76ad993022f64219ac755d3517a44 passed 819 tests on each Python
+3.10 and 3.13 ([45670690819](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690819))
+and full Windows source/frozen/GUI/Genesis/security verification
+([45670690518](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45670690518),
+artifact 15047864705).
+
+Archive browse now maintains the maximum known UK release time and
+distinct source/key identities at that time across all validated historical
+observations, not just the latest retrieval for each identity. This avoids
+losing an observed later release when a provider subsequently reports an
+older release date for that identity, and avoids false ties from identical
+re-observations. The local archive remains research-only; no cross-source
+identity equivalence, compiled tender state, current eligibility or source
+authenticity is asserted. Exact receipt review remains same-identity only.
+The bounded archive cursor is streamed and closed even on failure; all
+rows are validated before filtering, with the existing maximum-row gate
+preserved. This reduces retained encoded payloads but is not a measured
+performance claim. Three regression methods cover date regression,
+distinct-event ambiguity, cap enforcement and corruption outside filters.
+
+Reference: OCDS 1.1 branch pinned at
+[1e98b792](https://github.com/open-contracting/standard/tree/1e98b792b2d48dfc806d974b08fccc1c50df5740),
+Apache-2.0 LICENSE and schema/release-schema.json inspected: process ID,
+release ID and publication date have distinct meanings. No upstream code
+or schema copied, no packages installed; full dependency/maintenance audit
+would be needed before adopting ocdskit. Rechecked agency-agents pinned
+handoff template and Operative journal blob 59ee08e7734347897b29af33603dffba783ec9ad
+for scoped evidence and bounded persistence; no Operative changes.
+Full local checkout failed GitHub DNS resolution; local red/green and
+independent review not performed. Superpowers unavailable. Atomic review
+candidate requires exact hosted tests and Windows packaging. Formal main
+acceptance remains 0/42. No new services, provider requests, expenditure,
+or commercial execution.
+
+
+## RC3 Scout lifecycle consolidation — 2026-11-25
+
+E06/E12/E18/E31/E33/E38, H03/H06. The separate archive lifecycle #102 exact head 5b9c0ddfc50cd928fe448f3847a8d001ca26ae65 passed 822 tests each on Python 3.10/3.13 (45671905049) and Windows preview 45671904645, artifact 15049454405. The three changed non-roadmap file blobs match their original parent exactly in the consolidated parent 7aee08ea740fb4135d3411e6cf163b67bcd3ce85; transplant their exact verified replacement blobs without overriding the merged UI, resource catalogue, or advisory/current-scope code. Retain the appended Scout roadmap history. Combined parent Python jobs passed 885 tests each (45686084113); Windows 45686084062 was active at preparation. Expected combined regression is 888 tests, not yet verified. Full checkout failed GitHub DNS; no new local/full-suite result or independent review claimed. Keep existing PR #111, advance only after parent Windows checks finish, and run exact integrated CI. No new dependency, provider call, authority, paid service, or Operative modifications. Main accepted gates remain 0/42. Next: owner-thread supervised advisory lifecycle and independent acceptance/security review.
+
+
+## Fixed synthetic worker integrity — 2026-11-25
+
+GRI-7; E15/E16/E17/E27/E37/E38/E40, H01/H06/H07. Exact consolidated
+parent 0112f6a31a305e084d31c96191f8d1002ac3a736 ran 888 tests (one skipped) on each Python
+3.10 and 3.13 (45690354874), and Windows source, frozen, GUI, Genesis and
+security checks passed (45690355028, artifact 15058193291). No independent
+review submissions or threads observed for PR #111; accepted main gates 0/42.
+
+The fixed worker now requires the exact canonical complete deterministic
+reply, including field ordering and first reference selection. The general
+advisory contract remains unchanged; a valid subset is not enough for this
+specific diagnostic. Terminate errors no longer skip kill fallback; uncertain
+cleanup (including missing exit code or failed close) is normalized to
+WORKER_CLEANUP_FAILED. This is a prerequisite for a runtime owner to
+distinguish a drained diagnostic from a supervisor fault, not a proof of
+cleanup after owner crash or a guarantee of OS isolation.
+
+Local Python 3.13.5 red reproduced omitted output and cleanup failure;
+five new test methods passed green, with real spawned children and mocked
+OS cleanup failures. Exact tested source/test blobs
+41afecdec8736990fcae746869753d4ec0fa375a and
+06ccbf574481ae5868695d9021390128e46696c9. Full checkout DNS still blocked;
+hosted full regression and independent review required. No remote red
+commit. Rechecked agency-agents pinned handoff template and MIT license
+(8ae6164602c95ca78828b148b9052460ee426885), and read-only Operative journal
+blob 59ee08e7734347897b29af33603dffba783ec9ad for bounded failure semantics;
+no source copied or dependencies added. Next: owner-thread reservation,
+collection, fresh scope inspection, durable halt, no replay, and prove
+child drain across owner death before activating actual inference.
+No new services, model execution, commercial actions, spend or Operative changes.
+
+
+## 2026-11-25 — GRI-7 owner-thread synthetic reservation candidate
+- E15–E19/E31/E37/E38/E40, H01/H03/H06/H07: previous exact candidate fb75be1baf882e20d8e5bbe841b4008b5d817221 passed Python 3.10/3.13 (45700408240) and Windows (45700408827). New owner-thread headless reservation, asynchronous fixed fixture, drain interlock and fresh scope completion candidate; four new integration tests, hosted CI pending. Full local checkout DNS failure; no local red/green claim.
+- No new dependencies or external authority. Same-session uncertain cleanup faults runtime; abrupt parent crash/orphan process quarantine and desktop shutdown wiring remain open. No real inference or commercial dispatch. Formal accepted gates 0/42 pending independent acceptance.
+- Reuse: Operative risk_gate.py blob ab737fdd8fae557ef456e3240d6580fc35d9e459 read-only; trading-specific imports unsuitable. OpenViking pinned 13135999c0cde133b6fd4b4c2dcdd03c1a7db93f ACL blob cceb028efcf2117fe7f619943443787501083ec7 uses Pydantic and context-dependent permission resolution; AGPL, dependency/privacy review incomplete, no import or copy.
+
+## 2026-11-25 — GRI-7 durable launch quarantine candidate
+- Prior exact candidate 6c33cec8a1acf25f56be3257f5db7c4556db86f3: Python 3.10 and 3.13 each ran 912 tests, OK (one skipped), run 45710650734; Windows run 45710650595 passed unit, GUI/fixture/genesis and packaged smoke tests; artifact 15068160715.
+- E15–E19/E31/E37/E38/E40, H03/H06/H07: persist an exact advisory reservation marker before submission; clear only on joined known-clean supervisor exit. Startup holds unresolved marker and blocks ledger recovery/resume; no automatic replay or administrative clear. Four isolated SQLite tests passed locally, with restart/submission-fault integration tests added for hosted verification. Full local checkout DNS unavailable; independent QA, OS process-tree containment, recovery clearance, GUI integration and real inference remain pending. Main acceptance remains 0/42.
+- Rechecked Operative risk gate at 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11 for strict default-deny, and OpenViking ACL at 13135999c0cde133b6fd4b4c2dcdd03c1a7db93f (AGPL-3.0, Pydantic/service dependencies). No copied code, dependency, external API, model, service, paid resource or change to Operative.
+
+## 2026-11-25 — GRI-7 / GRI-10 desktop advisory shutdown candidate
+- Prior exact head cc2ca7b08471f7feaadbcc97b40987472f993a2e: [Python CI 45714128017](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45714128017) ran 917 tests on each of 3.10/3.13 (OK, one skipped); [Windows 45714127697](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45714127697) succeeded, including source/frozen checks, artifact 15068913453.
+- E17/E18/E31/E34/E38/E40, H03/H06/H07: desktop busy and shutdown interlocks include the reserved advisory process, startup shows persistent cleanup quarantine, and native GUI smoke exercises halt/drain/reopen with a second owned synthetic attempt. New combined hosted results pending at entry; full local checkout DNS blocked, no local red/green or independent QA claim. Real model invocation, authenticated process-tree clearance and release acceptance remain open; formal main 0/42.
+- Reuse: read-only Operative risk gate pinned 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11 (blob ab737fdd8fae557ef456e3240d6580fc35d9e459), strict input/authority separation; no trading module port. Mem0 at 8096993d69396bf97311249206915cadb2eb998f (Apache-2.0; config blob 5955ade6f54766977834f001a5de4818e64b3ab0) relies on Pydantic and model/vector/embedding configs; retain local bounded SQLite rather than importing runtime, dependency/privacy/cost audit incomplete. No new dependency, model, spend, external action or Operative change.
+
+## RC3 — read-only advisory attempt budget (GRI-7, 2026-11-25)
+
+- E13–E15/E17/E18/E31/E34/E38 candidate: Council can inspect the selected saved
+  plan's advisory attempt budget without registration, mutation, child launch,
+  or inference. Strict state/count display and owner-thread halt/busy checks;
+  new unit, runtime integration and source/frozen GUI smoke assertions.
+- Previous exact PR #111 head 257c273338092ac60f6e162920341f9ec31777d5:
+  [Python CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718814999)
+  passed 917 tests per version (one skipped);
+  [Windows CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718815057)
+  passed unit, source and frozen smoke and artifact upload. New combined
+  CI pending; no local checkout (DNS). No acceptance promotion: 0/42.
+- H03/H06/H07: inspected pinned Mem0 8096993d69396bf97311249206915cadb2eb998f
+  Apache-2.0 license and packaging; model SDK, vector store, telemetry and
+  transitive costs/privacy remain unaudited. No import, install, or cloud calls.
+  Operative risk gate was read-only reference; no source copied. Next:
+  consented fixed-fixture control, independent quarantine/containment review,
+  Scout #102 chronology reconciliation. No new external authority or spending.
+
+## 2026-11-25 — GRI-7 prepared synthetic launch boundary candidate
+- E15–E18/E31/E34/E38, H01/H06/H07: owner-held one-use preview binds plan, stable
+  Council scope, runtime revision and expected next attempt before a fixed
+  synthetic diagnostic. Literal confirmation, halt invalidation, scope expiry
+  and atomic ledger attempt check; no GUI launch or actual inference.
+  Three new integration test methods and existing real-child path exercise
+  prepared launch; full local checkout DNS unavailable, combined hosted CI
+  pending. Formal main acceptance 0/42.
+- Exact prior head 2f8373b5ca593ec86305442df75a3aeb25557e76: Python 3.10/3.13 each ran 919 tests
+  (one skipped), [45726115258](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115258).
+  Windows [45726115304](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115304)
+  passed source/GUI/fixture/Genesis/security and packaged self-test, artifact
+  15074372533. PR #111 has no observed independent reviews.
+- Read-only Operative risk gate pinned 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11,
+  blob ab737fdd8fae557ef456e3240d6580fc35d9e459; rechecked agency-agents MIT
+  license and handoff template at 8ae6164602c95ca78828b148b9052460ee426885
+  (bounded confirmation and evidence separation). No upstream code copied,
+  no dependency installed or external resource provisioned. Next: native
+  confirmation controls with root-owned nonblocking polling and inline
+  historical reporting; independent containment and acceptance review.
+
+
+## GRI-7 — native synthetic consent and root-owned collection (2026-11-25)
+- E15–E18/E31/E34/E38, H01/H06/H07 candidate: Council exact preview, explicit default-No consent, busy/halt recheck, desktop root polling and historical result display. No model execution, real dispatch or authority. Three focused unit methods and updated GUI shutdown/decline smoke; new CI pending, local clone DNS blocked. Prior head 5f836cd2f84f6f08b013c988f2eac42c7bd3b8ed: 922 tests each (one skipped), Windows and source security passed, runs 45732599323 and 45732599389. Formal main gate acceptance remains 0/42. Next: independent native completion/halt and process containment review, reconcile Scout #102, consolidate release evidence. No Operative writes or new dependencies.
+
+
+## GRI-7 — reservation-bound native completion candidate (2026-11-25)
+- E15–E18/E31/E34/E38, H01/H06/H07: bind root display to exact reservation, review digest and deny flags; test normal synthetic completion, terminal budget, halt clearing and explicit resume independently of shutdown fixture. Prior exact head 285c968fcc9396fa47d89771ad182f84fbed2485: 925 tests per Python version (one skip), Windows source/frozen smoke and security checks passed (runs 45740121846, 45740121869). New hosted regression pending; local GitHub DNS unavailable. Formal main acceptance remains 0/42. Read-only review of pinned Operative risk gate and OpenViking context layer docs/AGPL license; no code/dependency imported. Next: independent containment and acceptance, reconcile Scout #102. No live action, spending or Operative changes.
+
+## GRI-8 — snapshot-bound search history (2026-11-25)
+
+Receipt history now streams bounded metadata and checks displayed archive
+references within one explicit read transaction. Every receipt's digest and
+schema is checked even beyond the output limit; only displayed references
+are cross-checked (not a full archive audit). Cursor closure and rollback
+are guaranteed, and a caller-owned transaction is rejected without mutation.
+Three regression methods exercise a concurrent WAL writer, hidden corruption
+and capacity limits, and caller transaction preservation. WAL is used only
+by the synthetic test, not enabled in production by this change.
+
+PR #102 chronology code, tests and Scout receipt documentation are already
+identical at PR #111 head 4916c76fe73a19aa6524757ddec6769a9ca9f58b (blobs 39b8d0712151ed4d7b560c704ec1c14c90804b55,
+f821f74afc2c9776f98ef9b46c6eb69e0abf978a,
+9a3cc50057128ae060bbed8186ced9f22bc88bb8). Its separate Python/Windows
+runs 45671905049 and 45671904645 succeeded. Do not cherry-pick duplicate code.
+The exact integrated predecessor passed 926 tests per Python 3.10/3.13
+(one skipped) and Windows unit/source/frozen/GUI/fixture/Genesis/security
+checks and artifact upload (runs 45746144597, 45746144735). Full local
+checkout DNS failed; new hosted tests and independent review pending.
+No provider calls, actual inference, dependency additions, authority or
+spending; no Operative writes. Formal accepted gates remain 0/42.
+Affected candidate gates E06/E12/E18/E31/E33/E38; H03/H06/H07.
+Read-only Operative journal review (bounded SQLite snapshot/transaction
+principles), OCDS schema and Apache-2.0 license pinned
+1e98b792b2d48dfc806d974b08fccc1c50df5740, and agency-agents handoff template
+pinned 8ae6164602c95ca78828b148b9052460ee426885. No upstream code copied;
+no dependency adoption or benchmark claim. Next: exact-head CI, independent
+review of source authorization and receipt-to-Operator qualification.
+
+## GRI-8 — fail-closed current Scout-to-Operator review envelope (2026-11-25 Pacific)
+- Prior exact head 17fe9580f76a8f7aa0284c563546ec83860e3a64: Python 3.10 and 3.13 each ran 929 tests (one skipped), run 45752258090; Windows unit/source/frozen/GUI/fixture/Genesis/security and artifact checks passed, run 45752258104, artifact 15085434826.
+- E13/E14/E16/E21/E27/E31/E38, H01/H06/H07: verify the full current review and nested assessment seals, strict schema and deny flags, supported declaration and bounded inputs before selected file access. Preserve v1 historical scope pin. Four new regression methods, 63 failing negative subcases on the exact original module, then all 10 focused tests passed locally on Python 3.13. No full checkout (DNS), independent QA or integrated hosted results at entry. Main acceptance remains 0/42.
+- Rechecked Operative read-only journal (pinned review/v0.340.381-cross-session-coverage, blob 59ee08e7734347897b29af33603dffba783ec9ad; no credentials), agency-agents MIT license and handoff template at 8ae6164602c95ca78828b148b9052460ee426885. Adopt only explicit bounded evidence handoff concepts; no dependency or upstream code import. No new external action, model, commercial authority, resources or spend. Next: test actual archive-to-local-sample scope drift with current source restrictions, and independently review provider permissions and process containment.

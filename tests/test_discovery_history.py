@@ -53,6 +53,56 @@ class SearchHistoryTests(unittest.TestCase):
             self.assertFalse(hint["automatic_skip"])
             self.assertIn("may still confirm",hint_text(hint))
 
+    def test_history_snapshot_survives_concurrent_archive_change(self):
+        import sqlite3
+        from nexus_exchange.discovery_history import _verify_archive
+        with LeadStore(self.path) as store:
+            self.record(store)
+            self.assertEqual(store.db.execute("PRAGMA journal_mode=WAL").fetchone()[0],"wal")
+            writer=sqlite3.connect(self.path,timeout=1)
+            try:
+                def change_after_receipt_read(db,payload,cache):
+                    self.assertTrue(db.in_transaction)
+                    with writer:
+                        writer.execute("DELETE FROM scout_observations_v1")
+                    return _verify_archive(db,payload,cache)
+                with patch("nexus_exchange.discovery_history._verify_archive",
+                           side_effect=change_after_receipt_read):
+                    history=store.search_history(now=NOW,halted=False)
+                self.assertTrue(history["rows"][0]["local_archive_consistent"])
+                self.assertFalse(store.db.in_transaction)
+                with self.assertRaisesRegex(ValueError,"missing from archive"):
+                    store.search_history(now=NOW,halted=False)
+                self.assertFalse(store.db.in_transaction)
+            finally:
+                writer.close()
+
+    def test_history_capacity_and_hidden_receipt_integrity(self):
+        with LeadStore(self.path) as store:
+            self.record(store)
+            self.record(store,context=dict(self.ctx,task_id="2"*32))
+            with patch("nexus_exchange.discovery_history.MAX_RECEIPTS",1):
+                with self.assertRaisesRegex(ValueError,"exceeds bound"):
+                    store.search_history(now=NOW,limit=1,halted=False)
+            self.assertFalse(store.db.in_transaction)
+            store.db.execute("UPDATE scout_search_receipts_v1 SET payload='{}' WHERE task_id=?",
+                             ("2"*32,))
+            with self.assertRaisesRegex(ValueError,"digest mismatch"):
+                store.search_history(now=NOW,limit=1,halted=False)
+            self.assertFalse(store.db.in_transaction)
+
+    def test_history_does_not_rollback_callers_transaction(self):
+        with LeadStore(self.path) as store:
+            self.record(store)
+            store.db.execute("BEGIN IMMEDIATE")
+            try:
+                with self.assertRaisesRegex(ValueError,"idle archive connection"):
+                    store.search_history(now=NOW,halted=False)
+                self.assertTrue(store.db.in_transaction)
+            finally:
+                store.db.rollback()
+            self.assertEqual(store.search_history(now=NOW,halted=False)["total"],1)
+
     def test_exact_refs_and_missing_archive_denied(self):
         with LeadStore(self.path) as store:
             self.record(store)

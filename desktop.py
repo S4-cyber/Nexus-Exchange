@@ -152,7 +152,8 @@ def main(*, data_directory=None, gui_smoke=False):
     scenario_report = None
     latest_results_window = None
     def busy():
-        return future is not None or stop.browser_process_pending()
+        return (future is not None or stop.browser_process_pending()
+                or stop.advisory_process_pending())
     def close():
         if activity_tick is not None:
             root.after_cancel(activity_tick)
@@ -162,6 +163,7 @@ def main(*, data_directory=None, gui_smoke=False):
             pass  # In-memory halt is asserted even when persistence fails.
         executor.shutdown(wait=True, cancel_futures=True)
         stop.drain_browser_process()
+        stop.drain_advisory_process()
         try:
             stop.close()
         finally:
@@ -349,14 +351,67 @@ def main(*, data_directory=None, gui_smoke=False):
         show_halted(message)
     def council_blocked():
         return stop.is_set() or busy()
-    def council_action(action,plan_id):
+    def council_action(action,plan_id,**inputs):
         if council_blocked():
             raise PermissionError("Council halted or desktop worker active")
         try:
+            if action=="advisory_prepare" and not inputs:
+                return stop.prepare_advisory_process(plan_id)
+            if action=="advisory_start":
+                return start_advisory(plan_id,**inputs)
+            if inputs:
+                raise ValueError("unexpected Council action inputs")
             return stop.council_action(action,plan_id)
         finally:
             if stop.is_set():
                 show_halted("HALTED — Council blocked; recover interrupted attempts before explicit resume.")
+    def start_advisory(plan_id,*,preview_id,confirmed):
+        nonlocal scenario_report
+        if council_blocked():
+            raise PermissionError("Advisory halted or desktop worker active")
+        ticket=stop.start_prepared_advisory_process(plan_id,preview_id,confirmed=confirmed)
+        # Root owns collection even if the initiating Council window closes.
+        root.after(25,advisory_poll,dict(ticket))
+        scenario_report=None
+        exporter.configure(state="disabled")
+        for button in (launch,importer,simulator,*diagnostic_buttons):
+            button.configure(state="disabled")
+        show_result_panel()
+        output.configure(state="normal")
+        output.delete("1.0","end")
+        output.insert("end","Synthetic advisory running — no model or external action.")
+        output.configure(state="disabled")
+        halt_status.configure(text="Synthetic advisory running — Emergency halt available.")
+        return ticket
+
+    def advisory_poll(ticket):
+        try:
+            report=stop.poll_advisory_process()
+            if report is None:
+                root.after(25,advisory_poll,ticket)
+                return
+            if not stop.is_set():
+                from nexus_exchange.council_workspace import validate_advisory_completion
+                validate_advisory_completion(report,ticket)
+                show_result_panel()
+                output.configure(state="normal")
+                output.delete("1.0","end")
+                output.insert("end","SYNTHETIC ADVISORY — historical local fixture only; no model or authority.\n"
+                              +json.dumps(report,ensure_ascii=True,indent=2))
+                output.configure(state="disabled")
+        except Exception:
+            if not stop.is_set():
+                try:
+                    stop.set()
+                except Exception:
+                    pass
+        if stop.is_set():
+            show_halted("HALTED — advisory result withheld; review recovery before explicit resume.")
+        else:
+            for button in (launch,importer,simulator,*diagnostic_buttons):
+                button.configure(state="normal")
+            halt_status.configure(text="Synthetic advisory completed — commercial actions disabled.")
+
     def operator_action(action,plan_id,**inputs):
         if council_blocked():
             raise PermissionError("Operator halted or desktop worker active")
@@ -457,6 +512,18 @@ def main(*, data_directory=None, gui_smoke=False):
             halt_status.configure(text="HALTED — Council recovery failed; restart and review storage.")
             return None
         halt_status.configure(text=f"HALTED — {result['recovered']} Council attempts reconciled, "
+            f"{result['escalated']} escalated; Resume offline explicitly.")
+        return result
+    def recover_advisory():
+        if busy() or not stop.is_set():
+            halt_status.configure(text="Halt and wait for workers to drain before advisory recovery.")
+            return None
+        try:
+            result=stop.recover_advisory()
+        except Exception:
+            halt_status.configure(text="HALTED — advisory recovery blocked. Review storage and worker cleanup; do not delete local data.")
+            return None
+        halt_status.configure(text=f"HALTED — {result['recovered']} advisory attempts reconciled, "
             f"{result['escalated']} escalated; Resume offline explicitly.")
         return result
     def resume():
@@ -1699,9 +1766,12 @@ def main(*, data_directory=None, gui_smoke=False):
     # Advanced manual tools can be enabled separately in Settings.
     halt_status = ttk.Label(chrome.safety, text="Ready · Select Engage on Home.")
     halt_status.pack(fill="x", pady=(2, 0))
-    if stop.recovered_count or stop.council_recovered_count:
-        halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks and "
-                              f"{stop.council_recovered_count} Council attempts. Select Engage on Home.")
+    if stop.status()["advisory_cleanup_unconfirmed"]:
+        halt_status.configure(text="HALTED — previous advisory worker cleanup is unconfirmed. "
+                              "Do not delete local data or resume; independent recovery review is required.")
+    elif stop.recovered_count or stop.council_recovered_count or stop.advisory_recovered_count:
+        halt_status.configure(text=f"Halted · Recovered {stop.recovered_count} tasks, "
+                              f"{stop.council_recovered_count} Council and {stop.advisory_recovered_count} advisory attempts. Select Engage on Home.")
     chrome.safety.bind("<Configure>",lambda event:halt_status.configure(wraplength=max(160,event.width-12)),add="+")
 
     engage_button = ttk.Button(home_actions, text="Engage", command=engage)
@@ -1744,6 +1814,7 @@ def main(*, data_directory=None, gui_smoke=False):
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
     ttk.Button(settings, text="Recover interrupted Council attempts", command=recover_council).pack(anchor="w")
+    ttk.Button(settings, text="Recover interrupted advisory attempts", command=recover_advisory).pack(anchor="w")
 
     heading(help_page, "Getting started")
     for line in ("1. Choose Engage on Home. Search or filter the live list and select any task or finding for details.",
@@ -2041,6 +2112,36 @@ def main(*, data_directory=None, gui_smoke=False):
         history=stop.council_action("history",key)
         if [item["audit_state"] for item in history["attempts"]]!=["RECORDED","INTERRUPTED_NO_REPORT"]:
             raise RuntimeError("Council recovery lost historical audit")
+        # Owned fixture only: reserve reference metadata, not a model call.
+        from nexus_exchange.advisory_attempts import AdvisoryAttemptStore, DB_NAME
+        advisory_snapshot=stop.council_action("inspect",key)
+        with AdvisoryAttemptStore(directory/DB_NAME) as advisory_store:
+            advisory_store.reserve(advisory_snapshot,"d"*64,now=datetime.now(timezone.utc),
+                                   approved=True,halted=stop.is_set())
+        halt()
+        resume()
+        if not stop.is_set():
+            raise RuntimeError("Advisory reservation did not block resume")
+        recovered=recover_advisory()
+        if recovered!=dict(recovered=1,escalated=0) or not stop.is_set():
+            raise RuntimeError("Advisory recovery did not preserve halt")
+        resume()
+        if stop.is_set():
+            raise RuntimeError("Advisory explicit resume failed")
+        with AdvisoryAttemptStore(directory/DB_NAME,existing_only=True) as advisory_store:
+            if advisory_store.status(key,halted=False)["state"]!="INTERRUPTED":
+                raise RuntimeError("Advisory reservation replay or recovery mismatch")
+        # Run only an owned deterministic child in the GUI/frozen smoke.
+        # This does not dispatch a real model or consume a saved-plan attempt.
+        from nexus_exchange.advisory_process import run_advisory_fixture
+        advisory_fixture=run_advisory_fixture(stop.council_action("inspect",key),
+                                             approved=True,halt_check=stop.is_set)
+        if (advisory_fixture["worker_pid"]==os.getpid()
+                or advisory_fixture["child_process_completed"] is not True
+                or advisory_fixture["review"]["source_hold"] is None
+                or advisory_fixture["model_executed"] is not False
+                or advisory_fixture["external_authority"] is not False):
+            raise RuntimeError("Advisory child fixture scope or lifecycle mismatch")
         # Separate synthetic research-candidate fixture: keep earlier source-held
         # scenario and ranking smoke unchanged. Never query a live source.
         operator_stamp=datetime.now(timezone.utc)
@@ -2129,7 +2230,56 @@ def main(*, data_directory=None, gui_smoke=False):
         trade_window.destroy()
         routes_window.destroy()
         results_window.destroy()
-        close()
+        # Start an explicitly approved synthetic reservation immediately before
+        # closing. Even an already-finished child is busy until owner collection.
+        from nexus_exchange.council_workspace import CouncilWorkspace
+        # Separate saved plan: exercise the root's normal completion callback
+        # before the original plan's interrupted shutdown path.
+        completed_workspace=CouncilWorkspace(operator_key,action=council_action,blocked_check=council_blocked)
+        completed_ticket=completed_workspace.launch_advisory(lambda preview: True)
+        try:
+            if completed_ticket["attempt"]!=1 or not busy():
+                raise RuntimeError("Native advisory did not reserve a first attempt")
+            deadline=monotonic()+20
+            while busy():
+                if monotonic()>=deadline:
+                    raise RuntimeError("Native advisory owner collection timed out")
+                root.update()
+                sleep(0.01)
+            displayed=output.get("1.0","end")
+            if (stop.is_set() or "SYNTHETIC ADVISORY — historical local fixture only" not in displayed
+                    or operator_key not in displayed or not exporter.instate(["disabled"])
+                    or launch.instate(["disabled"])
+                    or completed_workspace.advisory_status()["state"]!="REVIEWED"
+                    or completed_workspace.advisory_status()["next_attempt"] is not None):
+                raise RuntimeError("Native advisory completion was not safely displayed")
+            halt()
+            if operator_key in output.get("1.0","end") or not stop.is_set():
+                raise RuntimeError("Halt did not withhold historical advisory output")
+            resume()
+            if stop.is_set():
+                raise RuntimeError("Reviewed advisory unexpectedly blocked explicit resume")
+        except BaseException:
+            close()
+            raise
+        shutdown_workspace=CouncilWorkspace(key,action=council_action,blocked_check=council_blocked)
+        shutdown_ticket=shutdown_workspace.launch_advisory(lambda preview: True)
+        try:
+            if (shutdown_ticket["attempt"]!=2 or not busy() or not council_blocked()
+                    or not stop.status()["advisory_cleanup_unconfirmed"]):
+                raise RuntimeError("Desktop did not interlock reserved advisory worker")
+        finally:
+            close()
+        # The normal close path must halt and drain before releasing ownership.
+        # Startup may reconcile the interrupted attempt, never publish its result.
+        with RuntimeGuard(directory) as restarted:
+            if (not restarted.is_set() or restarted.status()["advisory_cleanup_unconfirmed"]
+                    or restarted.advisory_recovered_count!=1):
+                raise RuntimeError("Desktop advisory shutdown did not recover safely")
+            with AdvisoryAttemptStore(directory/DB_NAME,existing_only=True) as ledger:
+                state=ledger.status(key,halted=False)
+                if state["state"]!="INTERRUPTED" or state["attempts_used"]!=2:
+                    raise RuntimeError("Desktop shutdown replayed or lost an advisory attempt")
         return
     root.mainloop()
 

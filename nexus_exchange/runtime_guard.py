@@ -8,10 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, get_ident
+from uuid import uuid4
 import os
 
 from .event_store import EventStore
+from . import advisory_launch_marker as launch_marker
 from .council_attempts import CouncilAttemptStore
+from .advisory_attempts import AdvisoryAttemptStore, DB_NAME as ADVISORY_DB
 from .scenario_council import ScenarioCouncil
 from .dashboard_events import project
 from .scout import _timestamp
@@ -52,8 +55,15 @@ class RuntimeGuard:
         self._browser_active=False
         self._browser_job=None
         self._browser_executor=None
+        self._advisory_active=False
+        self._advisory_job=None
+        self._advisory_executor=None
+        self._advisory_reservation=None
+        self._advisory_preview=None
         self.council_recovered_count=0
         self.council_escalated_count=0
+        self.advisory_recovered_count=0
+        self.advisory_escalated_count=0
         self._clock=clock or (lambda:datetime.now(timezone.utc))
         directory=Path(directory).resolve()
         self._directory=directory
@@ -66,12 +76,19 @@ class RuntimeGuard:
         try:
             self.events=EventStore(directory/"events.sqlite3")
             self.events.db.execute("PRAGMA synchronous=FULL")
+            launch_marker.initialize(self.events.db)
             self.events.db.execute("""CREATE TABLE IF NOT EXISTS runtime_guard_v1(
                 slot INTEGER PRIMARY KEY CHECK(slot=1),state TEXT NOT NULL,
                 reason TEXT NOT NULL,revision INTEGER NOT NULL,changed_at TEXT NOT NULL)""")
             self._persist("halted","startup")
             self.recovered_count=self.events.recover_interrupted(now=self._clock())
             self.recover_council()
+            if launch_marker.pending(self.events.db):
+                # The previous owner did not prove its child drained. A new
+                # OS lock proves exclusive ownership, not process-tree death.
+                self._faulted=True
+            else:
+                self.recover_advisory()
         except BaseException:
             try:
                 if self.events is not None:
@@ -95,7 +112,7 @@ class RuntimeGuard:
 
     def _require_idle(self):
         self._require_owner()
-        if (self._council_active or self._operator_active or self._browser_active
+        if (self._council_active or self._operator_active or self._browser_active or self._advisory_active
                 or project(self.events.read())["tasks"]):
             raise PermissionError("active worker must drain before local maintenance")
 
@@ -137,6 +154,227 @@ class RuntimeGuard:
             self._faulted=True
             raise
 
+    def _advisory_path(self):
+        path=self._directory/ADVISORY_DB
+        if not os.path.lexists(path):
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("invalid local advisory database path")
+        return path
+
+    def _advisory_pending(self):
+        path=self._advisory_path()
+        if path is None:
+            return 0
+        with AdvisoryAttemptStore(path,existing_only=True) as store:
+            return store._runtime_pending(now=self._clock())
+
+    def recover_advisory(self):
+        """Reconcile ledger reservations under halted owner-thread/idle lock.
+
+        The active synthetic supervisor must be collected before maintenance.
+        The desktop additionally excludes unjournaled worker futures.
+        """
+        self._require_idle()
+        if self._faulted or not self.is_set():
+            raise PermissionError("halted healthy runtime required for advisory recovery")
+        try:
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("advisory process cleanup unconfirmed; quarantine retained")
+            path=self._advisory_path()
+            if path is None:
+                return dict(recovered=0,escalated=0)
+            with AdvisoryAttemptStore(path,existing_only=True) as store:
+                result=store._runtime_recover_all(now=self._clock())
+            self.advisory_recovered_count+=result["recovered"]
+            self.advisory_escalated_count+=result["escalated"]
+            return result
+        except BaseException:
+            self._stop.set()
+            self._faulted=True
+            raise
+
+    def advisory_process_pending(self):
+        """Owner-only observation of an outstanding synthetic supervisor."""
+        self._require_owner()
+        return self._advisory_job is not None
+
+    def _advisory_fault(self, *, uncertain=False):
+        if not self.is_set():
+            try:
+                self.set()
+            except BaseException:
+                self._stop.set()
+                self._faulted=True
+        if uncertain:
+            self._faulted=True
+
+    def prepare_advisory_process(self,plan_id):
+        """Owner-only, one-use in-memory consent preview; no ledger or child created."""
+        self._require_idle()
+        self._advisory_preview=None
+        if self._faulted or self.is_set():
+            raise PermissionError("Advisory unavailable while halted or faulted")
+        if launch_marker.pending(self.events.db) or self._council_pending() or self._advisory_pending():
+            raise PermissionError("outstanding reservation requires halted recovery")
+        original=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                 clock=self._clock).inspect(plan_id)
+        path=self._advisory_path()
+        budget=dict(state="NOT_STARTED",attempts_used=0,next_attempt=1)
+        if path is not None:
+            with AdvisoryAttemptStore(path,existing_only=True) as store:
+                budget=store.preview_budget(plan_id,halted=self.is_set())
+        if budget["next_attempt"] is None or self.is_set():
+            raise PermissionError("advisory attempt unavailable")
+        from .advisory_process import FIXTURE_MODEL_SHA256
+        from .local_advisory import build_request
+        # Validate the complete bounded request before offering consent.
+        build_request(original,FIXTURE_MODEL_SHA256,budget["next_attempt"],
+                      now=self._clock(),approved=True,halted=self.is_set())
+        preview_id=uuid4().hex
+        self._advisory_preview=(preview_id,original,budget["next_attempt"],self._read()["revision"])
+        return dict(preview_id=preview_id,plan_id=plan_id,next_attempt=budget["next_attempt"],
+                    snapshot_sha256=original["snapshot_sha256"],synthetic_only=True,
+                    external_authority=False,dispatch_enabled=False)
+
+    def start_prepared_advisory_process(self,plan_id,preview_id,*,confirmed=None):
+        """Consume exactly one owner-held preview; no automatic retries."""
+        self._require_idle()
+        prepared=self._advisory_preview
+        self._advisory_preview=None
+        if (confirmed is not True or type(preview_id) is not str or prepared is None
+                or preview_id!=prepared[0] or plan_id!=prepared[1]["plan_id"]
+                or self._faulted or self.is_set() or self._read()["revision"]!=prepared[3]):
+            raise PermissionError("fresh explicit synthetic advisory consent required")
+        return self._start_advisory_process(plan_id,confirmed=True,prepared=prepared)
+
+    def start_advisory_process(self,plan_id,*,confirmed=None):
+        """Trusted headless diagnostic path; native controls must use a preview."""
+        self._require_idle()
+        self._advisory_preview=None
+        return self._start_advisory_process(plan_id,confirmed=confirmed,prepared=None)
+
+    def _start_advisory_process(self,plan_id,*,confirmed,prepared):
+        """Reserve one fixed synthetic advisory attempt, never actual inference."""
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Advisory unavailable while halted or faulted")
+        if confirmed is not True:
+            raise PermissionError("explicit local advisory confirmation required")
+        from .advisory_process import FIXTURE_MODEL_SHA256, DEFAULT_PARENT_MS, _supervise
+        self._advisory_active=True
+        armed=False
+        try:
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("previous advisory cleanup unconfirmed")
+            if self._council_pending() or self._advisory_pending():
+                raise PermissionError("outstanding reservation requires halted recovery")
+            original=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                     clock=self._clock).inspect(plan_id)
+            if self.is_set():
+                raise PermissionError("advisory halted before reservation")
+            expected_attempt=None
+            if prepared is not None:
+                from .advisory_current_scope import _compare_scope, _stamp
+                before=prepared[1]
+                _compare_scope(before,original,created=_stamp(before["evaluated_at"]),now=self._clock())
+                expected_attempt=prepared[2]
+            path=self._advisory_path()
+            with AdvisoryAttemptStore(path or self._directory/ADVISORY_DB,
+                                      existing_only=path is not None) as store:
+                reserved=store.reserve(original,FIXTURE_MODEL_SHA256,now=self._clock(),
+                                       approved=True,halted=self.is_set(),expected_attempt=expected_attempt)
+            self._advisory_reservation=(original,reserved)
+            # Commit BEFORE even submitting the worker. Crash between marker
+            # and launch is intentionally a conservative false-positive hold.
+            launch_marker.arm(self.events.db,reserved["ticket"]["reservation_id"])
+            armed=True
+            self._advisory_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix="advisory-fixture")
+            self._advisory_job=self._advisory_executor.submit(
+                _supervise,reserved["request"],halt_check=self.is_set,timeout_ms=DEFAULT_PARENT_MS)
+            return dict(reserved["ticket"],external_authority=False)
+        except BaseException:
+            self._advisory_fault(uncertain=armed)
+            if self._advisory_executor is not None:
+                self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+            self._advisory_executor=None
+            self._advisory_job=None
+            self._advisory_reservation=None
+            self._advisory_active=False
+            raise
+
+    def _collect_advisory_process(self,*,wait):
+        self._require_owner()
+        job=self._advisory_job
+        if job is None:
+            raise PermissionError("no reserved advisory process")
+        if not wait and not job.done():
+            return None
+        from .advisory_process import ProcessDenied
+        cleanup_confirmed=False
+        try:
+            original,reserved=self._advisory_reservation
+            token=reserved["ticket"]["reservation_id"]
+            try:
+                report=job.result()
+            except ProcessDenied as exc:
+                self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+                # Only these known supervisor exits establish either no launch
+                # or a successful finally-cleanup. Unknown and start/identity
+                # failures remain quarantined, even if the thread has joined.
+                if exc.reason in ("HALTED_OR_UNKNOWN","WORKER_DEADLINE",
+                                  "WORKER_EXIT_FAILED","RESULT_SIZE","INVALID_RESPONSE"):
+                    launch_marker.clear(self.events.db,token)
+                    cleanup_confirmed=True
+                raise
+            # A future becoming done is not enough: join its supervisor before
+            # checking fresh scope or passing the ledger's worker_drained flag.
+            self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+            launch_marker.clear(self.events.db,token)
+            cleanup_confirmed=True
+            if self.is_set():
+                raise PermissionError("advisory result withheld after halt")
+            current=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                    clock=self._clock).inspect(reserved["ticket"]["plan_id"])
+            if self.is_set():
+                raise PermissionError("advisory halted before completion")
+            path=self._advisory_path()
+            if path is None:
+                raise ValueError("advisory reservation database missing")
+            with AdvisoryAttemptStore(path,existing_only=True) as store:
+                result=store.complete_current(reserved["ticket"],reserved["request"],
+                    original,current,report["response"],now=self._clock(),
+                    approved=True,halted=self.is_set(),worker_drained=True)
+            if self.is_set():
+                raise PermissionError("advisory result withheld after halt")
+            return result
+        except BaseException:
+            self._advisory_fault(uncertain=not cleanup_confirmed)
+            raise
+        finally:
+            self._advisory_executor.shutdown(wait=True,cancel_futures=True)
+            self._advisory_executor=None
+            self._advisory_job=None
+            self._advisory_reservation=None
+            self._advisory_active=False
+
+    def poll_advisory_process(self):
+        """Nonblocking owner collection; None means still reserved."""
+        return self._collect_advisory_process(wait=False)
+
+    def drain_advisory_process(self):
+        """Halted shutdown collection, with no result publication or replay."""
+        self._require_owner()
+        if not self.is_set():
+            raise PermissionError("halt before draining advisory process")
+        if self._advisory_job is None:
+            return
+        try:
+            self._collect_advisory_process(wait=True)
+        except Exception:
+            if self._advisory_job is not None:
+                raise
+
     def council_action(self,action,plan_id):
         """Explicit owner-thread local action for an exact saved scenario.
 
@@ -146,7 +384,7 @@ class RuntimeGuard:
         self._require_idle()
         if self._faulted or self.is_set():
             raise PermissionError("Council unavailable while halted or faulted")
-        if type(action) is not str or action not in ("inspect","register","run_once","history"):
+        if type(action) is not str or action not in ("inspect","register","run_once","history","advisory_status"):
             raise ValueError("unsupported Council action")
         self._council_active=True
         try:
@@ -156,7 +394,19 @@ class RuntimeGuard:
             if action=="run_once" and self._council_pending():
                 self.set()
                 raise PermissionError("outstanding Council reservation requires halted recovery")
-            result=operations[action](plan_id)
+            if action=="advisory_status":
+                snapshot=adapter.inspect(plan_id)
+                path=self._advisory_path()
+                budget=dict(state="NOT_STARTED",attempts_used=0,next_attempt=1)
+                if path is not None:
+                    with AdvisoryAttemptStore(path,existing_only=True) as store:
+                        budget=store.preview_budget(plan_id,halted=self.is_set())
+                result=dict(budget,plan_id=snapshot["plan_id"],task_id=snapshot["task_id"],
+                    historical_only=True,current_decision=False,independently_verified=False,
+                    dispatch_enabled=False,external_authority=False,execution_eligible=False,
+                    commercial_facts_verified=False,release_eligible=False)
+            else:
+                result=operations[action](plan_id)
             if self.is_set():
                 raise PermissionError("Council result withheld after halt")
             return result
@@ -697,7 +947,10 @@ class RuntimeGuard:
             state="halted" if self.is_set() else previous["state"],
             reason="persistence_fault" if self._faulted else previous["reason"],
             council_recovered_count=self.council_recovered_count,
-            council_escalated_count=self.council_escalated_count,external_authority=False)
+            council_escalated_count=self.council_escalated_count,
+            advisory_recovered_count=self.advisory_recovered_count,
+            advisory_escalated_count=self.advisory_escalated_count,
+            advisory_cleanup_unconfirmed=launch_marker.pending(self.events.db),external_authority=False)
 
     def _persist(self,state,reason):
         now=self._clock()
@@ -729,6 +982,7 @@ class RuntimeGuard:
         # Cooperative cancellation must precede disk operations.
         self._stop.set()
         self._require_owner()
+        self._advisory_preview=None
         try:
             self._persist("halted","emergency")
         except BaseException:
@@ -744,6 +998,10 @@ class RuntimeGuard:
         try:
             if self._council_pending():
                 raise PermissionError("unfinished Council reservations require halted recovery")
+            if launch_marker.pending(self.events.db):
+                raise PermissionError("advisory process cleanup unconfirmed; quarantine retained")
+            if self._advisory_pending():
+                raise PermissionError("unfinished advisory reservations require halted recovery")
             self._persist("offline_ready","explicit_resume")
         except PermissionError:
             raise
@@ -756,8 +1014,8 @@ class RuntimeGuard:
         if self._closed:
             return
         self._require_owner()
-        if self._council_active or self._operator_active or self._browser_active:
-            raise PermissionError("Local Council, Operator or Scout action must drain before close")
+        if self._council_active or self._operator_active or self._browser_active or self._advisory_active:
+            raise PermissionError("Local Council, Operator, Scout or advisory action must drain before close")
         self._stop.set()
         try:
             self._persist("halted","shutdown")

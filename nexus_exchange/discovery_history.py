@@ -214,31 +214,46 @@ def _verify_archive(db,payload,cache):
 
 
 def read_history(db,*,now,limit=100,halted=None):
+    """Read receipt metadata and displayed archive references in one snapshot.
+
+    Validate every bounded receipt, even beyond the display limit. Only
+    displayed references are cross-checked; this is not a full archive audit.
+    """
     _permit(halted)
     now=_now(now)
     if type(limit) is not int or not 1<=limit<=100:
         raise ValueError("Invalid search history limit.")
-    raw=db.execute("""SELECT task_id,completed_at,payload,payload_sha256
-        FROM scout_search_receipts_v1 ORDER BY completed_at DESC,task_id LIMIT ?""",
-        (MAX_RECEIPTS+1,)).fetchall()
-    if len(raw)>MAX_RECEIPTS:
-        raise ValueError("Search history exceeds bound.")
+    if db.in_transaction:
+        raise ValueError("Search history requires an idle archive connection.")
     rows=[]
     cache={}
-    for task,stamp,encoded,digest in raw:
-        if type(encoded) is not str or len(encoded)>MAX_PAYLOAD or _digest(encoded)!=digest:
-            raise ValueError("Search receipt digest mismatch.")
-        value=_validate(json.loads(encoded))
-        if _json(value)!=encoded or (value["task_id"],value["completed_at"])!=(task,stamp):
-            raise ValueError("Search receipt identity mismatch.")
-        if len(rows)<limit:
-            rows.append(dict(value,receipt_sha256=digest,
-                             local_archive_consistent=_verify_archive(db,value,cache),
-                             historical_only=True,future_dated=_stamp(stamp)>now))
-    return dict(format="nexus-scout-search-history-v1",rows=rows,
-        returned=len(rows),total=len(raw),truncated=len(rows)<len(raw),
-        evaluated_at=now.isoformat(timespec="microseconds"),external_authority=False)
-
+    total=0
+    db.execute("BEGIN")
+    try:
+        cursor=db.execute("""SELECT task_id,completed_at,payload,payload_sha256
+            FROM scout_search_receipts_v1 ORDER BY completed_at DESC,task_id LIMIT ?""",
+            (MAX_RECEIPTS+1,))
+        try:
+            for task,stamp,encoded,digest in cursor:
+                total+=1
+                if total>MAX_RECEIPTS:
+                    raise ValueError("Search history exceeds bound.")
+                if type(encoded) is not str or len(encoded)>MAX_PAYLOAD or _digest(encoded)!=digest:
+                    raise ValueError("Search receipt digest mismatch.")
+                value=_validate(json.loads(encoded))
+                if _json(value)!=encoded or (value["task_id"],value["completed_at"])!=(task,stamp):
+                    raise ValueError("Search receipt identity mismatch.")
+                if len(rows)<limit:
+                    rows.append(dict(value,receipt_sha256=digest,
+                                     local_archive_consistent=_verify_archive(db,value,cache),
+                                     historical_only=True,future_dated=_stamp(stamp)>now))
+        finally:
+            cursor.close()
+        return dict(format="nexus-scout-search-history-v1",rows=rows,
+            returned=len(rows),total=total,truncated=len(rows)<total,
+            evaluated_at=now.isoformat(timespec="microseconds"),external_authority=False)
+    finally:
+        db.rollback()
 
 
 def review_receipt(db,task_id,expected_sha256,*,now,halted=None):

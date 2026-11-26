@@ -24,6 +24,46 @@ AUDIT_LABELS={"RECORDED":"Recorded historical audit",
               "INTERRUPTED_NO_REPORT":"Interrupted; no report"}
 
 
+def validate_advisory_completion(report, ticket):
+    """Bind a displayable historical review to the owner-held reservation.
+
+    Defense in depth after RuntimeGuard collection, not a new authority gate.
+    """
+    from .local_advisory import _digest
+    flags=("independently_verified","execution_eligible","external_authority","dispatch_enabled")
+    if (type(report) is not dict or type(ticket) is not dict
+            or ticket.get("external_authority") is not False
+            or report.get("plan_id")!=ticket.get("plan_id")
+            or report.get("state")!="REVIEWED"
+            or report.get("historical_only") is not True
+            or report.get("durable_retry_enforced") is not True
+            or report.get("next_attempt",False) is not None
+            or any(report.get(flag) is not False for flag in flags)):
+        raise ValueError("invalid advisory completion")
+    attempt=ticket.get("attempt")
+    rows=report.get("attempts")
+    review=report.get("review")
+    if (type(attempt) is not int or not 1<=attempt<=3
+            or type(report.get("attempts_used")) is not int
+            or report["attempts_used"]!=attempt
+            or type(rows) is not list or len(rows)!=attempt
+            or type(rows[-1]) is not dict or type(review) is not dict):
+        raise ValueError("invalid advisory completion attempt")
+    row=rows[-1]
+    if (type(row.get("attempt")) is not int or row["attempt"]!=attempt
+            or row.get("state")!="REVIEWED"
+            or any(type(ticket.get(key)) is not str or row.get(key)!=ticket[key]
+                   for key in ("reservation_id","request_sha256"))
+            or review.get("format")!="nexus-local-advice-review-v1"
+            or review.get("request_sha256")!=ticket["request_sha256"]
+            or review.get("response_sha256")!=row.get("response_sha256")
+            or review.get("model_sha256")!=row.get("model_sha256")
+            or any(review.get(flag) is not False for flag in flags)
+            or _digest(review)!=row.get("review_sha256")):
+        raise ValueError("advisory completion does not match reservation")
+    return report
+
+
 class CouncilWorkspace:
     """Fixed plan; only the supplied trusted runtime facade may operate."""
     def __init__(self,plan_id,*,action,blocked_check):
@@ -64,6 +104,55 @@ class CouncilWorkspace:
         result=build_packet(snapshot,level,halted=False)
         self._permit()
         return result, snapshot
+
+    def advisory_status(self):
+        """Historical attempt budget only; cannot launch or reserve a worker."""
+        result=self._call("advisory_status")
+        state=result.get("state")
+        used=result.get("attempts_used")
+        next_attempt=result.get("next_attempt")
+        if (result.get("plan_id")!=self.plan_id
+                or result.get("historical_only") is not True
+                or any(result.get(key) is not False for key in
+                       ("current_decision","independently_verified","dispatch_enabled"))
+                or type(state) is not str or type(used) is not int or not 0<=used<=3):
+            raise ValueError("invalid advisory budget")
+        valid=((state=="NOT_STARTED" and used==0 and type(next_attempt) is int and next_attempt==1)
+               or (state in ("INTERRUPTED","FAILED") and 1<=used<3
+                   and type(next_attempt) is int and next_attempt==used+1)
+               or (state in ("REVIEWED","RESERVED") and 1<=used<=3 and next_attempt is None)
+               or (state=="ESCALATED" and used==3 and next_attempt is None))
+        if not valid:
+            raise ValueError("invalid advisory budget transition")
+        return result
+
+    def launch_advisory(self, confirm):
+        """Explicit consent; desktop owns asynchronous collection."""
+        self._permit()
+        if not callable(confirm):
+            raise ValueError("explicit confirmation callback required")
+        preview=self._action("advisory_prepare",self.plan_id)
+        self._permit()
+        def hex_id(value,length):
+            return (type(value) is str and len(value)==length
+                    and all(ch in "0123456789abcdef" for ch in value))
+        if (type(preview) is not dict or set(preview)!={
+                "preview_id","plan_id","next_attempt","snapshot_sha256",
+                "synthetic_only","external_authority","dispatch_enabled"}
+                or preview["plan_id"]!=self.plan_id
+                or not hex_id(preview["preview_id"],32)
+                or not hex_id(preview["snapshot_sha256"],64)
+                or type(preview["next_attempt"]) is not int
+                or not 1<=preview["next_attempt"]<=3
+                or preview["synthetic_only"] is not True
+                or preview["external_authority"] is not False
+                or preview["dispatch_enabled"] is not False):
+            raise ValueError("invalid synthetic advisory preview")
+        if confirm(dict(preview)) is not True:
+            return None
+        self._permit()
+        return self._action("advisory_start",self.plan_id,
+                            preview_id=preview["preview_id"],confirmed=True)
 
     def register(self):
         return self._call("register")
@@ -140,7 +229,7 @@ def audit_text(entry):
 def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     """One saved-plan review window; history and current inspection stay separate."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, messagebox
     from tkinter.scrolledtext import ScrolledText
 
     workspace=CouncilWorkspace(plan_id,action=action,blocked_check=blocked_check)
@@ -229,6 +318,43 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
             error(exc)
             return None
+
+    def show_advisory_status():
+        nonlocal has_data
+        clear("Inspecting local advisory budget...")
+        try:
+            result=workspace.advisory_status()
+            next_attempt=result["next_attempt"]
+            write(current,"SYNTHETIC ADVISORY — HISTORICAL BUDGET ONLY\n"
+                  +f'Saved plan: {plan_id}\nState: {result["state"]}\n'
+                  +f'Attempts used: {result["attempts_used"]}/3\n'
+                  +("No remaining attempt" if next_attempt is None else f"Next possible attempt: {next_attempt}")
+                  +"\nNo model, worker launch, reservation, factual verification or commercial authority. "
+                   "This inspection is not consent to execute.")
+            status.configure(text="Advisory budget inspected; no attempt consumed.")
+            has_data=True
+            tabs.select(local)
+            return result
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+            return None
+
+    def launch_advisory():
+        clear("Preparing one synthetic advisory attempt...")
+        def confirm(preview):
+            return messagebox.askyesno("Run fixed offline fixture?",
+                f'Saved plan: {plan_id}\nAttempt {preview["next_attempt"]} of 3\n'
+                f'Snapshot: {preview["snapshot_sha256"]}\n\n'
+                "This consumes one saved-plan advisory attempt. A fixed synthetic child "
+                "will run, not an AI model. No network, outreach or commercial authority. "
+                "Use Emergency halt on the main window to stop it. Continue?",
+                parent=window,default="no")
+        try:
+            ticket=workspace.launch_advisory(confirm)
+            status.configure(text=("Cancelled — no attempt started." if ticket is None else
+                "Synthetic fixture started. See main window status and use Emergency halt if needed."))
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
 
     def register():
         nonlocal has_data
@@ -320,6 +446,8 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     context_controls=ttk.Frame(local)
     context_controls.pack(before=current, pady=4)
     ttk.Label(context_controls,text="Fresh local context:").pack(side="left",padx=4)
+    ttk.Button(context_controls,text="Advisory attempt status",command=show_advisory_status).pack(side="right",padx=3)
+    ttk.Button(controls,text="Run synthetic advisory",command=launch_advisory).pack(side="right",padx=4)
     for level in LEVELS:
         ttk.Button(context_controls,text=level.title(),command=lambda chosen=level:show_context(chosen)).pack(side="left",padx=3)
     tree.bind("<<TreeviewSelect>>",display)
@@ -329,6 +457,14 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     if smoke:
         if initial is None or initial["independently_verified_count"]!=0:
             raise RuntimeError("Council GUI initial inspection failed")
+        budget=show_advisory_status()
+        if (budget is None or budget["state"]!="NOT_STARTED" or budget["attempts_used"]!=0
+                or "HISTORICAL BUDGET ONLY" not in current.get("1.0","end")):
+            raise RuntimeError("Council GUI advisory budget inspection failed")
+        if workspace.launch_advisory(lambda preview: False) is not None:
+            raise RuntimeError("Declined synthetic advisory consent dispatched")
+        if workspace.advisory_status()["attempts_used"]!=0:
+            raise RuntimeError("Declined synthetic advisory consent consumed an attempt")
         for level in LEVELS:
             packet=show_context(level)
             if (packet is None or packet["level"]!=level or packet["external_authority"]
