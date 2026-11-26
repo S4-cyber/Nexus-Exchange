@@ -215,5 +215,50 @@ class AdvisoryAttemptTests(unittest.TestCase):
                     self.assertEqual(store.status(PLAN, halted=False)["state"], "RESERVED")
 
 
+    def test_ignored_insert_does_not_issue_phantom_reservation(self):
+        with AdvisoryAttemptStore(self.path) as store:
+            store.db.execute("CREATE TRIGGER ignore_insert BEFORE INSERT ON advisory_attempts_v1 "
+                             "BEGIN SELECT RAISE(IGNORE); END")
+            with self.assertRaises(ValueError):
+                self.reserve(store)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(store.preview_budget(PLAN, halted=False)["state"], "NOT_STARTED")
+            store.db.execute("DROP TRIGGER ignore_insert")
+            self.assertEqual(self.reserve(store)["ticket"]["attempt"], 1)
+
+    def test_ignored_or_altered_update_preserves_original_reservation(self):
+        with AdvisoryAttemptStore(self.path) as store:
+            ticket = self.reserve(store)["ticket"]
+            for statement in (
+                "CREATE TRIGGER faulty_update BEFORE UPDATE ON advisory_attempts_v1 "
+                "BEGIN SELECT RAISE(IGNORE); END",
+                "CREATE TRIGGER faulty_update AFTER UPDATE ON advisory_attempts_v1 "
+                "BEGIN UPDATE advisory_attempts_v1 SET payload='{}'; END",
+            ):
+                with self.subTest(statement=statement):
+                    store.db.execute(statement)
+                    with self.assertRaises(ValueError):
+                        self.fail(store, ticket)
+                    self.assertFalse(store.db.in_transaction)
+                    self.assertEqual(store.status(PLAN, halted=False)["state"], "RESERVED")
+                    store.db.execute("DROP TRIGGER faulty_update")
+            self.assertEqual(self.fail(store, ticket)["state"], "FAILED")
+
+    def test_duplicate_plan_rows_are_not_silently_selected(self):
+        with AdvisoryAttemptStore(self.path) as store:
+            self.reserve(store)
+            row = store.db.execute("SELECT plan_id,payload,digest FROM advisory_attempts_v1").fetchone()
+            store.db.execute("DROP TABLE advisory_attempts_v1")
+            store.db.execute("CREATE TABLE advisory_attempts_v1(plan_id TEXT,payload TEXT,digest TEXT)")
+            store.db.executemany("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (row, row))
+            with self.assertRaises(ValueError):
+                store.preview_budget(PLAN, halted=False)
+            self.assertFalse(store.db.in_transaction)
+            with self.assertRaises(ValueError):
+                store._runtime_recover_all(now=NOW)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(store.db.execute("SELECT COUNT(*) FROM advisory_attempts_v1").fetchone(), (2,))
+
+
 if __name__ == "__main__":
     unittest.main()

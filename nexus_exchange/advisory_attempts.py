@@ -151,15 +151,17 @@ class AdvisoryAttemptStore:
             raise
 
     def _read(self, plan):
-        row = self.db.execute("""SELECT
+        rows = self.db.execute("""SELECT
             CASE WHEN typeof(payload)='text'
                  AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
                  THEN CAST(payload AS BLOB) END,
             CASE WHEN typeof(digest)='text'
                  AND length(CAST(digest AS BLOB))=64
                  THEN CAST(digest AS BLOB) END
-            FROM advisory_attempts_v1 WHERE plan_id=?""", (MAX_PAYLOAD, _pin(plan))).fetchone()
-        return None if row is None else _decode(plan, *map(_ascii_field, row))
+            FROM advisory_attempts_v1 WHERE plan_id=? LIMIT 2""", (MAX_PAYLOAD, _pin(plan))).fetchall()
+        if len(rows) > 1:
+            raise ValueError("duplicate advisory ledger identity")
+        return None if not rows else _decode(plan, *map(_ascii_field, rows[0]))
 
     def _require(self, plan):
         record = self._read(plan)
@@ -172,9 +174,11 @@ class AdvisoryAttemptStore:
         payload, digest = _json(record), _digest(record)
         _decode(plan, payload, digest)
         if new:
-            self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
+            cursor = self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
         else:
-            self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+            cursor = self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+        if cursor.rowcount != 1 or self._read(plan) != record:
+            raise ValueError("advisory ledger write not persisted exactly")
 
     @staticmethod
     def _clock(record, now):
