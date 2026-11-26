@@ -117,3 +117,22 @@ https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718814999
 and https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718815057.
 New regression awaits hosted CI; local checkout DNS failed. Explicit native
 launch consent and OS containment remain separate work, not enabled here.
+
+## Prepared synthetic launch boundary (GRI-7)
+
+Native launch controls must use the owner-thread prepare/start pair rather than
+the trusted headless diagnostic entry point. Preparation validates the saved
+Council snapshot and bounded fixture request and returns one opaque in-memory
+preview identifier, plan and next attempt; no reservation or child is created.
+A newer preview, explicit halt, use or runtime restart invalidates it. The
+start path requires literal confirmation, exact plan and runtime revision,
+fresh scope comparison (five-minute maximum) and the expected attempt inside
+the ledger transaction. Scope drift fails closed before reservation. A preview
+is not authenticated user identity or permission for any real action. No GUI
+launch control, OS isolation or actual model inference is enabled here.
+
+Prior exact head 2f8373b5ca593ec86305442df75a3aeb25557e76 passed 919 tests on both Python versions
+(one skipped), source security and Windows packaging:
+https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115258
+https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115304.
+New full regression requires hosted CI; local GitHub DNS unavailable.

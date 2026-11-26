@@ -180,8 +180,11 @@ class AdvisoryAttemptStore:
             state = _state(record)
             return {key:state[key] for key in ("state", "attempts_used", "next_attempt")}
 
-    def reserve(self, snapshot, model, *, now, approved=None, halted=None):
+    def reserve(self, snapshot, model, *, now, approved=None, halted=None, expected_attempt=None):
         _permit(approved, halted)
+        if expected_attempt is not None and (type(expected_attempt) is not int
+                or not 1 <= expected_attempt <= MAX_ATTEMPTS):
+            raise ValueError("invalid expected advisory attempt")
         now = _utc(now)
         if type(snapshot) is not dict:
             raise ValueError("validated Council snapshot required")
@@ -198,6 +201,8 @@ class AdvisoryAttemptStore:
                 if _state(record)["next_attempt"] is None:
                     raise PermissionError("advisory attempt unavailable")
             n = len(record["attempts"]) + 1
+            if expected_attempt is not None and n != expected_attempt:
+                raise PermissionError("advisory attempt changed since preview")
             request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted)
             row = dict(attempt=n, request_sha256=request["request_sha256"], snapshot_sha256=request["snapshot_sha256"],
                        model_sha256=request["model_sha256"], reserved_at=request["created_at"], state="RESERVED",

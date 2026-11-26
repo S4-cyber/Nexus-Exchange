@@ -47,7 +47,12 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
             self.assertEqual((budget["state"],budget["attempts_used"],budget["next_attempt"]),
                              ("NOT_STARTED",0,1))
             self.assertFalse((self.directory/DB_NAME).exists())
-            ticket=guard.start_advisory_process(self.key,confirmed=True)
+            preview=guard.prepare_advisory_process(self.key)
+            self.assertEqual(preview["next_attempt"],1)
+            self.assertFalse(preview["external_authority"])
+            self.assertFalse((self.directory/DB_NAME).exists())
+            self.now+=timedelta(microseconds=100)
+            ticket=guard.start_prepared_advisory_process(self.key,preview["preview_id"],confirmed=True)
             try:
                 self.assertEqual(ticket["attempt"],1)
                 self.assertEqual(self.state()["state"],"RESERVED")
@@ -157,3 +162,46 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 if guard.advisory_process_pending():
                     guard.set()
                     guard.drain_advisory_process()
+
+    def test_preview_requires_fresh_explicit_consent_and_is_single_use(self):
+        with self.guard() as guard:
+            guard.resume()
+            preview=guard.prepare_advisory_process(self.key)
+            for confirmed in (False,True):
+                with self.assertRaises(PermissionError):
+                    guard.start_prepared_advisory_process(self.key,preview["preview_id"],confirmed=confirmed)
+            self.assertFalse((self.directory/DB_NAME).exists())
+            old=guard.prepare_advisory_process(self.key)
+            replacement=guard.prepare_advisory_process(self.key)
+            self.assertNotEqual(old["preview_id"],replacement["preview_id"])
+            with self.assertRaises(PermissionError):
+                guard.start_prepared_advisory_process(self.key,old["preview_id"],confirmed=True)
+            preview=guard.prepare_advisory_process(self.key)
+            guard.set()
+            guard.resume()
+            with self.assertRaises(PermissionError):
+                guard.start_prepared_advisory_process(self.key,preview["preview_id"],confirmed=True)
+            self.assertFalse((self.directory/DB_NAME).exists())
+            self.assertFalse(guard.advisory_process_pending())
+
+    def test_preview_scope_change_blocks_before_reservation(self):
+        with self.guard() as guard:
+            guard.resume()
+            preview=guard.prepare_advisory_process(self.key)
+            self.fixture.attach_all()
+            with self.assertRaises(ValueError):
+                guard.start_prepared_advisory_process(self.key,preview["preview_id"],confirmed=True)
+            self.assertTrue(guard.is_set())
+            self.assertFalse((self.directory/DB_NAME).exists())
+            self.assertFalse(guard.advisory_process_pending())
+            self.assertFalse(guard.status()["advisory_cleanup_unconfirmed"])
+
+    def test_expired_preview_blocks_before_reservation(self):
+        with self.guard() as guard:
+            guard.resume()
+            preview=guard.prepare_advisory_process(self.key)
+            self.now+=timedelta(minutes=6)
+            with self.assertRaises(ValueError):
+                guard.start_prepared_advisory_process(self.key,preview["preview_id"],confirmed=True)
+            self.assertFalse((self.directory/DB_NAME).exists())
+            self.assertFalse(guard.advisory_process_pending())

@@ -624,3 +624,24 @@ No new services, model execution, commercial actions, spend or Operative changes
   Operative risk gate was read-only reference; no source copied. Next:
   consented fixed-fixture control, independent quarantine/containment review,
   Scout #102 chronology reconciliation. No new external authority or spending.
+
+## 2026-11-25 — GRI-7 prepared synthetic launch boundary candidate
+- E15–E18/E31/E34/E38, H01/H06/H07: owner-held one-use preview binds plan, stable
+  Council scope, runtime revision and expected next attempt before a fixed
+  synthetic diagnostic. Literal confirmation, halt invalidation, scope expiry
+  and atomic ledger attempt check; no GUI launch or actual inference.
+  Three new integration test methods and existing real-child path exercise
+  prepared launch; full local checkout DNS unavailable, combined hosted CI
+  pending. Formal main acceptance 0/42.
+- Exact prior head 2f8373b5ca593ec86305442df75a3aeb25557e76: Python 3.10/3.13 each ran 919 tests
+  (one skipped), [45726115258](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115258).
+  Windows [45726115304](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115304)
+  passed source/GUI/fixture/Genesis/security and packaged self-test, artifact
+  15074372533. PR #111 has no observed independent reviews.
+- Read-only Operative risk gate pinned 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11,
+  blob ab737fdd8fae557ef456e3240d6580fc35d9e459; rechecked agency-agents MIT
+  license and handoff template at 8ae6164602c95ca78828b148b9052460ee426885
+  (bounded confirmation and evidence separation). No upstream code copied,
+  no dependency installed or external resource provisioned. Next: native
+  confirmation controls with root-owned nonblocking polling and inline
+  historical reporting; independent containment and acceptance review.

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, get_ident
+from uuid import uuid4
 import os
 
 from .event_store import EventStore
@@ -58,6 +59,7 @@ class RuntimeGuard:
         self._advisory_job=None
         self._advisory_executor=None
         self._advisory_reservation=None
+        self._advisory_preview=None
         self.council_recovered_count=0
         self.council_escalated_count=0
         self.advisory_recovered_count=0
@@ -207,7 +209,52 @@ class RuntimeGuard:
         if uncertain:
             self._faulted=True
 
+    def prepare_advisory_process(self,plan_id):
+        """Owner-only, one-use in-memory consent preview; no ledger or child created."""
+        self._require_idle()
+        self._advisory_preview=None
+        if self._faulted or self.is_set():
+            raise PermissionError("Advisory unavailable while halted or faulted")
+        if launch_marker.pending(self.events.db) or self._council_pending() or self._advisory_pending():
+            raise PermissionError("outstanding reservation requires halted recovery")
+        original=ScenarioCouncil(self._directory,halt_check=self.is_set,
+                                 clock=self._clock).inspect(plan_id)
+        path=self._advisory_path()
+        budget=dict(state="NOT_STARTED",attempts_used=0,next_attempt=1)
+        if path is not None:
+            with AdvisoryAttemptStore(path,existing_only=True) as store:
+                budget=store.preview_budget(plan_id,halted=self.is_set())
+        if budget["next_attempt"] is None or self.is_set():
+            raise PermissionError("advisory attempt unavailable")
+        from .advisory_process import FIXTURE_MODEL_SHA256
+        from .local_advisory import build_request
+        # Validate the complete bounded request before offering consent.
+        build_request(original,FIXTURE_MODEL_SHA256,budget["next_attempt"],
+                      now=self._clock(),approved=True,halted=self.is_set())
+        preview_id=uuid4().hex
+        self._advisory_preview=(preview_id,original,budget["next_attempt"],self._read()["revision"])
+        return dict(preview_id=preview_id,plan_id=plan_id,next_attempt=budget["next_attempt"],
+                    snapshot_sha256=original["snapshot_sha256"],synthetic_only=True,
+                    external_authority=False,dispatch_enabled=False)
+
+    def start_prepared_advisory_process(self,plan_id,preview_id,*,confirmed=None):
+        """Consume exactly one owner-held preview; no automatic retries."""
+        self._require_idle()
+        prepared=self._advisory_preview
+        self._advisory_preview=None
+        if (confirmed is not True or type(preview_id) is not str or prepared is None
+                or preview_id!=prepared[0] or plan_id!=prepared[1]["plan_id"]
+                or self._faulted or self.is_set() or self._read()["revision"]!=prepared[3]):
+            raise PermissionError("fresh explicit synthetic advisory consent required")
+        return self._start_advisory_process(plan_id,confirmed=True,prepared=prepared)
+
     def start_advisory_process(self,plan_id,*,confirmed=None):
+        """Trusted headless diagnostic path; native controls must use a preview."""
+        self._require_idle()
+        self._advisory_preview=None
+        return self._start_advisory_process(plan_id,confirmed=confirmed,prepared=None)
+
+    def _start_advisory_process(self,plan_id,*,confirmed,prepared):
         """Reserve one fixed synthetic advisory attempt, never actual inference."""
         self._require_idle()
         if self._faulted or self.is_set():
@@ -226,11 +273,17 @@ class RuntimeGuard:
                                      clock=self._clock).inspect(plan_id)
             if self.is_set():
                 raise PermissionError("advisory halted before reservation")
+            expected_attempt=None
+            if prepared is not None:
+                from .advisory_current_scope import _compare_scope, _stamp
+                before=prepared[1]
+                _compare_scope(before,original,created=_stamp(before["evaluated_at"]),now=self._clock())
+                expected_attempt=prepared[2]
             path=self._advisory_path()
             with AdvisoryAttemptStore(path or self._directory/ADVISORY_DB,
                                       existing_only=path is not None) as store:
                 reserved=store.reserve(original,FIXTURE_MODEL_SHA256,now=self._clock(),
-                                       approved=True,halted=self.is_set())
+                                       approved=True,halted=self.is_set(),expected_attempt=expected_attempt)
             self._advisory_reservation=(original,reserved)
             # Commit BEFORE even submitting the worker. Crash between marker
             # and launch is intentionally a conservative false-positive hold.
@@ -929,6 +982,7 @@ class RuntimeGuard:
         # Cooperative cancellation must precede disk operations.
         self._stop.set()
         self._require_owner()
+        self._advisory_preview=None
         try:
             self._persist("halted","emergency")
         except BaseException:
