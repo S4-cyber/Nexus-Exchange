@@ -160,3 +160,36 @@ class DurableCorrespondenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.append(self.draft,self.recipient,**args)
             self.assertEqual(store.get(self.draft,self.recipient,halted=False),opened)
+
+
+    def test_storage_byte_bounds_and_types_before_digest(self):
+        from nexus_exchange import correspondence_thread as module
+        with module.ThreadStore(self.path) as store:
+            opened = store.open(self.draft, self.recipient, now=NOW, confirmed=True, halted=False)
+            original = store.db.execute("SELECT * FROM operator_threads_v1").fetchone()
+            self.assertEqual(store.get(self.draft, self.recipient, halted=False), opened)
+            cases = [(column, value) for column in ("thread_id", "head_sha256", "digest")
+                     for value in ("x"*65, b"x"*64)]
+            cases += [("payload", value) for value in (
+                "x"*(module.MAX_THREAD_PAYLOAD+1),
+                "é"*(module.MAX_THREAD_PAYLOAD//2+1),
+                "{}\x00"+"x"*module.MAX_THREAD_PAYLOAD, b"{}", "é")]
+            for column, value in cases:
+                with self.subTest(column=column, value_type=type(value), size=len(value)):
+                    store.db.execute("DELETE FROM operator_threads_v1")
+                    store.db.execute("INSERT INTO operator_threads_v1 VALUES (?,?,?,?,?,?)", original)
+                    store.db.execute("UPDATE operator_threads_v1 SET "+column+"=?", (value,))
+                    with patch.object(module, "_digest", wraps=module._digest) as digest:
+                        with self.assertRaisesRegex(ValueError, "^thread storage integrity mismatch$"):
+                            store.get(self.draft, self.recipient, halted=False)
+                        digest.assert_not_called()
+                    with self.assertRaisesRegex(ValueError, "^thread storage integrity mismatch$"):
+                        store.open(self.draft, self.recipient, now=NOW, confirmed=True, halted=False)
+                    self.assertFalse(store.db.in_transaction)
+                    with self.assertRaisesRegex(ValueError, "^thread storage integrity mismatch$"):
+                        store.append(self.draft, self.recipient, kind="SIMULATED_REPLY",
+                            evidence_reference=REFERENCE, now=NOW, expected_head=opened["head_sha256"],
+                            confirmed=True, halted=False)
+                    self.assertFalse(store.db.in_transaction)
+                    self.assertEqual(store.db.execute("SELECT "+column+" FROM operator_threads_v1").fetchone()[0], value)
+
