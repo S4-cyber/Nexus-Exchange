@@ -201,6 +201,94 @@ class DigitalDeliverableTests(unittest.TestCase):
             read.assert_not_called()
         self.assertFalse(self.guard._operator_active)
 
+    def test_scoped_file_preview_rechecks_between_selected_inputs(self):
+        from nexus_exchange.operator_capabilities import RECONCILE_ID
+        from nexus_exchange.deliverable_files import read_selected_csv
+        from nexus_exchange.digital_deliverable import _input
+        args=self.scoped_file_args(LEFT,spec(LEFT,expected_rows=3,
+            right_input_sha256=sha256(RIGHT).hexdigest(),right_expected_rows=3),RECONCILE_ID,right_raw=RIGHT)
+        def expire_after_first(*a,**kw):
+            result=read_selected_csv(*a,**kw)
+            self.now+=timedelta(days=2)
+            return result
+        with patch("nexus_exchange.deliverable_files.read_selected_csv",side_effect=expire_after_first) as read, \
+             patch("nexus_exchange.digital_deliverable._input",wraps=_input) as parse:
+            with self.assertRaises(ValueError):
+                self.guard.preview_scoped_service_files(self.key,**args)
+            self.assertEqual(read.call_count,1)
+            self.assertEqual(read.call_args.args[0],args["source_path"])
+            parse.assert_not_called()
+        self.assertFalse(self.guard._operator_active)
+        self.assertFalse((self.directory/"operator-obligations.sqlite3").exists())
+
+    def test_scoped_file_preview_rechecks_before_parsing_selected_bytes(self):
+        from nexus_exchange.operator_capabilities import CSV_ID, RECONCILE_ID
+        from nexus_exchange.deliverable_files import read_selected_csv
+        from nexus_exchange.digital_deliverable import _input
+        for raw,parameters,capability,right,read_count in (
+                (RAW,spec(),CSV_ID,None,1),
+                (LEFT,spec(LEFT,expected_rows=3,right_input_sha256=sha256(RIGHT).hexdigest(),
+                           right_expected_rows=3),RECONCILE_ID,RIGHT,2)):
+            with self.subTest(capability=capability):
+                self.now=NOW
+                args=self.scoped_file_args(raw,parameters,capability,right_raw=right)
+                calls=[]
+                def expire_after_last(*a,**kw):
+                    result=read_selected_csv(*a,**kw)
+                    calls.append(a[0])
+                    if len(calls)==read_count:
+                        self.now+=timedelta(days=2)
+                    return result
+                with patch("nexus_exchange.deliverable_files.read_selected_csv",side_effect=expire_after_last), \
+                     patch("nexus_exchange.digital_deliverable._input",wraps=_input) as parse:
+                    with self.assertRaises(ValueError):
+                        self.guard.preview_scoped_service_files(self.key,**args)
+                    self.assertEqual(len(calls),read_count)
+                    parse.assert_not_called()
+                self.assertFalse(self.guard._operator_active)
+
+    def test_scoped_terminal_review_validates_full_envelope_not_only_scope(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.ranking_workspace import RankingWorkspace
+        from nexus_exchange.service_handoff import review_scope
+        args=self.scoped_args(RAW,spec(),CSV_ID)
+        original=RankingWorkspace.review_requirements
+        for case in ("invalid_digest","false_zero_capital_claim"):
+            with self.subTest(case=case):
+                reviews=[]
+                def corrupt_terminal(workspace,*a,**kw):
+                    review=original(workspace,*a,**kw)
+                    reviews.append(review)
+                    if len(reviews)==2:
+                        if case=="invalid_digest":
+                            review["review_sha256"]="0"*64
+                        else:
+                            review["zero_capital_verified"]=True
+                            review["review_sha256"]=_digest(_json({k:v for k,v in review.items()
+                                if k!="review_sha256"}))
+                        self.assertEqual(review_scope(review),args["expected_scope"])
+                    return review
+                with patch.object(RankingWorkspace,"review_requirements",autospec=True,side_effect=corrupt_terminal):
+                    with self.assertRaises(ValueError):
+                        self.guard.produce_scoped_service_sample(self.key,**args)
+                self.assertEqual(len(reviews),2)
+                self.assertFalse(self.guard._operator_active)
+        self.assertFalse((self.directory/"operator-obligations.sqlite3").exists())
+
+    def test_scoped_file_preview_accepts_clock_progress_without_scope_change(self):
+        from nexus_exchange.operator_capabilities import CSV_ID
+        from nexus_exchange.deliverable_files import read_selected_csv
+        args=self.scoped_file_args(RAW,spec(),CSV_ID)
+        def advance(*a,**kw):
+            result=read_selected_csv(*a,**kw)
+            self.now+=timedelta(seconds=1)
+            return result
+        with patch("nexus_exchange.deliverable_files.read_selected_csv",side_effect=advance):
+            result=self.guard.preview_scoped_service_files(self.key,**args)
+        self.assertEqual(result["sample"]["artifact"],EXPECTED)
+        self.assertEqual(result["review_scope_sha256"],args["expected_scope"])
+        self.assertIs(result["external_authority"],False)
+
     def test_scoped_file_preview_rejects_changed_input_and_can_retry(self):
         from nexus_exchange.operator_capabilities import CSV_ID
         args=self.scoped_file_args(RAW,spec(),CSV_ID)

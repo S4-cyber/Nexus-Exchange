@@ -586,11 +586,19 @@ class RuntimeGuard:
     def _scoped_service_sample(self,plan_id,context,requirements,expected_scope,
                                *,raw=None,right_raw=None,file_paths=None):
         from .ranking_workspace import RankingWorkspace
-        from .service_handoff import review_scope, checked_review_route, checked_sample_inputs
+        from .service_handoff import checked_review_route, checked_sample_inputs
         from .digital_deliverable import build_contract, _input, _right_input, DeliverableError
         workspace=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock)
         snapshot=self._csv_snapshot(plan_id)
         review=workspace.review_requirements(context,requirements)
+
+        def recheck_review():
+            current=workspace.review_requirements(context,requirements)
+            checked_review_route(current,expected_scope,snapshot["context"])
+            if self.is_set():
+                raise PermissionError("deliverable withheld after halt")
+            return current
+
         if file_paths is not None:
             from .deliverable_files import read_selected_csv
             source,operation=checked_review_route(review,expected_scope,snapshot["context"])
@@ -601,8 +609,12 @@ class RuntimeGuard:
             build_contract(snapshot,review["requirements_assessment"]["declared_input"]["specification"],
                 halted=self.is_set(),source_format=source,operation=operation)
             raw=read_selected_csv(source_path,halted=self.is_set(),halt_check=self.is_set,source_format=source)
+            # Revalidate after each read: never open the second input or parse
+            # selected bytes against an already superseded or held review.
+            review=recheck_review()
             if right_path is not None:
                 right_raw=read_selected_csv(right_path,halted=self.is_set(),halt_check=self.is_set)
+                review=recheck_review()
         inputs=checked_sample_inputs(review,expected_scope,snapshot["context"],raw,right_raw=right_raw)
         bound=inputs.pop("max_cell_chars")
         contract=build_contract(snapshot,halted=self.is_set(),**inputs)
@@ -615,11 +627,9 @@ class RuntimeGuard:
                 if any(len(value)>bound for value in values):
                     raise DeliverableError("DECLARED_CELL_BOUND_EXCEEDED")
         result=self._csv_scoped(plan_id,raw,snapshot=snapshot,right_raw=right_raw,**inputs)
-        current=workspace.review_requirements(context,requirements)
-        if review_scope(current)!=expected_scope:
-            raise ValueError("service review changed during sample")
-        if self.is_set():
-            raise PermissionError("deliverable withheld after halt")
+        # A stable historical scope alone does not validate the full current
+        # envelope; reject invalid digests or verification claims at return.
+        recheck_review()
         return dict(review_scope_sha256=expected_scope,sample=result,external_authority=False)
 
     def csv_file_action(self,action,plan_id,*,confirmed=None,**inputs):
