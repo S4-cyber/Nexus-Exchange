@@ -89,3 +89,46 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),1)
             self.assertEqual(s.read()[-1]["state"],"interrupted")
             self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),0)
+
+    def test_corrupt_payload_rejected_on_all_paths(self):
+        import json
+        from datetime import datetime, timezone
+        valid=json.dumps(event("queued"))
+        cases=(valid.encode(), valid+" "*8192, valid+"\x00", valid.replace('"queued"','"running"'),
+               valid.replace('"queued"','"running", "state": "queued"'), "["*1500+"]"*1500)
+        for raw in cases:
+            with self.subTest(case=type(raw).__name__, size=len(raw)):
+                s=EventStore(":memory:")
+                try:
+                    s.db.execute("INSERT INTO events(payload) VALUES (?)",(raw,))
+                    for operation in (s.read, lambda:s.append(event("running")),
+                                      lambda:s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc))):
+                        with self.assertRaises(ValueError): operation()
+                        self.assertFalse(s.db.in_transaction)
+                        self.assertEqual(s.db.execute("SELECT count(*) FROM events").fetchone()[0],1)
+                finally: s.close()
+
+    def test_invalid_utf8_rejected(self):
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        s.db.execute("INSERT INTO events(payload) VALUES (CAST(X'FF' AS TEXT))")
+        with self.assertRaises(ValueError): s.read()
+
+    def test_read_enforces_count_cap(self):
+        from unittest.mock import patch
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        s.append(event("queued"))
+        s.append(event("running"))
+        with patch("nexus_exchange.event_store.MAX_RECOVERY_EVENTS",1):
+            with self.assertRaisesRegex(ValueError,"journal recovery capacity"): s.read()
+
+    def test_maximum_unicode_event_survives_recovery(self):
+        from datetime import datetime, timezone
+        s=EventStore(":memory:")
+        self.addCleanup(s.close)
+        raw=dict(event("queued"), task_id="🌱"*128,target="🌳"*256)
+        s.append(raw)
+        self.assertEqual(s.read(),(raw,))
+        self.assertEqual(s.recover_interrupted(now=datetime(2026,1,2,tzinfo=timezone.utc)),1)
+        self.assertEqual(s.read()[-1]["target"],raw["target"])
