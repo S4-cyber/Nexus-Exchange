@@ -24,6 +24,46 @@ AUDIT_LABELS={"RECORDED":"Recorded historical audit",
               "INTERRUPTED_NO_REPORT":"Interrupted; no report"}
 
 
+def validate_advisory_completion(report, ticket):
+    """Bind a displayable historical review to the owner-held reservation.
+
+    Defense in depth after RuntimeGuard collection, not a new authority gate.
+    """
+    from .local_advisory import _digest
+    flags=("independently_verified","execution_eligible","external_authority","dispatch_enabled")
+    if (type(report) is not dict or type(ticket) is not dict
+            or ticket.get("external_authority") is not False
+            or report.get("plan_id")!=ticket.get("plan_id")
+            or report.get("state")!="REVIEWED"
+            or report.get("historical_only") is not True
+            or report.get("durable_retry_enforced") is not True
+            or report.get("next_attempt",False) is not None
+            or any(report.get(flag) is not False for flag in flags)):
+        raise ValueError("invalid advisory completion")
+    attempt=ticket.get("attempt")
+    rows=report.get("attempts")
+    review=report.get("review")
+    if (type(attempt) is not int or not 1<=attempt<=3
+            or type(report.get("attempts_used")) is not int
+            or report["attempts_used"]!=attempt
+            or type(rows) is not list or len(rows)!=attempt
+            or type(rows[-1]) is not dict or type(review) is not dict):
+        raise ValueError("invalid advisory completion attempt")
+    row=rows[-1]
+    if (type(row.get("attempt")) is not int or row["attempt"]!=attempt
+            or row.get("state")!="REVIEWED"
+            or any(type(ticket.get(key)) is not str or row.get(key)!=ticket[key]
+                   for key in ("reservation_id","request_sha256"))
+            or review.get("format")!="nexus-local-advice-review-v1"
+            or review.get("request_sha256")!=ticket["request_sha256"]
+            or review.get("response_sha256")!=row.get("response_sha256")
+            or review.get("model_sha256")!=row.get("model_sha256")
+            or any(review.get(flag) is not False for flag in flags)
+            or _digest(review)!=row.get("review_sha256")):
+        raise ValueError("advisory completion does not match reservation")
+    return report
+
+
 class CouncilWorkspace:
     """Fixed plan; only the supplied trusted runtime facade may operate."""
     def __init__(self,plan_id,*,action,blocked_check):

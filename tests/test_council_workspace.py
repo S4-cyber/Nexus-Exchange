@@ -9,7 +9,8 @@ from nexus_exchange.checklist_store import context_for
 from nexus_exchange.owner_profile import ProfileStore
 from nexus_exchange.scenario_evidence import ScenarioEvidenceStore
 from nexus_exchange.runtime_guard import RuntimeGuard
-from nexus_exchange.council_workspace import CouncilWorkspace, snapshot_text, ledger_text, audit_text
+from nexus_exchange.council_workspace import (CouncilWorkspace, snapshot_text, ledger_text, audit_text,
+    validate_advisory_completion)
 from test_cash_feasibility import scenario
 from test_schedule_feasibility import plan
 from test_owner_profile import profile
@@ -236,3 +237,33 @@ class CouncilWorkspaceTests(unittest.TestCase):
         self.assertEqual(workspace.launch_advisory(lambda value:True),{"attempt":1})
         action.assert_called_with("advisory_start",self.key,
                                   preview_id=preview["preview_id"],confirmed=True)
+
+
+    def test_advisory_completion_display_is_bound_to_reservation(self):
+        from nexus_exchange.local_advisory import _digest
+        from copy import deepcopy
+        flags=dict(independently_verified=False,execution_eligible=False,
+                   external_authority=False,dispatch_enabled=False)
+        ticket=dict(plan_id=self.key,attempt=1,reservation_id="a"*64,
+                    request_sha256="b"*64,external_authority=False)
+        review=dict(format="nexus-local-advice-review-v1",request_sha256="b"*64,
+                    response_sha256="c"*64,model_sha256="d"*64,**flags)
+        row=dict(attempt=1,state="REVIEWED",reservation_id="a"*64,
+                 request_sha256="b"*64,response_sha256="c"*64,
+                 model_sha256="d"*64,review_sha256=_digest(review))
+        report=dict(plan_id=self.key,state="REVIEWED",historical_only=True,
+                    durable_retry_enforced=True,next_attempt=None,attempts_used=1,
+                    attempts=[row],review=review,**flags)
+        self.assertIs(validate_advisory_completion(report,ticket),report)
+        for target,key,value in (
+                ("report","plan_id","e"*64),("report","attempts_used",True),
+                ("report","next_attempt",2),("report","external_authority",True),
+                ("row","reservation_id","f"*64),("row","review_sha256","f"*64),
+                ("review","dispatch_enabled",True),("review","response_sha256","f"*64)):
+            with self.subTest(target=target,key=key):
+                changed=deepcopy(report)
+                selected={"report":changed,"row":changed["attempts"][0],
+                          "review":changed["review"]}[target]
+                selected[key]=value
+                with self.assertRaises(ValueError):
+                    validate_advisory_completion(changed,ticket)

@@ -154,3 +154,20 @@ Prior exact head 5f836cd2f84f6f08b013c988f2eac42c7bd3b8ed passed 922 tests per P
 source security and Windows build: https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45732599323
 and https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45732599389.
 Local clone DNS remains unavailable; new complete regression is hosted only.
+
+
+## Exact-reservation completion display and native smoke (GRI-7)
+
+The root callback carries its original reservation ticket through polling.
+Before rendering a historical completion it checks the plan, terminal attempt,
+reservation and request identity, response/model and review digest, and denies
+any nonliteral false authority/verification/dispatch flag. This is display
+defense in depth, not independent source verification or OS containment.
+A separate owned saved plan now exercises normal desktop collection, terminal
+budget state, disabled export, re-enabled offline controls, output removal on
+halt and explicit resume before the existing interrupted-close regression.
+Prior head 285c968fcc9396fa47d89771ad182f84fbed2485 passed 925 tests (one skip) on each Python 3.10/3.13 and Windows source/frozen smoke:
+https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45740121846
+and https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45740121869.
+New code and tests are one batch; local checkout DNS failed, new CI pending.
+No model inference, live action or release acceptance.

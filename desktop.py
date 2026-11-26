@@ -371,7 +371,7 @@ def main(*, data_directory=None, gui_smoke=False):
             raise PermissionError("Advisory halted or desktop worker active")
         ticket=stop.start_prepared_advisory_process(plan_id,preview_id,confirmed=confirmed)
         # Root owns collection even if the initiating Council window closes.
-        root.after(25,advisory_poll)
+        root.after(25,advisory_poll,dict(ticket))
         scenario_report=None
         exporter.configure(state="disabled")
         for button in (launch,importer,simulator,*diagnostic_buttons):
@@ -384,16 +384,15 @@ def main(*, data_directory=None, gui_smoke=False):
         halt_status.configure(text="Synthetic advisory running — Emergency halt available.")
         return ticket
 
-    def advisory_poll():
+    def advisory_poll(ticket):
         try:
             report=stop.poll_advisory_process()
             if report is None:
-                root.after(25,advisory_poll)
+                root.after(25,advisory_poll,ticket)
                 return
             if not stop.is_set():
-                if (report.get("state")!="REVIEWED" or report.get("external_authority") is not False
-                        or report["review"].get("external_authority") is not False):
-                    raise ValueError("invalid advisory completion")
+                from nexus_exchange.council_workspace import validate_advisory_completion
+                validate_advisory_completion(report,ticket)
                 show_result_panel()
                 output.configure(state="normal")
                 output.delete("1.0","end")
@@ -2234,6 +2233,35 @@ def main(*, data_directory=None, gui_smoke=False):
         # Start an explicitly approved synthetic reservation immediately before
         # closing. Even an already-finished child is busy until owner collection.
         from nexus_exchange.council_workspace import CouncilWorkspace
+        # Separate saved plan: exercise the root's normal completion callback
+        # before the original plan's interrupted shutdown path.
+        completed_workspace=CouncilWorkspace(operator_key,action=council_action,blocked_check=council_blocked)
+        completed_ticket=completed_workspace.launch_advisory(lambda preview: True)
+        try:
+            if completed_ticket["attempt"]!=1 or not busy():
+                raise RuntimeError("Native advisory did not reserve a first attempt")
+            deadline=monotonic()+20
+            while busy():
+                if monotonic()>=deadline:
+                    raise RuntimeError("Native advisory owner collection timed out")
+                root.update()
+                sleep(0.01)
+            displayed=output.get("1.0","end")
+            if (stop.is_set() or "SYNTHETIC ADVISORY — historical local fixture only" not in displayed
+                    or operator_key not in displayed or not exporter.instate(["disabled"])
+                    or launch.instate(["disabled"])
+                    or completed_workspace.advisory_status()["state"]!="REVIEWED"
+                    or completed_workspace.advisory_status()["next_attempt"] is not None):
+                raise RuntimeError("Native advisory completion was not safely displayed")
+            halt()
+            if operator_key in output.get("1.0","end") or not stop.is_set():
+                raise RuntimeError("Halt did not withhold historical advisory output")
+            resume()
+            if stop.is_set():
+                raise RuntimeError("Reviewed advisory unexpectedly blocked explicit resume")
+        except BaseException:
+            close()
+            raise
         shutdown_workspace=CouncilWorkspace(key,action=council_action,blocked_check=council_blocked)
         shutdown_ticket=shutdown_workspace.launch_advisory(lambda preview: True)
         try:
