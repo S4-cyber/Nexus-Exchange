@@ -933,12 +933,26 @@ class RuntimeGuard:
 
     def _read(self):
         rows=self.events.db.execute(
-            "SELECT slot,state,reason,revision,changed_at FROM runtime_guard_v1").fetchall()
+            """SELECT CASE WHEN typeof(slot)='integer' AND slot=1 THEN 1 END,
+            CASE WHEN typeof(state)='text' AND length(CAST(state AS BLOB)) BETWEEN 1 AND 13
+                 THEN CAST(state AS BLOB) END,
+            CASE WHEN typeof(reason)='text' AND length(CAST(reason AS BLOB)) BETWEEN 1 AND 15
+                 THEN CAST(reason AS BLOB) END,
+            CASE WHEN typeof(revision)='integer' THEN revision END,
+            CASE WHEN typeof(changed_at)='text' AND length(CAST(changed_at AS BLOB))=32
+                 THEN CAST(changed_at AS BLOB) END
+            FROM runtime_guard_v1 LIMIT 2""").fetchall()
         if not rows:
             return None
         if len(rows)!=1:
             raise ValueError("invalid runtime state cardinality")
         slot,state,reason,revision,stamp=rows[0]
+        if any(type(value) is not bytes for value in (state,reason,stamp)):
+            raise ValueError("invalid persisted runtime state")
+        try:
+            state,reason,stamp=(value.decode("ascii") for value in (state,reason,stamp))
+        except UnicodeDecodeError:
+            raise ValueError("invalid persisted runtime state") from None
         if (slot!=1 or type(state) is not str or state not in _REASONS
                 or type(reason) is not str or reason not in _REASONS[state]
                 or type(revision) is not int or not 1<=revision<=MAX_REVISION
@@ -978,10 +992,13 @@ class RuntimeGuard:
             revision=1 if old is None else old["revision"]+1
             if revision>MAX_REVISION:
                 raise ValueError("runtime revision limit reached")
-            db.execute("""INSERT INTO runtime_guard_v1 VALUES (1,?,?,?,?)
+            result=db.execute("""INSERT INTO runtime_guard_v1 VALUES (1,?,?,?,?)
                 ON CONFLICT(slot) DO UPDATE SET state=excluded.state,reason=excluded.reason,
                 revision=excluded.revision,changed_at=excluded.changed_at""",
                 (state,reason,revision,stamp))
+            expected=dict(state=state,reason=reason,revision=revision,changed_at=stamp)
+            if result.rowcount!=1 or self._read()!=expected:
+                raise ValueError("runtime state not persisted")
             db.execute("COMMIT")
         except BaseException:
             if db.in_transaction:
