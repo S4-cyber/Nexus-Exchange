@@ -1,4 +1,5 @@
 """Private owner-held durable interlock; not process-tree containment."""
+from contextlib import contextmanager
 import re
 
 
@@ -48,20 +49,36 @@ def pending(db):
     return _read(db) is not None
 
 
-def arm(db, token):
+@contextmanager
+def _mutation(db):
     _autocommit(db)
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        db.execute("COMMIT")
+    except BaseException:
+        if db.in_transaction:
+            db.execute("ROLLBACK")
+        raise
+
+
+def arm(db, token):
     _validate(token)
-    if pending(db):
-        raise PermissionError("previous advisory cleanup unconfirmed")
-    db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", (token,))
+    with _mutation(db):
+        if pending(db):
+            raise PermissionError("previous advisory cleanup unconfirmed")
+        result = db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", (token,))
+        if result.rowcount != 1 or _read(db) != token:
+            raise PermissionError("advisory launch marker not persisted")
 
 
 def clear(db, token):
     # Only the original owner may call this after the supervisor has joined.
     # A persisted token alone is not proof of child death.
-    _autocommit(db)
-    if _read(db) != _validate(token):
-        raise PermissionError("advisory launch reservation mismatch")
-    result = db.execute("DELETE FROM advisory_launch_v1 WHERE slot=1 AND reservation_id=?", (token,))
-    if result.rowcount != 1:
-        raise PermissionError("advisory launch marker changed")
+    _validate(token)
+    with _mutation(db):
+        if _read(db) != token:
+            raise PermissionError("advisory launch reservation mismatch")
+        result = db.execute("DELETE FROM advisory_launch_v1 WHERE slot=1 AND reservation_id=?", (token,))
+        if result.rowcount != 1 or pending(db):
+            raise PermissionError("advisory launch marker changed")

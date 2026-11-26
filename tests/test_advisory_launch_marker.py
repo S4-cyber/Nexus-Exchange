@@ -95,3 +95,45 @@ class AdvisoryLaunchMarkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid advisory launch reservation"):
                 operation()
         self.assertEqual(db.execute("SELECT COUNT(*) FROM advisory_launch_v1").fetchone(), (1,))
+
+    def test_ignored_arm_does_not_report_success(self):
+        db = self.connect()
+        marker.initialize(db)
+        db.execute("""CREATE TRIGGER ignore_arm BEFORE INSERT ON advisory_launch_v1
+                      BEGIN SELECT RAISE(IGNORE); END""")
+        with self.assertRaises(PermissionError):
+            marker.arm(db, self.token)
+        self.assertFalse(db.in_transaction)
+        self.assertFalse(marker.pending(self.connect()))
+
+    def test_rewritten_arm_rolls_back(self):
+        db = self.connect()
+        marker.initialize(db)
+        db.execute("""CREATE TRIGGER rewrite_arm AFTER INSERT ON advisory_launch_v1
+                      BEGIN UPDATE advisory_launch_v1 SET reservation_id='""" + "b" * 64 + "'; END")
+        with self.assertRaises(PermissionError):
+            marker.arm(db, self.token)
+        self.assertFalse(db.in_transaction)
+        self.assertFalse(marker.pending(self.connect()))
+
+    def test_ignored_clear_preserves_reservation(self):
+        db = self.connect()
+        marker.initialize(db)
+        marker.arm(db, self.token)
+        db.execute("""CREATE TRIGGER ignore_clear BEFORE DELETE ON advisory_launch_v1
+                      BEGIN SELECT RAISE(IGNORE); END""")
+        with self.assertRaises(PermissionError):
+            marker.clear(db, self.token)
+        self.assertFalse(db.in_transaction)
+        self.assertEqual(marker._read(self.connect()), self.token)
+
+    def test_reinserted_marker_rolls_back_clear(self):
+        db = self.connect()
+        marker.initialize(db)
+        marker.arm(db, self.token)
+        db.execute("""CREATE TRIGGER reinsert_clear AFTER DELETE ON advisory_launch_v1
+                      BEGIN INSERT INTO advisory_launch_v1 VALUES(1,'""" + "b" * 64 + "'); END")
+        with self.assertRaises(PermissionError):
+            marker.clear(db, self.token)
+        self.assertFalse(db.in_transaction)
+        self.assertEqual(marker._read(self.connect()), self.token)
