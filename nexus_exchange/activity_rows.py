@@ -5,16 +5,15 @@ from contextlib import closing
 MAX_ROWS = 10000  # Includes terminal and active records; never silently truncate.
 MAX_BYTES = 32 * 1024 * 1024  # Logical payload, not process RSS or database size.
 HOLD_KEY = 'scout-activity-review-required'
-_COLUMNS = (('item', 512), ('state', 32), ('title', 512), ('detail', 2048), ('stamp', 64))
+_COLUMNS = (('item', 512), ('run', 512), ('state', 32), ('title', 512), ('detail', 2048), ('stamp', 64))
 _SELECT = ','.join(
     f"CASE WHEN typeof({column})='text' AND length(CAST({column} AS BLOB)) <= {limit * 4} "
     f"THEN CAST({column} AS BLOB) END" for column, limit in _COLUMNS
 )
 
 
-def read_scout_rows(db, states):
-    """Reject corrupt or oversized projections as a whole on a caller-owned DB."""
-    result = []
+def _iter_scout_rows(db, states):
+    """Stream validated rows, including the persisted run in the byte budget."""
     seen = set()
     total = 0
     with closing(db.execute(f'SELECT {_SELECT} FROM scout_activity ORDER BY rowid DESC LIMIT ?',
@@ -36,8 +35,8 @@ def read_scout_rows(db, states):
                 if len(decoded) > limit:
                     raise ValueError('invalid Scout activity field length')
                 values.append(decoded)
-            key, state, title, detail, stamp = values
-            if (not key.strip() or key.startswith('journal-') or key == HOLD_KEY
+            key, run, state, title, detail, stamp = values
+            if (not run.strip() or not key.strip() or key.startswith('journal-') or key == HOLD_KEY
                     or state not in states):
                 raise ValueError('invalid Scout activity identity or state')
             if key in seen:
@@ -50,8 +49,13 @@ def read_scout_rows(db, states):
                 stamp = moment.astimezone(timezone.utc).isoformat()
             except (ValueError, OverflowError):
                 raise ValueError('invalid Scout activity timestamp') from None
-            result.append((key, state, title, detail, stamp))
-    return result
+            yield key, state, title, detail, stamp
+
+
+def read_scout_rows(db, states):
+    """Reject corrupt or oversized projections as a whole on a caller-owned DB."""
+    with closing(_iter_scout_rows(db, states)) as rows:
+        return list(rows)
 
 
 def _write_text(value, limit, *, truncate=False):
@@ -72,7 +76,8 @@ def write_scout_rows(db, run, rows, now, states):
     """Bound incoming batches and verify final targeted rows before commit.
 
     Last write wins within a batch, as in the original activity feed. This
-    bounds batch payload, not the complete database or SQLite process memory.
+    bounds both batch and final activity-table payload, not the SQLite file or
+    process memory. Existing invalid data requires explicit maintenance.
     """
     run, run_bytes = _write_text(run, 512)
     if not run.strip() or not isinstance(now, datetime) or now.utcoffset() is None:
@@ -114,6 +119,12 @@ def write_scout_rows(db, run, rows, now, states):
             with closing(db.execute(sql, (*expected, key))) as cursor:
                 if cursor.fetchone() != (1, 1):
                     raise ValueError('Scout activity write verification failed')
+        # The final table must remain readable within the same projection
+        # budget. Stream rather than retaining a second full snapshot. This
+        # also rejects malformed non-target rows before the transaction commits.
+        with closing(_iter_scout_rows(db, states)) as persisted:
+            for _ in persisted:
+                pass
         db.execute('COMMIT')
     except BaseException:
         if db.in_transaction:
