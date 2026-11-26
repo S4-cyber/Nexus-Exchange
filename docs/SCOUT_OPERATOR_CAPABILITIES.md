@@ -53,3 +53,20 @@ historical obligations are not rewritten. Four new test methods plus six
 existing methods passed in an isolated local test of the exact original
 source blob; 63 negative subcases failed before implementation. Full checkout
 DNS remains unavailable; integrated hosted CI and independent QA are pending.
+
+## Current scope after each selected input read (GRI-8)
+
+The runtime rederives and validates the full current Scout review after each
+selected file read (before opening the second input or parsing selected
+bytes). Final collection uses the same complete envelope check rather than
+only comparing the stable historical scope hash. A valid clock-only update
+may proceed if the independently derived scope still matches. This is a
+cooperative local boundary, not a transactional lock on external facts or
+proof of data-use permission. No historical format or scope pin changes.
+Four new saved-scenario regression methods cover source expiry between and
+after reads, terminal integrity/verification-claim faults with unchanged
+scope, and ordinary time progression. An isolated extracted-method control
+flow harness with dependency doubles reproduced three failures before the
+change and passed all four cases after it. The complete integration suite
+was not run locally (GitHub DNS unavailable); hosted CI and independent QA
+are required. No new commercial authority, model, or external dispatch.

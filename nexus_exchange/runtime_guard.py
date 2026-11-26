@@ -586,11 +586,19 @@ class RuntimeGuard:
     def _scoped_service_sample(self,plan_id,context,requirements,expected_scope,
                                *,raw=None,right_raw=None,file_paths=None):
         from .ranking_workspace import RankingWorkspace
-        from .service_handoff import review_scope, checked_review_route, checked_sample_inputs
+        from .service_handoff import checked_review_route, checked_sample_inputs
         from .digital_deliverable import build_contract, _input, _right_input, DeliverableError
         workspace=RankingWorkspace(self._directory,halt_check=self.is_set,clock=self._clock)
         snapshot=self._csv_snapshot(plan_id)
         review=workspace.review_requirements(context,requirements)
+
+        def recheck_review():
+            current=workspace.review_requirements(context,requirements)
+            checked_review_route(current,expected_scope,snapshot["context"])
+            if self.is_set():
+                raise PermissionError("deliverable withheld after halt")
+            return current
+
         if file_paths is not None:
             from .deliverable_files import read_selected_csv
             source,operation=checked_review_route(review,expected_scope,snapshot["context"])
@@ -601,8 +609,12 @@ class RuntimeGuard:
             build_contract(snapshot,review["requirements_assessment"]["declared_input"]["specification"],
                 halted=self.is_set(),source_format=source,operation=operation)
             raw=read_selected_csv(source_path,halted=self.is_set(),halt_check=self.is_set,source_format=source)
+            # Revalidate after each read: never open the second input or parse
+            # selected bytes against an already superseded or held review.
+            review=recheck_review()
             if right_path is not None:
                 right_raw=read_selected_csv(right_path,halted=self.is_set(),halt_check=self.is_set)
+                review=recheck_review()
         inputs=checked_sample_inputs(review,expected_scope,snapshot["context"],raw,right_raw=right_raw)
         bound=inputs.pop("max_cell_chars")
         contract=build_contract(snapshot,halted=self.is_set(),**inputs)
@@ -615,11 +627,9 @@ class RuntimeGuard:
                 if any(len(value)>bound for value in values):
                     raise DeliverableError("DECLARED_CELL_BOUND_EXCEEDED")
         result=self._csv_scoped(plan_id,raw,snapshot=snapshot,right_raw=right_raw,**inputs)
-        current=workspace.review_requirements(context,requirements)
-        if review_scope(current)!=expected_scope:
-            raise ValueError("service review changed during sample")
-        if self.is_set():
-            raise PermissionError("deliverable withheld after halt")
+        # A stable historical scope alone does not validate the full current
+        # envelope; reject invalid digests or verification claims at return.
+        recheck_review()
         return dict(review_scope_sha256=expected_scope,sample=result,external_authority=False)
 
     def csv_file_action(self,action,plan_id,*,confirmed=None,**inputs):
@@ -923,12 +933,26 @@ class RuntimeGuard:
 
     def _read(self):
         rows=self.events.db.execute(
-            "SELECT slot,state,reason,revision,changed_at FROM runtime_guard_v1").fetchall()
+            """SELECT CASE WHEN typeof(slot)='integer' AND slot=1 THEN 1 END,
+            CASE WHEN typeof(state)='text' AND length(CAST(state AS BLOB)) BETWEEN 1 AND 13
+                 THEN CAST(state AS BLOB) END,
+            CASE WHEN typeof(reason)='text' AND length(CAST(reason AS BLOB)) BETWEEN 1 AND 15
+                 THEN CAST(reason AS BLOB) END,
+            CASE WHEN typeof(revision)='integer' THEN revision END,
+            CASE WHEN typeof(changed_at)='text' AND length(CAST(changed_at AS BLOB))=32
+                 THEN CAST(changed_at AS BLOB) END
+            FROM runtime_guard_v1 LIMIT 2""").fetchall()
         if not rows:
             return None
         if len(rows)!=1:
             raise ValueError("invalid runtime state cardinality")
         slot,state,reason,revision,stamp=rows[0]
+        if any(type(value) is not bytes for value in (state,reason,stamp)):
+            raise ValueError("invalid persisted runtime state")
+        try:
+            state,reason,stamp=(value.decode("ascii") for value in (state,reason,stamp))
+        except UnicodeDecodeError:
+            raise ValueError("invalid persisted runtime state") from None
         if (slot!=1 or type(state) is not str or state not in _REASONS
                 or type(reason) is not str or reason not in _REASONS[state]
                 or type(revision) is not int or not 1<=revision<=MAX_REVISION
@@ -968,10 +992,13 @@ class RuntimeGuard:
             revision=1 if old is None else old["revision"]+1
             if revision>MAX_REVISION:
                 raise ValueError("runtime revision limit reached")
-            db.execute("""INSERT INTO runtime_guard_v1 VALUES (1,?,?,?,?)
+            result=db.execute("""INSERT INTO runtime_guard_v1 VALUES (1,?,?,?,?)
                 ON CONFLICT(slot) DO UPDATE SET state=excluded.state,reason=excluded.reason,
                 revision=excluded.revision,changed_at=excluded.changed_at""",
                 (state,reason,revision,stamp))
+            expected=dict(state=state,reason=reason,revision=revision,changed_at=stamp)
+            if result.rowcount!=1 or self._read()!=expected:
+                raise ValueError("runtime state not persisted")
             db.execute("COMMIT")
         except BaseException:
             if db.in_transaction:

@@ -127,11 +127,21 @@ def render_correspondence(draft,candidate,*,halted=None):
         render_rfq(draft,halted=False),"",
         "Mailbox control, source authenticity and contact permission remain unverified."))
 
+# Bound all projected columns in SQLite, before Python materializes a damaged row.
+# Do not filter out corrupt rows: NULL sentinels must fail closed in _decode.
+_READ_COLUMNS = ", ".join(f"CASE WHEN typeof({column})='text' AND length(CAST({column} AS BLOB))<={limit} THEN {column} END"
+             for column,limit in (("recipient_id",64),("plan_id",64),("draft_id",64),
+                                  ("recorded_at",40),("payload","?"),("digest",64)))
+
 def _decode(row):
     key,plan_id,draft_id,stamp,payload,digest=row
-    if type(payload) is not str or len(payload)>MAX_PAYLOAD or _digest(payload)!=digest:
+    if (any(type(value) is not str for value in row) or len(payload)>MAX_PAYLOAD
+            or not payload.isascii() or _digest(payload)!=digest):
         raise ValueError("recipient storage integrity mismatch")
-    data=json.loads(payload)
+    try:
+        data=json.loads(payload)
+    except (ValueError, RecursionError):
+        raise ValueError("recipient storage validation failed") from None
     _shape(data,_RECORD)
     if type(data["version"]) is not int or data["version"]!=1:
         raise ValueError("unsupported recipient record version")
@@ -200,7 +210,8 @@ class RecipientStore:
         key=candidate["recipient_id"]
         scope=candidate["scope"]
         with self._transaction():
-            row=self.db.execute("SELECT recipient_id,plan_id,draft_id,recorded_at,payload,digest FROM operator_recipients_v1 WHERE recipient_id=?",(key,)).fetchone()
+            row=self.db.execute("SELECT "+_READ_COLUMNS+" FROM operator_recipients_v1 WHERE recipient_id=?",
+                (MAX_PAYLOAD,key)).fetchone()
             if row is not None:
                 existing=_decode(row)
                 if existing["candidate"]!=candidate or stamp<existing["recorded_at"]:
@@ -221,10 +232,10 @@ class RecipientStore:
         scope=_scope(draft)
         if type(limit) is not int or not 1<=limit<=100:
             raise ValueError("invalid recipient history limit")
-        rows=self.db.execute("""SELECT recipient_id,plan_id,draft_id,recorded_at,payload,digest
+        rows=self.db.execute("SELECT "+_READ_COLUMNS+"""
             FROM operator_recipients_v1 WHERE plan_id=? AND draft_id=?
             ORDER BY recorded_at DESC,recipient_id LIMIT ?""",
-            (scope["plan_id"],scope["draft_id"],limit+1)).fetchall()
+            (MAX_PAYLOAD,scope["plan_id"],scope["draft_id"],limit+1)).fetchall()
         records=[]
         for row in rows:
             data=_decode(row)
@@ -239,9 +250,9 @@ class RecipientStore:
         _permit(halted)
         scope=_scope(draft)
         _hash(recipient_id)
-        row=self.db.execute("""SELECT recipient_id,plan_id,draft_id,recorded_at,payload,digest
+        row=self.db.execute("SELECT "+_READ_COLUMNS+"""
             FROM operator_recipients_v1 WHERE recipient_id=? AND plan_id=? AND draft_id=?""",
-            (recipient_id,scope["plan_id"],scope["draft_id"])).fetchone()
+            (MAX_PAYLOAD,recipient_id,scope["plan_id"],scope["draft_id"])).fetchone()
         if row is None:
             return None
         data=_decode(row)

@@ -131,3 +131,54 @@ class RecipientTests(unittest.TestCase):
         self.path.write_bytes(b"")
         with self.assertRaises(ValueError):
             RecipientStore(self.path,existing_only=True)
+
+
+    def test_storage_projection_bounds_before_decode(self):
+        from nexus_exchange import operator_recipients as module
+        candidate=self.prepare()
+        rfq=draft()
+        key=candidate["recipient_id"]
+        with RecipientStore(self.path) as store:
+            saved=store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+            original=store.db.execute("SELECT * FROM operator_recipients_v1").fetchone()
+            reads={
+                "get":lambda:store.get(rfq,key,halted=False),
+                "list":lambda:store.list_draft(rfq,halted=False),
+                "replay":lambda:store.save(rfq,candidate,now=NOW,confirmed=True,halted=False),
+            }
+            self.assertEqual(reads["get"](),saved)
+            self.assertEqual(reads["list"]()["rows"],[saved])
+            self.assertEqual(reads["replay"](),saved)
+            cases=(
+                ("payload","x"*(module.MAX_PAYLOAD+1),4,reads),
+                ("payload","é"*(module.MAX_PAYLOAD//2+1),4,reads),
+                ("payload",b"{}",4,reads),
+                ("digest","x"*65,5,reads),
+                ("recorded_at","x"*41,3,reads),
+                ("recipient_id","x"*65,0,("list",)),
+                ("plan_id","x"*65,1,("replay",)),
+                ("draft_id","x"*65,2,("replay",)),
+            )
+            for column,value,index,kinds in cases:
+                store.db.execute("DELETE FROM operator_recipients_v1")
+                row=list(original)
+                row[index]=value
+                store.db.execute("INSERT INTO operator_recipients_v1 VALUES (?,?,?,?,?,?)",row)
+                for kind in kinds:
+                    with self.subTest(column=column,kind=kind),patch.object(module,"_decode",wraps=module._decode) as decode:
+                        with self.assertRaises(ValueError):
+                            reads[kind]()
+                        self.assertIsNone(decode.call_args.args[0][index])
+                        self.assertFalse(store.db.in_transaction)
+                self.assertEqual(store.db.execute("SELECT COUNT(*) FROM operator_recipients_v1").fetchone()[0],1)
+
+    def test_corrupt_parser_failure_is_sanitized(self):
+        from nexus_exchange import operator_recipients as module
+        candidate=self.prepare()
+        rfq=draft()
+        with RecipientStore(self.path) as store:
+            store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+            for failure in (ValueError("synthetic private data"),RecursionError("synthetic private data")):
+                with self.subTest(error=type(failure)),patch.object(module.json,"loads",side_effect=failure):
+                    with self.assertRaisesRegex(ValueError,"^recipient storage validation failed$"):
+                        store.get(rfq,candidate["recipient_id"],halted=False)

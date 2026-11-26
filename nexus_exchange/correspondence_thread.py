@@ -114,6 +114,10 @@ import sqlite3
 MAX_THREADS = 1000
 MAX_THREAD_PAYLOAD = 32768
 _TABLE = "operator_threads_v1"
+_THREAD_READ_COLUMNS = ", ".join(
+    f"CASE WHEN typeof({column})='text' AND length(CAST({column} AS BLOB))<={limit} THEN {column} END"
+    for column, limit in (("draft_id",64),("recipient_id",64),("thread_id",64),
+                          ("head_sha256",64),("payload","?"),("digest",64)))
 
 
 class ThreadStore:
@@ -182,15 +186,15 @@ class ThreadStore:
 
     def _read(self, draft, recipient):
         scope = self._scope(draft, recipient)
-        # Avoid loading unbounded payloads even if the local DB is damaged.
-        row = self.db.execute("""SELECT draft_id,recipient_id,thread_id,head_sha256,
-            CASE WHEN length(payload)<=? THEN payload ELSE NULL END,digest
+        # Bound every projected column by bytes before materializing in Python.
+        row = self.db.execute("SELECT "+_THREAD_READ_COLUMNS+"""
             FROM operator_threads_v1 WHERE draft_id=? AND recipient_id=?""",
             (MAX_THREAD_PAYLOAD, *scope)).fetchone()
         if row is None:
             return None
         payload = row[4]
-        if type(payload) is not str or _digest(payload) != row[5]:
+        if (any(type(value) is not str for value in row) or not payload.isascii()
+                or _digest(payload) != row[5]):
             raise ValueError("thread storage integrity mismatch")
         try:
             checked = validate_thread(draft, recipient, json.loads(payload), halted=False)

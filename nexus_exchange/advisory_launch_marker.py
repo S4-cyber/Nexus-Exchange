@@ -1,4 +1,5 @@
 """Private owner-held durable interlock; not process-tree containment."""
+from contextlib import contextmanager
 import re
 
 
@@ -22,32 +23,62 @@ def initialize(db):
 
 
 def _read(db):
-    rows = db.execute("SELECT slot,reservation_id FROM advisory_launch_v1 LIMIT 2").fetchall()
+    # Bound corrupted fields before materialization. Return bytes to avoid
+    # SQLite's implicit UTF-8 decoding of malformed stored text.
+    rows = db.execute("""SELECT
+        CASE WHEN typeof(slot)='integer' AND slot=1 THEN 1 END,
+        CASE WHEN typeof(reservation_id)='text'
+             AND length(CAST(reservation_id AS BLOB))=64
+             THEN CAST(reservation_id AS BLOB) END
+        FROM advisory_launch_v1 LIMIT 2""").fetchall()
     if not rows:
         return None
     if len(rows) != 1 or rows[0][0] != 1:
         raise ValueError("invalid advisory launch marker cardinality")
-    return _validate(rows[0][1])
+    raw = rows[0][1]
+    if type(raw) is not bytes:
+        raise ValueError("invalid advisory launch reservation")
+    try:
+        token = raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("invalid advisory launch reservation") from None
+    return _validate(token)
 
 
 def pending(db):
     return _read(db) is not None
 
 
-def arm(db, token):
+@contextmanager
+def _mutation(db):
     _autocommit(db)
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        db.execute("COMMIT")
+    except BaseException:
+        if db.in_transaction:
+            db.execute("ROLLBACK")
+        raise
+
+
+def arm(db, token):
     _validate(token)
-    if pending(db):
-        raise PermissionError("previous advisory cleanup unconfirmed")
-    db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", (token,))
+    with _mutation(db):
+        if pending(db):
+            raise PermissionError("previous advisory cleanup unconfirmed")
+        result = db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", (token,))
+        if result.rowcount != 1 or _read(db) != token:
+            raise PermissionError("advisory launch marker not persisted")
 
 
 def clear(db, token):
     # Only the original owner may call this after the supervisor has joined.
     # A persisted token alone is not proof of child death.
-    _autocommit(db)
-    if _read(db) != _validate(token):
-        raise PermissionError("advisory launch reservation mismatch")
-    result = db.execute("DELETE FROM advisory_launch_v1 WHERE slot=1 AND reservation_id=?", (token,))
-    if result.rowcount != 1:
-        raise PermissionError("advisory launch marker changed")
+    _validate(token)
+    with _mutation(db):
+        if _read(db) != token:
+            raise PermissionError("advisory launch reservation mismatch")
+        result = db.execute("DELETE FROM advisory_launch_v1 WHERE slot=1 AND reservation_id=?", (token,))
+        if result.rowcount != 1 or pending(db):
+            raise PermissionError("advisory launch marker changed")

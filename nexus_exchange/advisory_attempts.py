@@ -37,6 +37,16 @@ def _reservation(plan, entry):
         ("attempt", "request_sha256", "snapshot_sha256", "model_sha256", "reserved_at")}))
 
 
+def _ascii_field(raw):
+    """Decode only fields already bounded and type-checked by SQLite."""
+    if type(raw) is not bytes:
+        raise ValueError("invalid advisory ledger storage field")
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("invalid advisory ledger storage field") from None
+
+
 def _decode(plan, payload, digest):
     if type(payload) is not str or not 1 <= len(payload) <= MAX_PAYLOAD:
         raise ValueError("advisory ledger payload bound")
@@ -141,8 +151,17 @@ class AdvisoryAttemptStore:
             raise
 
     def _read(self, plan):
-        row = self.db.execute("SELECT payload,digest FROM advisory_attempts_v1 WHERE plan_id=?", (_pin(plan),)).fetchone()
-        return None if row is None else _decode(plan, *row)
+        rows = self.db.execute("""SELECT
+            CASE WHEN typeof(payload)='text'
+                 AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
+                 THEN CAST(payload AS BLOB) END,
+            CASE WHEN typeof(digest)='text'
+                 AND length(CAST(digest AS BLOB))=64
+                 THEN CAST(digest AS BLOB) END
+            FROM advisory_attempts_v1 WHERE plan_id=? LIMIT 2""", (MAX_PAYLOAD, _pin(plan))).fetchall()
+        if len(rows) > 1:
+            raise ValueError("duplicate advisory ledger identity")
+        return None if not rows else _decode(plan, *map(_ascii_field, rows[0]))
 
     def _require(self, plan):
         record = self._read(plan)
@@ -155,9 +174,11 @@ class AdvisoryAttemptStore:
         payload, digest = _json(record), _digest(record)
         _decode(plan, payload, digest)
         if new:
-            self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
+            cursor = self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
         else:
-            self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+            cursor = self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+        if cursor.rowcount != 1 or self._read(plan) != record:
+            raise ValueError("advisory ledger write not persisted exactly")
 
     @staticmethod
     def _clock(record, now):
@@ -295,11 +316,13 @@ class AdvisoryAttemptStore:
             return self._failure(record, row, "INTERRUPTED", now)
 
     def _runtime_plan_ids(self):
-        rows = self.db.execute("SELECT plan_id FROM advisory_attempts_v1 ORDER BY plan_id LIMIT ?",
+        rows = self.db.execute("""SELECT CASE WHEN typeof(plan_id)='text'
+            AND length(CAST(plan_id AS BLOB))=64 THEN CAST(plan_id AS BLOB) END
+            FROM advisory_attempts_v1 ORDER BY plan_id LIMIT ?""",
                                (MAX_TASKS + 1,)).fetchall()
         if len(rows) > MAX_TASKS:
             raise ValueError("advisory runtime recovery capacity exceeded")
-        return tuple(_pin(row[0]) for row in rows)
+        return tuple(_pin(_ascii_field(row[0])) for row in rows)
 
     def _runtime_pending(self, *, now):
         """Private maintenance read; caller must hold the runtime directory lock."""

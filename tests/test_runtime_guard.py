@@ -185,3 +185,81 @@ class RuntimeGuardTests(unittest.TestCase):
             self.assertEqual(store.recover_interrupted(now=NOW),0)
         finally:
             store.close()
+
+    def test_ignored_startup_does_not_report_initialized_runtime(self):
+        with self.guard():
+            pass
+        store=EventStore(self.directory/"events.sqlite3")
+        try:
+            store.db.execute("DELETE FROM runtime_guard_v1")
+            store.db.execute("""CREATE TRIGGER ignore_startup BEFORE INSERT ON runtime_guard_v1
+                BEGIN SELECT RAISE(IGNORE); END""")
+        finally:
+            store.close()
+        with self.assertRaisesRegex(ValueError,"runtime state not persisted"):
+            self.guard()
+        store=EventStore(self.directory/"events.sqlite3")
+        try:
+            self.assertEqual(store.db.execute("SELECT COUNT(*) FROM runtime_guard_v1").fetchone(),(0,))
+            store.db.execute("DROP TRIGGER ignore_startup")
+        finally:
+            store.close()
+        with self.guard() as guard:
+            self.assertTrue(guard.is_set())
+
+    def test_ignored_resume_preserves_halt_and_revision(self):
+        with self.guard() as guard:
+            previous=guard._read()
+            guard.events.db.execute("""CREATE TRIGGER ignore_resume BEFORE UPDATE ON runtime_guard_v1
+                WHEN NEW.state='offline_ready' BEGIN SELECT RAISE(IGNORE); END""")
+            with self.assertRaisesRegex(ValueError,"runtime state not persisted"):
+                guard.resume()
+            self.assertTrue(guard.is_set())
+            self.assertEqual(guard._read(),previous)
+            self.assertFalse(guard.events.db.in_transaction)
+            self.assertEqual(guard.status()["reason"],"persistence_fault")
+            with self.assertRaises(PermissionError):
+                guard.resume()
+
+    def test_rewritten_resume_rolls_back_and_preserves_halt(self):
+        with self.guard() as guard:
+            previous=guard._read()
+            guard.events.db.execute("""CREATE TRIGGER rewrite_resume AFTER UPDATE ON runtime_guard_v1
+                WHEN NEW.state='offline_ready'
+                BEGIN UPDATE runtime_guard_v1 SET revision=NEW.revision+1; END""")
+            with self.assertRaisesRegex(ValueError,"runtime state not persisted"):
+                guard.resume()
+            self.assertTrue(guard.is_set())
+            self.assertEqual(guard._read(),previous)
+            self.assertFalse(guard.events.db.in_transaction)
+
+    def test_corrupt_runtime_fields_rejected_before_text_materialization(self):
+        with self.guard() as guard:
+            db=guard.events.db
+            seen=[]
+            original_factory=db.text_factory
+            def decode(raw):
+                seen.append(len(raw))
+                return raw.decode("utf-8")
+            db.text_factory=decode
+            try:
+                for column,value in (("state","x"*10000),("reason","startup\x00"+"x"*10000),
+                                     ("changed_at",b"x"*32),("reason","é"*7)):
+                    with self.subTest(column=column):
+                        previous=guard._read()
+                        db.execute("UPDATE runtime_guard_v1 SET "+column+"=?",(value,))
+                        seen.clear()
+                        try:
+                            with self.assertRaisesRegex(ValueError,"invalid persisted runtime state"):
+                                guard._read()
+                            self.assertEqual(seen,[])
+                        finally:
+                            db.execute("UPDATE runtime_guard_v1 SET "+column+"=?",(previous[column],))
+                db.execute("UPDATE runtime_guard_v1 SET reason=CAST(? AS TEXT)",(b"\xff"*7,))
+                try:
+                    with self.assertRaisesRegex(ValueError,"invalid persisted runtime state"):
+                        guard._read()
+                finally:
+                    db.execute("UPDATE runtime_guard_v1 SET reason='startup'")
+            finally:
+                db.text_factory=original_factory
