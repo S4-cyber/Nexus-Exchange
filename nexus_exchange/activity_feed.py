@@ -97,3 +97,25 @@ def finding_row(source, label, lead):
             lines.append(instruction[:2048].encode("utf-8", errors="replace").decode("utf-8"))
     lines.append(lead["source_url"])
     return (finding_key(source, lead["notice_id"]), "Finding", lead["title"], "\n".join(lines))
+
+
+class ActivityMaintenanceRequired(ValueError):
+    """Startup could not validate and settle local activity storage."""
+
+
+def prepare_startup_activity(guard):
+    """Validate recovery before constructing any desktop worker or action controls."""
+    try:
+        feed = ActivityFeed(guard.events.db)
+        feed.settle()
+        return feed
+    except (ValueError, sqlite3.DatabaseError):
+        try:
+            guard.set()
+        except Exception:
+            # RuntimeGuard asserts the in-memory halt before persisting it.
+            # A persistence fault still prohibits startup.
+            pass
+        raise ActivityMaintenanceRequired(
+            "Scout activity storage requires maintenance. No research started."
+        ) from None

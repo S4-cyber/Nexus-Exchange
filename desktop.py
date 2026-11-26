@@ -7,7 +7,8 @@ import webbrowser
 from queue import Empty, SimpleQueue
 from nexus_exchange import engagement, cycle_history
 from nexus_exchange.engagement_reports import EngagementReports
-from nexus_exchange.activity_feed import ActivityFeed, finding_row, with_shortlist
+from nexus_exchange.activity_feed import (ActivityFeed, ActivityMaintenanceRequired, finding_row,
+                                          prepare_startup_activity, with_shortlist)
 from nexus_exchange.activity_panel import ActivityPanel
 from nexus_exchange.engagement_files import folder as work_folder, INBOX, OUTPUTS
 from nexus_exchange.accounts_panel import install as install_accounts
@@ -144,6 +145,36 @@ def main(*, data_directory=None, gui_smoke=False):
         root.destroy()
         return
     store=stop.events
+    try:
+        feed = prepare_startup_activity(stop)
+    except ActivityMaintenanceRequired:
+        # No normal workspaces, executor, timers, account setup or resume
+        # controls are constructed while this owner holds the maintenance state.
+        def close_maintenance():
+            try:
+                stop.close()
+            except Exception:
+                # close releases ownership in its finally path even when
+                # halt persistence fails. Never admit research on this path.
+                pass
+            finally:
+                root.destroy()
+        if gui_smoke:
+            close_maintenance()
+            raise
+        root.title("Nexus Exchange | Maintenance required")
+        panel = ttk.Frame(root, padding=24)
+        panel.pack(fill="both", expand=True)
+        ttk.Label(panel, text="Scout activity storage requires maintenance",
+                  font=("Segoe UI", 13, "bold"), wraplength=490).pack(anchor="w", pady=(0, 12))
+        ttk.Label(panel, text="No research started. Existing activity records could not be safely "
+                  "recovered. Close Exchange, preserve a backup of the local data and obtain "
+                  "maintenance review before restarting. Do not delete records to bypass validation.",
+                  wraplength=490, justify="left").pack(anchor="w", pady=(0, 12))
+        ttk.Button(panel, text="Close Exchange", command=close_maintenance).pack(anchor="w")
+        root.protocol("WM_DELETE_WINDOW", close_maintenance)
+        root.mainloop()
+        return
     executor = ThreadPoolExecutor(max_workers=1)
     future = None
     engaged = False
@@ -210,8 +241,6 @@ def main(*, data_directory=None, gui_smoke=False):
     output = ScrolledText(result_panel, width=1, height=4, wrap="word", padx=8, pady=4)
     output.pack(fill="both", expand=True)
     output.configure(state="disabled")
-    feed = ActivityFeed(store.db)
-    feed.settle()
     version = None
     latest_brief = None
 
@@ -2316,6 +2345,25 @@ if __name__ == "__main__":
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as directory:
             main(data_directory=directory,gui_smoke=True)
+        # Exercise a real on-disk legacy recovery rejection and owner release.
+        with TemporaryDirectory() as directory:
+            with RuntimeGuard(directory) as fixture_guard:
+                fixture_feed = ActivityFeed(fixture_guard.events.db)
+                fixture_feed.put("fixture", [("fixture", "Engaged", "Fixture", "")],
+                                 datetime.now(timezone.utc))
+                fixture_guard.events.db.execute(
+                    "UPDATE scout_activity SET state='invalid-fixture-state' WHERE item='fixture'")
+                before = fixture_guard.events.db.execute("SELECT * FROM scout_activity").fetchall()
+            try:
+                main(data_directory=directory,gui_smoke=True)
+            except ActivityMaintenanceRequired:
+                pass
+            else:
+                raise RuntimeError("Invalid activity storage did not block desktop startup")
+            with RuntimeGuard(directory) as restarted:
+                after = restarted.events.db.execute("SELECT * FROM scout_activity").fetchall()
+                if not restarted.is_set() or before != after:
+                    raise RuntimeError("Maintenance startup changed activity or failed to retain halt")
         sys.exit(0)
     if "--self-test" in sys.argv:
         import tkinter
