@@ -22,12 +22,26 @@ def initialize(db):
 
 
 def _read(db):
-    rows = db.execute("SELECT slot,reservation_id FROM advisory_launch_v1 LIMIT 2").fetchall()
+    # Bound corrupted fields before materialization. Return bytes to avoid
+    # SQLite's implicit UTF-8 decoding of malformed stored text.
+    rows = db.execute("""SELECT
+        CASE WHEN typeof(slot)='integer' AND slot=1 THEN 1 END,
+        CASE WHEN typeof(reservation_id)='text'
+             AND length(CAST(reservation_id AS BLOB))=64
+             THEN CAST(reservation_id AS BLOB) END
+        FROM advisory_launch_v1 LIMIT 2""").fetchall()
     if not rows:
         return None
     if len(rows) != 1 or rows[0][0] != 1:
         raise ValueError("invalid advisory launch marker cardinality")
-    return _validate(rows[0][1])
+    raw = rows[0][1]
+    if type(raw) is not bytes:
+        raise ValueError("invalid advisory launch reservation")
+    try:
+        token = raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("invalid advisory launch reservation") from None
+    return _validate(token)
 
 
 def pending(db):

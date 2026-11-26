@@ -64,3 +64,34 @@ class AdvisoryLaunchMarkerTests(unittest.TestCase):
             marker.clear(db, self.token)
         db.execute("ROLLBACK")
         self.assertTrue(marker.pending(db))
+
+    def test_corrupt_marker_is_bounded_before_materialization(self):
+        db = self.connect()
+        marker.initialize(db)
+        seen = []
+        def decode(raw):
+            seen.append(len(raw))
+            return raw.decode("utf-8")
+        db.text_factory = decode
+        for value in ("a" * 65, "é" * 64, "a" * 64 + "\x00" + "x" * 8192,
+                      b"a" * 64):
+            with self.subTest(kind=type(value).__name__, size=len(value)):
+                db.execute("DELETE FROM advisory_launch_v1")
+                db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", (value,))
+                seen.clear()
+                with self.assertRaises(ValueError):
+                    marker.pending(db)
+                with self.assertRaises(ValueError):
+                    marker.clear(db, self.token)
+                self.assertEqual(seen, [])
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM advisory_launch_v1").fetchone(), (1,))
+
+    def test_invalid_utf8_is_rejected_without_clearing_marker(self):
+        db = self.connect()
+        marker.initialize(db)
+        db.execute("INSERT INTO advisory_launch_v1 VALUES (1, CAST(? AS TEXT))", (b"\xff" * 64,))
+        for operation in (lambda: marker.pending(db), lambda: marker.clear(db, self.token),
+                          lambda: marker.arm(db, self.token)):
+            with self.assertRaisesRegex(ValueError, "invalid advisory launch reservation"):
+                operation()
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM advisory_launch_v1").fetchone(), (1,))
