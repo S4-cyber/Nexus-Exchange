@@ -38,3 +38,18 @@ Next: a complete owned synthetic Genesis lifecycle exercise using one
 exact scoped lead and actual exported artifact, then consolidate review
 branches and independent release verification before expanding actual
 delivery capabilities. Formal accepted main gates remain 0/42.
+
+## Exact current handoff envelope (GRI-8)
+
+Before selected sample file I/O, require the complete current review and
+nested requirements-assessment schemas, recompute both canonical digests,
+and reject every non-literal-false verification or authority claim. A
+structure-fit declaration also needs no unresolved reasons, exact supported
+route, input count/byte and cell bounds, and explicit unsupported-operation
+flags. Self-consistent resealing is not proof of authenticity or permission;
+the runtime still independently derives a fresh review and validates actual
+bytes. The historical v1 scope hash algorithm is unchanged. Existing
+historical obligations are not rewritten. Four new test methods plus six
+existing methods passed in an isolated local test of the exact original
+source blob; 63 negative subcases failed before implementation. Full checkout
+DNS remains unavailable; integrated hosted CI and independent QA are pending.

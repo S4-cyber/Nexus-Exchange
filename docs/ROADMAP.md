@@ -683,3 +683,8 @@ principles), OCDS schema and Apache-2.0 license pinned
 pinned 8ae6164602c95ca78828b148b9052460ee426885. No upstream code copied;
 no dependency adoption or benchmark claim. Next: exact-head CI, independent
 review of source authorization and receipt-to-Operator qualification.
+
+## GRI-8 — fail-closed current Scout-to-Operator review envelope (2026-11-25 Pacific)
+- Prior exact head 17fe9580f76a8f7aa0284c563546ec83860e3a64: Python 3.10 and 3.13 each ran 929 tests (one skipped), run 45752258090; Windows unit/source/frozen/GUI/fixture/Genesis/security and artifact checks passed, run 45752258104, artifact 15085434826.
+- E13/E14/E16/E21/E27/E31/E38, H01/H06/H07: verify the full current review and nested assessment seals, strict schema and deny flags, supported declaration and bounded inputs before selected file access. Preserve v1 historical scope pin. Four new regression methods, 63 failing negative subcases on the exact original module, then all 10 focused tests passed locally on Python 3.13. No full checkout (DNS), independent QA or integrated hosted results at entry. Main acceptance remains 0/42.
+- Rechecked Operative read-only journal (pinned review/v0.340.381-cross-session-coverage, blob 59ee08e7734347897b29af33603dffba783ec9ad; no credentials), agency-agents MIT license and handoff template at 8ae6164602c95ca78828b148b9052460ee426885. Adopt only explicit bounded evidence handoff concepts; no dependency or upstream code import. No new external action, model, commercial authority, resources or spend. Next: test actual archive-to-local-sample scope drift with current source restrictions, and independently review provider permissions and process containment.
