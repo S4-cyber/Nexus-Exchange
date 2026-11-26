@@ -1,4 +1,6 @@
-"""In-window oversight for the latest autonomous search and local production cycle."""
+"""In-window oversight for current activity and recent cycle results."""
+import sqlite3
+from tkinter import StringVar
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from .activity_panel import ActivityPanel
@@ -10,17 +12,33 @@ STATUS = {"produced": "Completed", "existing": "Already complete", "held": "Need
 
 
 class EngagementReports:
-    def __init__(self, parent, open_folder):
+    def __init__(self, parent, open_folder, history):
+        self.history = history
+        self.latest = None
+        self.latest_error = None
+        self.pinned = None
+        self.labels = ["Latest cycle"]
+        self.keys = [None]
+        self.choice = StringVar(parent, value=self.labels[0])
+        self.pickers = []
         self.tabs = ttk.Notebook(parent)
         self.tabs.pack(fill="both", expand=True)
         self.summary = ttk.Frame(self.tabs)
         files = ttk.Frame(self.tabs, padding=(5, 3))
         self.files = files
         self.live_page = ttk.Frame(self.tabs, padding=(4, 0))
-        for page, name in ((self.live_page, "Activity"), (self.summary, "Latest cycle"), (files, "Work files")):
+        for page, name in ((self.live_page, "Activity"), (self.summary, "Cycle briefs"), (files, "Work files")):
             self.tabs.add(page, text=name)
         self.tabs.enable_traversal()
         self.activity = ActivityPanel(self.live_page)
+        for page in (self.summary, files):
+            bar = ttk.Frame(page)
+            bar.pack(fill="x", pady=(0, 3))
+            ttk.Label(bar, text="Cycle").pack(side="left", padx=(2, 6))
+            picker = ttk.Combobox(bar, state="readonly", textvariable=self.choice, values=self.labels)
+            picker.pack(side="left", fill="x", expand=True)
+            picker.bind("<<ComboboxSelected>>", self.select_cycle)
+            self.pickers.append(picker)
         self.actions = ttk.Frame(self.summary)
         self.actions.pack(fill="x")
         self.text = ScrolledText(self.summary, wrap="word", width=1, height=4, padx=10, pady=8)
@@ -53,6 +71,45 @@ class EngagementReports:
             detail = item["reason"] if item["status"] == "held" else "Output: " + item["output"]
             self.detail.configure(text=item["name"] + " · " + item["operation"] + "\n" + detail)
 
+    def update_cycles(self, latest, *, error=None):
+        self.latest_error = error
+        first_label = "Latest cycle"
+        try:
+            earlier = self.history.earlier(latest)
+        except sqlite3.Error:
+            earlier = []
+            first_label += " (history unavailable)"
+        self.latest = latest
+        self.keys = [None] + [row[0] for row in earlier]
+        labels = [first_label]
+        occurrences = {}
+        for _, stamp, status in earlier:
+            label = stamp[:19].replace("T", " ") + " UTC · " + status
+            count = occurrences.get(label, 0) + 1
+            occurrences[label] = count
+            labels.append(label if count == 1 else f"{label} ({count})")
+        self.labels = labels
+        for picker in self.pickers:
+            picker.configure(values=labels)
+        if self.pinned and self.pinned in self.keys:
+            self.choice.set(labels[self.keys.index(self.pinned)])
+            return  # Leave the historical report's scroll position and file selection alone.
+        self.show_latest()
+
+    def show_latest(self):
+        self.choice.set(self.labels[0])
+        self.select_cycle()
+
+    def select_cycle(self, _event=None):
+        self.pinned = self.keys[self.labels.index(self.choice.get())]
+        try:
+            if self.pinned:
+                self.display(self.history.read(self.pinned))
+            else:
+                self.display(self.latest, error=self.latest_error)
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError, OSError, sqlite3.Error, RecursionError):
+            self.display(None, error="This cycle report could not be read. Choose another cycle.")
+
     def display(self, brief, *, error=None):
         summary = error or "Choose Engage on Home to prepare your first brief."
         hint = error or "Completed files and anything needing attention will appear here after a cycle."
@@ -69,7 +126,7 @@ class EngagementReports:
             elif "items" not in jobs:
                 hint = "This earlier brief contains totals. The next cycle will list individual files."
             else:
-                hint = "No CSV or JSON inputs were found in the last cycle. Use Open inbox to add work."
+                hint = "No CSV or JSON inputs were found in this cycle. Use Open inbox to add work."
                 rows = sorted(jobs["items"], key=lambda row: row["status"] != "held")
                 for item in rows:
                     fields = ("name", "operation", "reason" if item["status"] == "held" else "output")

@@ -1,13 +1,12 @@
 """One bounded engagement cycle. The desktop owns the repeating schedule."""
 from datetime import datetime, timedelta, timezone
-import json
-import os
 from pathlib import Path
 from uuid import uuid4
 
 from . import canada_search, fts_search, sam_search
 from .account_providers import balances, planning_limit, renew_document
 from .account_vault import AccountVault
+from .cycle_history import BRIEF, CycleHistory
 from .event_store import EventStore
 from .activity_feed import ActivityFeed, finding_row
 from .engagement_files import run_files
@@ -17,7 +16,6 @@ from .review_ranking import RankingStore
 from .scout_discovery import (build_plan, execute_discovery, load_profile, NoSavedProfile,
                               READY, SOURCE_LABELS)
 
-BRIEF = "engagement-latest.json"
 SERVICES = ((CSV_ID, "csv"), (JSON_ID, "json"), (PROFILE_ID, "data quality"), (RECONCILE_ID, "reconciliation"))
 
 
@@ -214,16 +212,9 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         succeeded = sum(s["status"] == "Searched" for s in outcomes)
         status = ("No sources enabled" if not outcomes else "Sources unavailable" if not succeeded
                   else "Partial coverage" if succeeded < len(outcomes) else "Completed")
-        brief = dict(format="nexus-engagement-brief-v1", finished=clock().isoformat(), status=status,
+        brief = dict(format="nexus-engagement-brief-v1", cycle_id=task, finished=clock().isoformat(), status=status,
                      sources=outcomes, jobs=jobs, notes=notes, shortlist=rows, external_actions=0)
-        target = directory / BRIEF
-        temp = target.with_suffix(".tmp")
-        try:
-            temp.write_text(json.dumps(brief, ensure_ascii=True, indent=2), encoding="utf-8")
-            ensure_active(stopped)
-            os.replace(temp, target)
-        finally:
-            temp.unlink(missing_ok=True)
+        CycleHistory(event.db).publish(directory, brief, lambda: ensure_active(stopped))
         activity.settle(task)
         journal("failed" if outcomes and not succeeded else "succeeded")
         return brief
