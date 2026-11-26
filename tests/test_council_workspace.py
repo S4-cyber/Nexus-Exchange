@@ -195,3 +195,44 @@ class CouncilWorkspaceTests(unittest.TestCase):
                 action.return_value=dict(budget,**change)
                 with self.assertRaises(ValueError):
                     workspace.advisory_status()
+
+    def test_synthetic_advisory_decline_and_truthy_consent_never_start(self):
+        preview=self.guard.prepare_advisory_process(self.key)
+        action=Mock(return_value=preview)
+        workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:False)
+        for consent in (False,None,1,"yes"):
+            action.reset_mock()
+            self.assertIsNone(workspace.launch_advisory(lambda value:consent))
+            action.assert_called_once_with("advisory_prepare",self.key)
+        self.assertFalse((self.directory/"local-advisory.sqlite3").exists())
+
+    def test_synthetic_advisory_validates_preview_before_confirmation(self):
+        preview=self.guard.prepare_advisory_process(self.key)
+        action=Mock()
+        confirm=Mock(return_value=True)
+        workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:False)
+        for change in (dict(external_authority=True),dict(dispatch_enabled=True),
+                       dict(synthetic_only=1),dict(next_attempt=True),
+                       dict(plan_id="a"*64),dict(preview_id="not-a-token"),
+                       dict(snapshot_sha256="bad")):
+            action.return_value=dict(preview,**change)
+            with self.assertRaises(ValueError):
+                workspace.launch_advisory(confirm)
+        confirm.assert_not_called()
+
+    def test_synthetic_advisory_rechecks_busy_and_binds_exact_preview(self):
+        preview=self.guard.prepare_advisory_process(self.key)
+        action=Mock(side_effect=[preview,{"attempt":1}])
+        workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:self.busy)
+        def blocked(value):
+            self.busy=True
+            return True
+        with self.assertRaises(PermissionError):
+            workspace.launch_advisory(blocked)
+        action.assert_called_once_with("advisory_prepare",self.key)
+        self.busy=False
+        action.reset_mock()
+        action.side_effect=[preview,{"attempt":1}]
+        self.assertEqual(workspace.launch_advisory(lambda value:True),{"attempt":1})
+        action.assert_called_with("advisory_start",self.key,
+                                  preview_id=preview["preview_id"],confirmed=True)

@@ -645,3 +645,7 @@ No new services, model execution, commercial actions, spend or Operative changes
   no dependency installed or external resource provisioned. Next: native
   confirmation controls with root-owned nonblocking polling and inline
   historical reporting; independent containment and acceptance review.
+
+
+## GRI-7 — native synthetic consent and root-owned collection (2026-11-25)
+- E15–E18/E31/E34/E38, H01/H06/H07 candidate: Council exact preview, explicit default-No consent, busy/halt recheck, desktop root polling and historical result display. No model execution, real dispatch or authority. Three focused unit methods and updated GUI shutdown/decline smoke; new CI pending, local clone DNS blocked. Prior head 5f836cd2f84f6f08b013c988f2eac42c7bd3b8ed: 922 tests each (one skipped), Windows and source security passed, runs 45732599323 and 45732599389. Formal main gate acceptance remains 0/42. Next: independent native completion/halt and process containment review, reconcile Scout #102, consolidate release evidence. No Operative writes or new dependencies.

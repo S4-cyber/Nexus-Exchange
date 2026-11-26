@@ -351,14 +351,68 @@ def main(*, data_directory=None, gui_smoke=False):
         show_halted(message)
     def council_blocked():
         return stop.is_set() or busy()
-    def council_action(action,plan_id):
+    def council_action(action,plan_id,**inputs):
         if council_blocked():
             raise PermissionError("Council halted or desktop worker active")
         try:
+            if action=="advisory_prepare" and not inputs:
+                return stop.prepare_advisory_process(plan_id)
+            if action=="advisory_start":
+                return start_advisory(plan_id,**inputs)
+            if inputs:
+                raise ValueError("unexpected Council action inputs")
             return stop.council_action(action,plan_id)
         finally:
             if stop.is_set():
                 show_halted("HALTED — Council blocked; recover interrupted attempts before explicit resume.")
+    def start_advisory(plan_id,*,preview_id,confirmed):
+        nonlocal scenario_report
+        if council_blocked():
+            raise PermissionError("Advisory halted or desktop worker active")
+        ticket=stop.start_prepared_advisory_process(plan_id,preview_id,confirmed=confirmed)
+        # Root owns collection even if the initiating Council window closes.
+        root.after(25,advisory_poll)
+        scenario_report=None
+        exporter.configure(state="disabled")
+        for button in (launch,importer,simulator,*diagnostic_buttons):
+            button.configure(state="disabled")
+        show_result_panel()
+        output.configure(state="normal")
+        output.delete("1.0","end")
+        output.insert("end","Synthetic advisory running — no model or external action.")
+        output.configure(state="disabled")
+        halt_status.configure(text="Synthetic advisory running — Emergency halt available.")
+        return ticket
+
+    def advisory_poll():
+        try:
+            report=stop.poll_advisory_process()
+            if report is None:
+                root.after(25,advisory_poll)
+                return
+            if not stop.is_set():
+                if (report.get("state")!="REVIEWED" or report.get("external_authority") is not False
+                        or report["review"].get("external_authority") is not False):
+                    raise ValueError("invalid advisory completion")
+                show_result_panel()
+                output.configure(state="normal")
+                output.delete("1.0","end")
+                output.insert("end","SYNTHETIC ADVISORY — historical local fixture only; no model or authority.\n"
+                              +json.dumps(report,ensure_ascii=True,indent=2))
+                output.configure(state="disabled")
+        except Exception:
+            if not stop.is_set():
+                try:
+                    stop.set()
+                except Exception:
+                    pass
+        if stop.is_set():
+            show_halted("HALTED — advisory result withheld; review recovery before explicit resume.")
+        else:
+            for button in (launch,importer,simulator,*diagnostic_buttons):
+                button.configure(state="normal")
+            halt_status.configure(text="Synthetic advisory completed — commercial actions disabled.")
+
     def operator_action(action,plan_id,**inputs):
         if council_blocked():
             raise PermissionError("Operator halted or desktop worker active")
@@ -2179,7 +2233,9 @@ def main(*, data_directory=None, gui_smoke=False):
         results_window.destroy()
         # Start an explicitly approved synthetic reservation immediately before
         # closing. Even an already-finished child is busy until owner collection.
-        shutdown_ticket=stop.start_advisory_process(key,confirmed=True)
+        from nexus_exchange.council_workspace import CouncilWorkspace
+        shutdown_workspace=CouncilWorkspace(key,action=council_action,blocked_check=council_blocked)
+        shutdown_ticket=shutdown_workspace.launch_advisory(lambda preview: True)
         try:
             if (shutdown_ticket["attempt"]!=2 or not busy() or not council_blocked()
                     or not stop.status()["advisory_cleanup_unconfirmed"]):

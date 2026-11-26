@@ -136,3 +136,21 @@ Prior exact head 2f8373b5ca593ec86305442df75a3aeb25557e76 passed 919 tests on bo
 https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115258
 https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45726115304.
 New full regression requires hosted CI; local GitHub DNS unavailable.
+
+
+## Native consent and owner polling candidate (GRI-7)
+
+Council prepares an exact saved-plan preview, displays the plan, snapshot and
+attempt in a default-No confirmation dialog, and invokes only the prepared-start
+facade after literal consent and a second busy/halt check. Declining does not
+reserve or consume an attempt. The desktop root polls the owner-held worker
+independently of the Council window, disables conflicting controls, and displays
+only a completed restricted historical report; halt or failure withholds output.
+No model, live dispatch, new dependency or new permission. GUI smoke covers
+decline and the native facade shutdown/recovery path. Independent interactive
+completion and containment review remain pending.
+
+Prior exact head 5f836cd2f84f6f08b013c988f2eac42c7bd3b8ed passed 922 tests per Python 3.10/3.13 (one skip),
+source security and Windows build: https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45732599323
+and https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45732599389.
+Local clone DNS remains unavailable; new complete regression is hosted only.

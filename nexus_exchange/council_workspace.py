@@ -86,6 +86,34 @@ class CouncilWorkspace:
             raise ValueError("invalid advisory budget transition")
         return result
 
+    def launch_advisory(self, confirm):
+        """Explicit consent; desktop owns asynchronous collection."""
+        self._permit()
+        if not callable(confirm):
+            raise ValueError("explicit confirmation callback required")
+        preview=self._action("advisory_prepare",self.plan_id)
+        self._permit()
+        def hex_id(value,length):
+            return (type(value) is str and len(value)==length
+                    and all(ch in "0123456789abcdef" for ch in value))
+        if (type(preview) is not dict or set(preview)!={
+                "preview_id","plan_id","next_attempt","snapshot_sha256",
+                "synthetic_only","external_authority","dispatch_enabled"}
+                or preview["plan_id"]!=self.plan_id
+                or not hex_id(preview["preview_id"],32)
+                or not hex_id(preview["snapshot_sha256"],64)
+                or type(preview["next_attempt"]) is not int
+                or not 1<=preview["next_attempt"]<=3
+                or preview["synthetic_only"] is not True
+                or preview["external_authority"] is not False
+                or preview["dispatch_enabled"] is not False):
+            raise ValueError("invalid synthetic advisory preview")
+        if confirm(dict(preview)) is not True:
+            return None
+        self._permit()
+        return self._action("advisory_start",self.plan_id,
+                            preview_id=preview["preview_id"],confirmed=True)
+
     def register(self):
         return self._call("register")
 
@@ -161,7 +189,7 @@ def audit_text(entry):
 def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     """One saved-plan review window; history and current inspection stay separate."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, messagebox
     from tkinter.scrolledtext import ScrolledText
 
     workspace=CouncilWorkspace(plan_id,action=action,blocked_check=blocked_check)
@@ -271,6 +299,23 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
             error(exc)
             return None
 
+    def launch_advisory():
+        clear("Preparing one synthetic advisory attempt...")
+        def confirm(preview):
+            return messagebox.askyesno("Run fixed offline fixture?",
+                f'Saved plan: {plan_id}\nAttempt {preview["next_attempt"]} of 3\n'
+                f'Snapshot: {preview["snapshot_sha256"]}\n\n'
+                "This consumes one saved-plan advisory attempt. A fixed synthetic child "
+                "will run, not an AI model. No network, outreach or commercial authority. "
+                "Use Emergency halt on the main window to stop it. Continue?",
+                parent=window,default="no")
+        try:
+            ticket=workspace.launch_advisory(confirm)
+            status.configure(text=("Cancelled — no attempt started." if ticket is None else
+                "Synthetic fixture started. See main window status and use Emergency halt if needed."))
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+
     def register():
         nonlocal has_data
         try:
@@ -362,6 +407,7 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     context_controls.pack(before=current, pady=4)
     ttk.Label(context_controls,text="Fresh local context:").pack(side="left",padx=4)
     ttk.Button(context_controls,text="Advisory attempt status",command=show_advisory_status).pack(side="right",padx=3)
+    ttk.Button(controls,text="Run synthetic advisory",command=launch_advisory).pack(side="right",padx=4)
     for level in LEVELS:
         ttk.Button(context_controls,text=level.title(),command=lambda chosen=level:show_context(chosen)).pack(side="left",padx=3)
     tree.bind("<<TreeviewSelect>>",display)
@@ -375,6 +421,10 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
         if (budget is None or budget["state"]!="NOT_STARTED" or budget["attempts_used"]!=0
                 or "HISTORICAL BUDGET ONLY" not in current.get("1.0","end")):
             raise RuntimeError("Council GUI advisory budget inspection failed")
+        if workspace.launch_advisory(lambda preview: False) is not None:
+            raise RuntimeError("Declined synthetic advisory consent dispatched")
+        if workspace.advisory_status()["attempts_used"]!=0:
+            raise RuntimeError("Declined synthetic advisory consent consumed an attempt")
         for level in LEVELS:
             packet=show_context(level)
             if (packet is None or packet["level"]!=level or packet["external_authority"]
