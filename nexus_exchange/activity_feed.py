@@ -4,7 +4,7 @@ from hashlib import sha256
 import sqlite3
 
 from .event_store import read_projection
-from .activity_rows import HOLD_KEY, read_scout_rows, write_scout_rows
+from .activity_rows import HOLD_KEY, read_scout_rows, write_scout_rows, settle_scout_rows
 
 STATES = ("Pending", "Engaged", "Completed", "Finding", "Needs attention", "Stopped", "Skipped")
 JOURNAL_STATES = dict(queued="Pending", running="Engaged", succeeded="Completed",
@@ -24,18 +24,8 @@ class ActivityFeed:
         write_scout_rows(self.db, run, rows, now, STATES)
 
     def settle(self, run=None, *, failed=False):
-        # An interrupted cycle never leaves a queued or engaged row looking live after restart.
-        state = "Needs attention" if failed else "Stopped"
-        detail = "Cycle interrupted before completion." if failed else "Stopped before completion."
-        sql = "UPDATE scout_activity SET state=?,detail=?,stamp=? WHERE state IN ('Pending','Engaged')"
-        args = [state, detail, datetime.now(timezone.utc).isoformat()]
-        if run is not None:
-            sql += " AND run=?"
-            args.append(run)
-        self.db.execute(sql, args)
-        self.db.execute("""DELETE FROM scout_activity WHERE rowid IN (
-            SELECT rowid FROM scout_activity WHERE state NOT IN ('Pending','Engaged')
-            ORDER BY rowid DESC LIMIT -1 OFFSET ?)""", (LIMIT,))
+        # Settlement and existing retention are one verified transaction.
+        settle_scout_rows(self.db, run, failed, datetime.now(timezone.utc), STATES, LIMIT)
 
     def snapshot(self):
         by_key = {}

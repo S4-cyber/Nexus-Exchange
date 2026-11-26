@@ -1,10 +1,16 @@
 """Bounded storage and projection of Scout activity, not authority."""
 from datetime import datetime, timezone
 from contextlib import closing
+from itertools import zip_longest
 
 MAX_ROWS = 10000  # Includes terminal and active records; never silently truncate.
 MAX_BYTES = 32 * 1024 * 1024  # Logical payload, not process RSS or database size.
 HOLD_KEY = 'scout-activity-review-required'
+_ACTIVE = ('Pending', 'Engaged')
+_STOPPED = ('Stopped', 'Stopped before completion.')
+_INTERRUPTED = ('Needs attention', 'Cycle interrupted before completion.')
+_STAMP_BYTES = len('2000-01-01T00:00:00.000000+00:00')
+_RECOVERY_BYTES = max(sum(len(value) for value in pair) for pair in (_STOPPED, _INTERRUPTED)) + _STAMP_BYTES
 _COLUMNS = (('item', 512), ('run', 512), ('state', 32), ('title', 512), ('detail', 2048), ('stamp', 64))
 _SELECT = ','.join(
     f"CASE WHEN typeof({column})='text' AND length(CAST({column} AS BLOB)) <= {limit * 4} "
@@ -12,17 +18,17 @@ _SELECT = ','.join(
 )
 
 
-def _iter_scout_rows(db, states):
+def _iter_scout_rows(db, states, *, full=False, reserve=False):
     """Stream validated rows, including the persisted run in the byte budget."""
     seen = set()
     total = 0
-    with closing(db.execute(f'SELECT {_SELECT} FROM scout_activity ORDER BY rowid DESC LIMIT ?',
+    with closing(db.execute(f'SELECT rowid,{_SELECT} FROM scout_activity ORDER BY rowid DESC LIMIT ?',
                             (MAX_ROWS + 1,))) as cursor:
         for index, raw in enumerate(cursor):
             if index >= MAX_ROWS:
                 raise ValueError('Scout activity row capacity review required')
             values = []
-            for value, (_, limit) in zip(raw, _COLUMNS):
+            for value, (_, limit) in zip(raw[1:], _COLUMNS):
                 if type(value) is not bytes or b'\x00' in value:
                     raise ValueError('invalid Scout activity storage')
                 total += len(value)
@@ -42,6 +48,11 @@ def _iter_scout_rows(db, states):
             if key in seen:
                 raise ValueError('duplicate Scout activity identity')
             seen.add(key)
+            if reserve and state in _ACTIVE:
+                total += max(0, _RECOVERY_BYTES - sum(len(value.encode('utf-8'))
+                                                     for value in (state, detail, stamp)))
+                if total > MAX_BYTES:
+                    raise ValueError('Scout activity recovery byte capacity review required')
             try:
                 moment = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
                 if moment.utcoffset() is None:
@@ -49,7 +60,7 @@ def _iter_scout_rows(db, states):
                 stamp = moment.astimezone(timezone.utc).isoformat()
             except (ValueError, OverflowError):
                 raise ValueError('invalid Scout activity timestamp') from None
-            yield key, state, title, detail, stamp
+            yield (raw[0], *values) if full else (key, state, title, detail, stamp)
 
 
 def read_scout_rows(db, states):
@@ -122,9 +133,60 @@ def write_scout_rows(db, run, rows, now, states):
         # The final table must remain readable within the same projection
         # budget. Stream rather than retaining a second full snapshot. This
         # also rejects malformed non-target rows before the transaction commits.
-        with closing(_iter_scout_rows(db, states)) as persisted:
+        with closing(_iter_scout_rows(db, states, reserve=True)) as persisted:
             for _ in persisted:
                 pass
+        db.execute('COMMIT')
+    except BaseException:
+        if db.in_transaction:
+            db.execute('ROLLBACK')
+        raise
+
+
+
+def settle_scout_rows(db, run, failed, now, states, terminal_limit):
+    """Atomically settle interrupted rows and verify the existing retention policy."""
+    if run is not None:
+        run, _ = _write_text(run, 512)
+        if not run.strip():
+            raise ValueError('invalid Scout activity settlement run')
+    if type(failed) is not bool or type(terminal_limit) is not int or terminal_limit < 0:
+        raise ValueError('invalid Scout activity settlement policy')
+    if not isinstance(now, datetime) or now.utcoffset() is None:
+        raise ValueError('invalid Scout activity settlement timestamp')
+    try:
+        stamp = now.astimezone(timezone.utc).isoformat(timespec='microseconds')
+    except (ValueError, OverflowError):
+        raise ValueError('invalid Scout activity settlement timestamp') from None
+    state, detail = _INTERRUPTED if failed else _STOPPED
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        expected = []
+        terminal = 0
+        # Preserve exact raw values and row order for all retained records.
+        # Older terminal rows are removed only by the pre-existing retention rule.
+        with closing(_iter_scout_rows(db, states, full=True)) as before:
+            for row in before:
+                rowid, key, scope, current, title, previous_detail, previous_stamp = row
+                if current in _ACTIVE and (run is None or scope == run):
+                    row = (rowid, key, scope, state, title, detail, stamp)
+                if row[3] not in _ACTIVE:
+                    terminal += 1
+                    if terminal > terminal_limit:
+                        continue
+                expected.append(row)
+        sql = "UPDATE scout_activity SET state=?,detail=?,stamp=? WHERE state IN ('Pending','Engaged')"
+        args = [state, detail, stamp]
+        if run is not None:
+            sql += " AND run=?"
+            args.append(run)
+        db.execute(sql, args)
+        db.execute("""DELETE FROM scout_activity WHERE rowid IN (
+            SELECT rowid FROM scout_activity WHERE state NOT IN ('Pending','Engaged')
+            ORDER BY rowid DESC LIMIT -1 OFFSET ?)""", (terminal_limit,))
+        with closing(_iter_scout_rows(db, states, full=True, reserve=True)) as after:
+            if any(actual != wanted for actual, wanted in zip_longest(after, expected)):
+                raise ValueError('Scout activity settlement verification failed')
         db.execute('COMMIT')
     except BaseException:
         if db.in_transaction:
