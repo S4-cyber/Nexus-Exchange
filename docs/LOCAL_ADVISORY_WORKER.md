@@ -100,3 +100,20 @@ requires exactly one recovered interrupted attempt, no published result, and no
 remaining cleanup marker. No new user-facing model launch control or authority.
 Full local checkout remains DNS-blocked; these GUI changes require exact-head
 hosted Windows verification and independent review.
+
+## Read-only Council budget inspection (GRI-7)
+
+The Council saved-plan window can inspect the synthetic advisory budget without
+creating a ledger, reserving an attempt or starting a child. The owner-thread
+facade revalidates the selected scenario and applies the idle/halt gate before
+returning only state, count and next possible attempt. Missing plan rows are
+distinguished from corrupt storage; existing ledger integrity is checked.
+The UI rejects invalid state/count transitions and clearly labels historical
+metadata as neither current review nor consent. A terminal review cannot be
+presented as an available retry. The GUI smoke now checks this read-only path.
+Prior exact head 257c273338092ac60f6e162920341f9ec31777d5 passed both
+Python jobs (917 tests each, one skipped) and Windows source/frozen smoke:
+https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718814999
+and https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718815057.
+New regression awaits hosted CI; local checkout DNS failed. Explicit native
+launch consent and OS containment remain separate work, not enabled here.

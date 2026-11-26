@@ -43,6 +43,10 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     guard.start_advisory_process(self.key,confirmed=value)
             self.assertFalse((self.directory/DB_NAME).exists())
+            budget=guard.council_action("advisory_status",self.key)
+            self.assertEqual((budget["state"],budget["attempts_used"],budget["next_attempt"]),
+                             ("NOT_STARTED",0,1))
+            self.assertFalse((self.directory/DB_NAME).exists())
             ticket=guard.start_advisory_process(self.key,confirmed=True)
             try:
                 self.assertEqual(ticket["attempt"],1)
@@ -60,6 +64,11 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
                 self.assertFalse(guard.advisory_process_pending())
                 self.assertFalse(guard.status()["advisory_cleanup_unconfirmed"])
                 self.assertEqual(self.state()["attempts_used"],1)
+                budget=guard.council_action("advisory_status",self.key)
+                self.assertEqual((budget["state"],budget["attempts_used"],budget["next_attempt"]),
+                                 ("REVIEWED",1,None))
+                self.assertTrue(budget["historical_only"])
+                self.assertFalse(budget["external_authority"])
             finally:
                 if guard.advisory_process_pending():
                     guard.set()
@@ -83,6 +92,9 @@ class RuntimeAdvisoryProcessTests(unittest.TestCase):
             self.assertEqual(self.state()["state"],"INTERRUPTED")
             guard.resume()
             self.assertFalse(guard.is_set())
+            budget=guard.council_action("advisory_status",self.key)
+            self.assertEqual((budget["state"],budget["attempts_used"],budget["next_attempt"]),
+                             ("INTERRUPTED",1,2))
 
     def test_cleanup_uncertainty_blocks_same_session_recovery(self):
         with self.guard() as guard:

@@ -605,3 +605,22 @@ No new services, model execution, commercial actions, spend or Operative changes
 - Prior exact head cc2ca7b08471f7feaadbcc97b40987472f993a2e: [Python CI 45714128017](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45714128017) ran 917 tests on each of 3.10/3.13 (OK, one skipped); [Windows 45714127697](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45714127697) succeeded, including source/frozen checks, artifact 15068913453.
 - E17/E18/E31/E34/E38/E40, H03/H06/H07: desktop busy and shutdown interlocks include the reserved advisory process, startup shows persistent cleanup quarantine, and native GUI smoke exercises halt/drain/reopen with a second owned synthetic attempt. New combined hosted results pending at entry; full local checkout DNS blocked, no local red/green or independent QA claim. Real model invocation, authenticated process-tree clearance and release acceptance remain open; formal main 0/42.
 - Reuse: read-only Operative risk gate pinned 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11 (blob ab737fdd8fae557ef456e3240d6580fc35d9e459), strict input/authority separation; no trading module port. Mem0 at 8096993d69396bf97311249206915cadb2eb998f (Apache-2.0; config blob 5955ade6f54766977834f001a5de4818e64b3ab0) relies on Pydantic and model/vector/embedding configs; retain local bounded SQLite rather than importing runtime, dependency/privacy/cost audit incomplete. No new dependency, model, spend, external action or Operative change.
+
+## RC3 — read-only advisory attempt budget (GRI-7, 2026-11-25)
+
+- E13–E15/E17/E18/E31/E34/E38 candidate: Council can inspect the selected saved
+  plan's advisory attempt budget without registration, mutation, child launch,
+  or inference. Strict state/count display and owner-thread halt/busy checks;
+  new unit, runtime integration and source/frozen GUI smoke assertions.
+- Previous exact PR #111 head 257c273338092ac60f6e162920341f9ec31777d5:
+  [Python CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718814999)
+  passed 917 tests per version (one skipped);
+  [Windows CI](https://github.com/S4-cyber/Nexus-Exchange/actions/runs/45718815057)
+  passed unit, source and frozen smoke and artifact upload. New combined
+  CI pending; no local checkout (DNS). No acceptance promotion: 0/42.
+- H03/H06/H07: inspected pinned Mem0 8096993d69396bf97311249206915cadb2eb998f
+  Apache-2.0 license and packaging; model SDK, vector store, telemetry and
+  transitive costs/privacy remain unaudited. No import, install, or cloud calls.
+  Operative risk gate was read-only reference; no source copied. Next:
+  consented fixed-fixture control, independent quarantine/containment review,
+  Scout #102 chronology reconciliation. No new external authority or spending.

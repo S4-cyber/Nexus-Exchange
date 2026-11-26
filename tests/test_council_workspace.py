@@ -164,3 +164,34 @@ class CouncilWorkspaceTests(unittest.TestCase):
         self.busy=True
         with self.assertRaises(PermissionError):
             self.workspace.context("summary")
+
+    def test_advisory_budget_is_read_only_and_plan_scoped(self):
+        budget=self.workspace.advisory_status()
+        self.assertEqual((budget["state"],budget["attempts_used"],budget["next_attempt"]),
+                         ("NOT_STARTED",0,1))
+        self.assertFalse(budget["dispatch_enabled"])
+        self.assertFalse((self.directory/"local-advisory.sqlite3").exists())
+        self.assertFalse((self.directory/"council.sqlite3").exists())
+        self.action.assert_called_once_with("advisory_status",self.key)
+        self.busy=True
+        with self.assertRaises(PermissionError):
+            self.workspace.advisory_status()
+        self.action.assert_called_once_with("advisory_status",self.key)
+        self.busy=False
+        self.guard.set()
+        with self.assertRaises(PermissionError):
+            self.workspace.advisory_status()
+
+    def test_advisory_budget_rejects_false_authority_and_bad_transitions(self):
+        budget=self.workspace.advisory_status()
+        action=Mock()
+        workspace=CouncilWorkspace(self.key,action=action,blocked_check=lambda:False)
+        for change in (dict(dispatch_enabled=True),dict(plan_id="a"*64),
+                       dict(next_attempt=True),dict(attempts_used=False),
+                       dict(state="REVIEWED",attempts_used=0,next_attempt=None),
+                       dict(state="FAILED",attempts_used=3,next_attempt=4),
+                       dict(historical_only=False)):
+            with self.subTest(change=change):
+                action.return_value=dict(budget,**change)
+                with self.assertRaises(ValueError):
+                    workspace.advisory_status()

@@ -170,6 +170,16 @@ class AdvisoryAttemptStore:
         with self._transaction(write=False):
             return _state(self._require(plan))
 
+    def preview_budget(self, plan, *, halted=None):
+        """Read only: missing plan is not a reservation or permission."""
+        _permit(True, halted)
+        with self._transaction(write=False):
+            record = self._read(plan)
+            if record is None:
+                return dict(state="NOT_STARTED", attempts_used=0, next_attempt=1)
+            state = _state(record)
+            return {key:state[key] for key in ("state", "attempts_used", "next_attempt")}
+
     def reserve(self, snapshot, model, *, now, approved=None, halted=None):
         _permit(approved, halted)
         now = _utc(now)

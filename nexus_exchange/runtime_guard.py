@@ -331,7 +331,7 @@ class RuntimeGuard:
         self._require_idle()
         if self._faulted or self.is_set():
             raise PermissionError("Council unavailable while halted or faulted")
-        if type(action) is not str or action not in ("inspect","register","run_once","history"):
+        if type(action) is not str or action not in ("inspect","register","run_once","history","advisory_status"):
             raise ValueError("unsupported Council action")
         self._council_active=True
         try:
@@ -341,7 +341,19 @@ class RuntimeGuard:
             if action=="run_once" and self._council_pending():
                 self.set()
                 raise PermissionError("outstanding Council reservation requires halted recovery")
-            result=operations[action](plan_id)
+            if action=="advisory_status":
+                snapshot=adapter.inspect(plan_id)
+                path=self._advisory_path()
+                budget=dict(state="NOT_STARTED",attempts_used=0,next_attempt=1)
+                if path is not None:
+                    with AdvisoryAttemptStore(path,existing_only=True) as store:
+                        budget=store.preview_budget(plan_id,halted=self.is_set())
+                result=dict(budget,plan_id=snapshot["plan_id"],task_id=snapshot["task_id"],
+                    historical_only=True,current_decision=False,independently_verified=False,
+                    dispatch_enabled=False,external_authority=False,execution_eligible=False,
+                    commercial_facts_verified=False,release_eligible=False)
+            else:
+                result=operations[action](plan_id)
             if self.is_set():
                 raise PermissionError("Council result withheld after halt")
             return result

@@ -65,6 +65,27 @@ class CouncilWorkspace:
         self._permit()
         return result, snapshot
 
+    def advisory_status(self):
+        """Historical attempt budget only; cannot launch or reserve a worker."""
+        result=self._call("advisory_status")
+        state=result.get("state")
+        used=result.get("attempts_used")
+        next_attempt=result.get("next_attempt")
+        if (result.get("plan_id")!=self.plan_id
+                or result.get("historical_only") is not True
+                or any(result.get(key) is not False for key in
+                       ("current_decision","independently_verified","dispatch_enabled"))
+                or type(state) is not str or type(used) is not int or not 0<=used<=3):
+            raise ValueError("invalid advisory budget")
+        valid=((state=="NOT_STARTED" and used==0 and type(next_attempt) is int and next_attempt==1)
+               or (state in ("INTERRUPTED","FAILED") and 1<=used<3
+                   and type(next_attempt) is int and next_attempt==used+1)
+               or (state in ("REVIEWED","RESERVED") and 1<=used<=3 and next_attempt is None)
+               or (state=="ESCALATED" and used==3 and next_attempt is None))
+        if not valid:
+            raise ValueError("invalid advisory budget transition")
+        return result
+
     def register(self):
         return self._call("register")
 
@@ -230,6 +251,26 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
             error(exc)
             return None
 
+    def show_advisory_status():
+        nonlocal has_data
+        clear("Inspecting local advisory budget...")
+        try:
+            result=workspace.advisory_status()
+            next_attempt=result["next_attempt"]
+            write(current,"SYNTHETIC ADVISORY — HISTORICAL BUDGET ONLY\n"
+                  +f'Saved plan: {plan_id}\nState: {result["state"]}\n'
+                  +f'Attempts used: {result["attempts_used"]}/3\n'
+                  +("No remaining attempt" if next_attempt is None else f"Next possible attempt: {next_attempt}")
+                  +"\nNo model, worker launch, reservation, factual verification or commercial authority. "
+                   "This inspection is not consent to execute.")
+            status.configure(text="Advisory budget inspected; no attempt consumed.")
+            has_data=True
+            tabs.select(local)
+            return result
+        except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc:
+            error(exc)
+            return None
+
     def register():
         nonlocal has_data
         try:
@@ -320,6 +361,7 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     context_controls=ttk.Frame(local)
     context_controls.pack(before=current, pady=4)
     ttk.Label(context_controls,text="Fresh local context:").pack(side="left",padx=4)
+    ttk.Button(context_controls,text="Advisory attempt status",command=show_advisory_status).pack(side="right",padx=3)
     for level in LEVELS:
         ttk.Button(context_controls,text=level.title(),command=lambda chosen=level:show_context(chosen)).pack(side="left",padx=3)
     tree.bind("<<TreeviewSelect>>",display)
@@ -329,6 +371,10 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     if smoke:
         if initial is None or initial["independently_verified_count"]!=0:
             raise RuntimeError("Council GUI initial inspection failed")
+        budget=show_advisory_status()
+        if (budget is None or budget["state"]!="NOT_STARTED" or budget["attempts_used"]!=0
+                or "HISTORICAL BUDGET ONLY" not in current.get("1.0","end")):
+            raise RuntimeError("Council GUI advisory budget inspection failed")
         for level in LEVELS:
             packet=show_context(level)
             if (packet is None or packet["level"]!=level or packet["external_authority"]
