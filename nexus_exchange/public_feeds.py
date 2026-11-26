@@ -36,6 +36,8 @@ def _fts_parameters(params, page_size):
 
 def _read_complete_body(response, cap):
     """Reject incomplete or ambiguous HTTP bodies before parsing source data."""
+    if response.headers.defects or response.headers.get_all("Content-Range", []):
+        raise ValueError("Malformed or partial public feed representation.")
     lengths = response.headers.get_all("Content-Length", [])
     transfers = response.headers.get_all("Transfer-Encoding", [])
     encodings = response.headers.get_all("Content-Encoding", [])
@@ -77,7 +79,10 @@ def read_feed(source, params=None):
         with build_opener(NoRedirect()).open(request, timeout=timeout) as response:
             if response.status != 200:
                 return response.status, b"", None
-            return response.status, _read_complete_body(response, adapter.MAX_BYTES), response.headers.get("Last-Modified")
+            body = _read_complete_body(response, adapter.MAX_BYTES)
+            modified = response.headers.get_all("Last-Modified", [])
+            # Ambiguous metadata cannot establish dataset freshness.
+            return response.status, body, modified[0] if len(modified) == 1 else None
     except HTTPError as error:
         try:
             return error.code, b"", None
