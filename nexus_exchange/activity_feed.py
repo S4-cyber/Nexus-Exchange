@@ -4,6 +4,7 @@ from hashlib import sha256
 import sqlite3
 
 from .event_store import read_projection
+from .activity_rows import HOLD_KEY, read_scout_rows
 
 STATES = ("Pending", "Engaged", "Completed", "Finding", "Needs attention", "Stopped", "Skipped")
 JOURNAL_STATES = dict(queued="Pending", running="Engaged", succeeded="Completed",
@@ -52,9 +53,14 @@ class ActivityFeed:
 
     def snapshot(self):
         by_key = {}
-        for key, state, title, detail, stamp in self.db.execute(
-                "SELECT item,state,title,detail,stamp FROM scout_activity ORDER BY rowid DESC"):
-            by_key[key] = (key, state, title, detail, stamp)
+        try:
+            for key, state, title, detail, stamp in read_scout_rows(self.db, STATES):
+                by_key[key] = (key, state, title, detail, stamp)
+        except (ValueError, sqlite3.DatabaseError):
+            # A failed Scout projection cannot mask independent journal status.
+            by_key[HOLD_KEY] = (HOLD_KEY, "Needs attention", "Scout activity unavailable",
+                               "Activity validation or read failed. Review local storage; no Scout status inferred.",
+                               datetime.now(timezone.utc).isoformat())
         # Fold transitions from earlier releases and manual tools into one row per task.
         journal = {}
         try:

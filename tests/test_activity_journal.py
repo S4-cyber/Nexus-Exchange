@@ -89,3 +89,21 @@ class ActivityJournalTests(unittest.TestCase):
     def test_missing_journal_table_retains_independent_scout_rows(self):
         self.store.db.execute("DROP TABLE events")
         self.assert_hold()
+
+
+    def test_corrupt_scout_projection_retains_independent_journal_status(self):
+        self.store.append(event())
+        self.store.db.execute("UPDATE scout_activity SET detail=CAST(X'FF' AS TEXT)")
+        before = self.store.db.total_changes
+        rows = self.feed.snapshot()
+        self.assertEqual(before, self.store.db.total_changes)
+        self.assertIn(("journal-fixture", "Pending", "offline"), [r[:3] for r in rows])
+        self.assertIn(("scout-activity-review-required", "Needs attention", "Scout activity unavailable"), [r[:3] for r in rows])
+        self.assertNotIn("finding-1", [r[0] for r in rows])
+
+    def test_corrupt_scout_and_journal_have_separate_holds(self):
+        self.store.db.execute("UPDATE scout_activity SET item='journal-fake'")
+        self.raw("private-fixture invalid")
+        rows = self.feed.snapshot()
+        self.assertEqual({r[0] for r in rows}, {"scout-activity-review-required", "journal-review-required"})
+        self.assertNotIn("private-fixture", repr(rows))
