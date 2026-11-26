@@ -4,7 +4,7 @@ import json
 from contextlib import closing
 from datetime import datetime, timezone
 from .scout import _timestamp
-from .dashboard_events import project
+from .dashboard_events import project, validate_event
 
 MAX_RECOVERY_EVENTS=100000
 # Worst-case ASCII JSON escaping of the permitted 128/256-character fields
@@ -101,6 +101,7 @@ class EventStore:
                 raise ValueError("journal mutation not persisted")
 
     def append(self, event):
+        validate_event(event)
         payload = _encode(event)
         self.db.execute("BEGIN IMMEDIATE")
         try:

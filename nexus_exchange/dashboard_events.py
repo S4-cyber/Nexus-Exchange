@@ -13,17 +13,39 @@ class TaskState:
 _TRANSITIONS = {None: {"queued"}, "queued": {"running", "cancelled", "interrupted"},
                 "running": {"succeeded", "failed", "cancelled", "interrupted"}}
 
+def _event_text(value, limit):
+    # Bound input before stripping or encoding; JSON can represent lone surrogates
+    # which are not valid Unicode scalar values for native UI or UTF-8 export.
+    if type(value) is not str or len(value) > limit:
+        raise ValueError("invalid event text")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("invalid event Unicode") from None
+    return _text(value, limit)
+
+
+def validate_event(event):
+    """Validate bounded event fields independently of transition history."""
+    if (type(event) is not dict or len(event) != 4
+            or any(type(key) is not str for key in event)
+            or set(event) != {"task_id","target","state","timestamp"}):
+        raise ValueError("invalid event")
+    task = _event_text(event["task_id"],128)
+    target = _event_text(event["target"],256)
+    state = _event_text(event["state"],32)
+    if state not in {"queued","running","succeeded","failed","cancelled","interrupted"}:
+        raise ValueError("invalid event state")
+    stamp = _timestamp(_event_text(event["timestamp"],64))
+    return task, target, state, stamp
+
+
 def project(events, page=1):
     states = {}
     history = []
     previous_time = None
     for event in events:
-        if type(event) is not dict or set(event) != {"task_id","target","state","timestamp"}:
-            raise ValueError("invalid event")
-        task = _text(event["task_id"],128)
-        target = _text(event["target"],256)
-        state = _text(event["state"],32)
-        stamp = _timestamp(event["timestamp"])
+        task, target, state, stamp = validate_event(event)
         if previous_time is not None and stamp < previous_time:
             raise ValueError("out of order event")
         old = states.get(task)
