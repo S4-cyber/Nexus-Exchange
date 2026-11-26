@@ -26,3 +26,22 @@ constants substituted locally, mocked HTTP opener): 12 assertion failures
 before correction, all four methods passed afterward on Python 3.13.5.
 Full local repository checkout failed DNS resolution; hosted integration and
 independent review remain required.
+
+## GRI-8 — HTTP response completeness boundary
+
+Shared transport requires a single bounded decimal Content-Length or a single
+chunked Transfer-Encoding, not both, and accepts only absent or identity
+Content-Encoding. Reject close-delimited, duplicate, ambiguous or oversized
+declared bodies before reading; verify the actual fixed-length byte count and
+cap the decoded chunked body. The Python standard-library chunk parser handles
+chunk decoding and raises on interrupted chunks. This avoids treating a
+valid-looking truncated CSV prefix as a complete dataset. Framing is not
+proof of source-level completeness or authenticity; live provider/proxy
+compatibility remains unverified, and the socket timeout is not a hard wall
+deadline. No live provider requests were made.
+
+Five new fixture methods, real HTTPResponse with owned in-memory bytes and
+mocked opener. On Python 3.13.5: 12 expected red failures on original source,
+then all nine focused methods passed with the corrected source. Exact base
+and new source/test blobs checked; full local checkout DNS remains blocked.
+Hosted integration and independent review still required.

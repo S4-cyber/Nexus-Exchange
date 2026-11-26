@@ -34,6 +34,31 @@ def _fts_parameters(params, page_size):
     return {key: params[key] for key in ("updatedFrom", "updatedTo", "limit", "cursor") if key in params}
 
 
+def _read_complete_body(response, cap):
+    """Reject incomplete or ambiguous HTTP bodies before parsing source data."""
+    lengths = response.headers.get_all("Content-Length", [])
+    transfers = response.headers.get_all("Transfer-Encoding", [])
+    encodings = response.headers.get_all("Content-Encoding", [])
+    if encodings and (len(encodings) != 1 or encodings[0].strip().lower() != "identity"):
+        raise ValueError("Unsupported public feed content encoding.")
+    expected = None
+    if transfers:
+        if lengths or len(transfers) != 1 or transfers[0].lower() != "chunked":
+            raise ValueError("Ambiguous public feed transfer framing.")
+    else:
+        # Close-delimited bodies cannot distinguish a complete snapshot from
+        # a connection interrupted at an otherwise valid CSV row boundary.
+        if len(lengths) != 1 or re.fullmatch(r"[0-9]{1,20}", lengths[0].strip()) is None:
+            raise ValueError("Unverified public feed content length.")
+        expected = int(lengths[0].strip())
+        if expected > cap:
+            raise ValueError("Public feed body exceeds cap.")
+    body = response.read(cap + 1)
+    if type(body) is not bytes or len(body) > cap or (expected is not None and len(body) != expected):
+        raise ValueError("Incomplete or oversized public feed body.")
+    return body
+
+
 def read_feed(source, params=None):
     if source == "uk_tender" and type(params) is dict:
         from . import fts_search as adapter
@@ -52,7 +77,7 @@ def read_feed(source, params=None):
         with build_opener(NoRedirect()).open(request, timeout=timeout) as response:
             if response.status != 200:
                 return response.status, b"", None
-            return response.status, response.read(adapter.MAX_BYTES + 1), response.headers.get("Last-Modified")
+            return response.status, _read_complete_body(response, adapter.MAX_BYTES), response.headers.get("Last-Modified")
     except HTTPError as error:
         try:
             return error.code, b"", None
