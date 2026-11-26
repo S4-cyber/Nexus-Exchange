@@ -52,6 +52,37 @@ def _check_byte_budget(rows, payloads, reserved_bytes=0):
         raise ValueError("journal byte capacity review required")
 
 
+def _iter_journal_rows(db):
+    # Guard size and storage class before transferring payloads into Python.
+    # Cast to BLOB so malformed UTF-8 is handled explicitly, not by SQLite's
+    # text decoder. Never omit corrupt rows from the ordered history.
+    total=0
+    for index,(seq,raw) in enumerate(db.execute(
+        """SELECT seq, CASE WHEN typeof(payload)='text'
+            AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
+            THEN CAST(payload AS BLOB) END
+            FROM events ORDER BY seq LIMIT ?""",
+        (MAX_EVENT_BYTES,MAX_RECOVERY_EVENTS+1))):
+        if index>=MAX_RECOVERY_EVENTS:
+            raise ValueError("journal recovery capacity review required")
+        if type(raw) is not bytes or b"\x00" in raw:
+            raise ValueError("invalid journal payload storage")
+        total+=len(raw)
+        if total>MAX_JOURNAL_BYTES:
+            raise ValueError("journal byte capacity review required")
+        try:
+            decoded=raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("invalid journal payload encoding") from exc
+        yield seq,decoded
+
+
+def read_projection(db):
+    """Validate the entire bounded journal on the caller-owned connection."""
+    with closing(_iter_journal_rows(db)) as rows:
+        return project(_decode(payload) for _, payload in rows)
+
+
 class EventStore:
     def __init__(self, path):
         self.db = sqlite3.connect(path, isolation_level=None)
@@ -64,28 +95,7 @@ class EventStore:
         return tuple(self._iter_rows())
 
     def _iter_rows(self):
-        # Guard size and storage class before transferring payloads into Python.
-        # Cast to BLOB so malformed UTF-8 is handled explicitly, not by SQLite's
-        # text decoder. Never omit corrupt rows from the ordered history.
-        total=0
-        for index,(seq,raw) in enumerate(self.db.execute(
-            """SELECT seq, CASE WHEN typeof(payload)='text'
-                AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
-                THEN CAST(payload AS BLOB) END
-                FROM events ORDER BY seq LIMIT ?""",
-            (MAX_EVENT_BYTES,MAX_RECOVERY_EVENTS+1))):
-            if index>=MAX_RECOVERY_EVENTS:
-                raise ValueError("journal recovery capacity review required")
-            if type(raw) is not bytes or b"\x00" in raw:
-                raise ValueError("invalid journal payload storage")
-            total+=len(raw)
-            if total>MAX_JOURNAL_BYTES:
-                raise ValueError("journal byte capacity review required")
-            try:
-                decoded=raw.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ValueError("invalid journal payload encoding") from exc
-            yield seq,decoded
+        return _iter_journal_rows(self.db)
 
     def _verify_append(self, before, payloads):
         # Compare the full ordered history without materializing a second copy.

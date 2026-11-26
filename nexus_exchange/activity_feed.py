@@ -1,7 +1,9 @@
 """Local progress rows for desktop oversight, alongside the existing task journal."""
 from datetime import datetime, timezone
 from hashlib import sha256
-import json
+import sqlite3
+
+from .event_store import read_projection
 
 STATES = ("Pending", "Engaged", "Completed", "Finding", "Needs attention", "Stopped", "Skipped")
 JOURNAL_STATES = dict(queued="Pending", running="Engaged", succeeded="Completed",
@@ -55,13 +57,22 @@ class ActivityFeed:
             by_key[key] = (key, state, title, detail, stamp)
         # Fold transitions from earlier releases and manual tools into one row per task.
         journal = {}
-        for (raw,) in self.db.execute("SELECT payload FROM events ORDER BY seq DESC LIMIT ?", (LIMIT,)):
-            ev = json.loads(raw)
-            key = "journal-" + ev["task_id"]
-            state = JOURNAL_STATES[ev["state"]]
-            transition = state + " " + ev["timestamp"][:19].replace("T", " ") + " UTC"
+        try:
+            history = read_projection(self.db)["history"]
+        except (ValueError, sqlite3.DatabaseError):
+            # Never show partially validated task states or raw journal contents.
+            # Independent Scout findings remain available for review.
+            key = "journal-review-required"
+            by_key[key] = (key, "Needs attention", "Task journal unavailable",
+                           "Journal validation or read failed. Review local storage; no task status inferred.",
+                           datetime.now(timezone.utc).isoformat())
+            return sorted(by_key.values(), key=lambda row: row[4], reverse=True)
+        for ev in reversed(history[-LIMIT:]):
+            key = "journal-" + ev.task_id
+            state = JOURNAL_STATES[ev.state]
+            transition = state + " " + ev.timestamp[:19].replace("T", " ") + " UTC"
             if key not in journal:
-                journal[key] = [key, state, ev["target"], [], ev["timestamp"]]
+                journal[key] = [key, state, ev.target, [], ev.timestamp]
             journal[key][3].append(transition)
         for key, state, title, transitions, stamp in journal.values():
             by_key[key] = (key, state, title, " → ".join(reversed(transitions)) + "\nTask " + key[8:], stamp)
