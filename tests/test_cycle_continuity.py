@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -130,3 +131,34 @@ class CycleContinuityTests(unittest.TestCase):
         self.assertEqual(self.calls, ["uk_tender"])
         self.assertEqual(prior.read_text(), "prior")
         self.assertEqual(list(folder(self.directory, OUTPUTS).iterdir()), [])
+
+    def test_settlement_failure_does_not_replace_brief_or_retry_and_terminalizes_journal(self):
+        prior = self.directory / engagement.BRIEF
+        prior.write_text("prior")
+        with patch.object(ActivityFeed, "settle", side_effect=sqlite3.OperationalError("private fixture")) as settle:
+            with self.assertRaises(engagement.CycleMaintenanceRequired) as error:
+                self.run_cycle()
+        self.assertEqual(settle.call_count, 1)
+        self.assertEqual(prior.read_text(), "prior")
+        self.assertNotIn("private fixture", str(error.exception))
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([row["state"] for row in events.read()], ["queued", "running", "failed"])
+        finally:
+            events.close()
+
+    def test_exception_settlement_failure_does_not_mask_independent_terminalization(self):
+        def fail_progress(_):
+            raise RuntimeError("private progress fixture")
+        with patch.object(ActivityFeed, "settle", side_effect=ValueError("private settlement fixture")) as settle:
+            with self.assertRaises(engagement.CycleMaintenanceRequired) as error:
+                engagement.cycle(self.directory, lambda: False, fail_progress,
+                                 default_search=self.search, clock=lambda: NOW)
+        self.assertEqual(settle.call_count, 1)
+        self.assertNotIn("private", str(error.exception))
+        self.assertEqual(self.calls, [])
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([row["state"] for row in events.read()], ["queued", "running", "failed"])
+        finally:
+            events.close()

@@ -8,6 +8,7 @@ from . import canada_search, fts_search, sam_search
 from .account_providers import balances, planning_limit, renew_document
 from .account_vault import AccountVault
 from .cycle_history import BRIEF, CycleHistory
+from .cycle_recovery import CycleRecovery, CycleMaintenanceRequired
 from .event_store import EventStore
 from .activity_feed import ActivityFeed, finding_row
 from .engagement_files import run_files
@@ -83,9 +84,12 @@ def compile_brief(path, profile, bank, now, stopped):
 def cycle(directory, stopped, progress, *, default_search=search_default, clock=utcnow):
     directory = Path(directory)
     ensure_active(stopped)
-    event = EventStore(directory / "events.sqlite3")
+    try:
+        event = EventStore(directory / "events.sqlite3")
+    except (ValueError, OSError, sqlite3.Error):
+        raise CycleMaintenanceRequired("Scout cycle storage requires maintenance. Automatic engagement paused.") from None
     task = uuid4().hex
-    activity = ActivityFeed(event.db)
+    activity = None
     def stages(rows):
         activity.put(task, [(task + "/" + key, state, title, detail) for key, state, title, detail in rows], clock())
     def stage(key, state, title, detail=""):
@@ -93,9 +97,17 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
     def journal(state):
         event.append(dict(task_id=task, target="Autonomous Scout cycle", state=state,
                           timestamp=clock().isoformat()))
+    def settle(failed):
+        if activity is not None:
+            activity.settle(task, failed=failed)
+    recovery = CycleRecovery(settle, journal, stopped)
     try:
-        journal("queued")
-        journal("running")
+        recovery.record("queued")
+        recovery.record("running")
+        try:
+            activity = ActivityFeed(event.db)
+        except (ValueError, OSError, sqlite3.Error):
+            raise CycleMaintenanceRequired("Scout cycle storage requires maintenance. Automatic engagement paused.") from None
         try:
             profile = load_profile(directory, halt_check=stopped)
         except NoSavedProfile:
@@ -253,13 +265,12 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         brief = dict(format="nexus-engagement-brief-v1", cycle_id=task, finished=clock().isoformat(), status=status,
                      sources=outcomes, jobs=jobs, notes=notes, shortlist=rows,
                      shortlist_available=shortlist_issue is None, external_actions=0)
+        recovery.settle()
         CycleHistory(event.db).publish(directory, brief, lambda: ensure_active(stopped))
-        activity.settle(task)
-        journal("failed" if research_issue or (outcomes and not succeeded) else "succeeded")
+        recovery.record("failed" if research_issue or (outcomes and not succeeded) else "succeeded")
         return brief
-    except Exception:
-        activity.settle(task, failed=not stopped())
-        journal("cancelled" if stopped() else "failed")
+    except Exception as error:
+        recovery.fail(error)
         raise
     finally:
         event.close()

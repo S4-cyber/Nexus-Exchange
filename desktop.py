@@ -178,6 +178,7 @@ def main(*, data_directory=None, gui_smoke=False):
     executor = ThreadPoolExecutor(max_workers=1)
     future = None
     engaged = False
+    cycle_maintenance = False
     timer = None
     next_due = None
     activity_tick = None
@@ -358,8 +359,9 @@ def main(*, data_directory=None, gui_smoke=False):
         if timer is not None:
             root.after_cancel(timer)
             timer = None
-        engage_button.configure(text="Engage", state="normal")
-        cycle_status.configure(text="Paused. Select Engage to start a new cycle.")
+        engage_button.configure(text="Engage", state="disabled" if cycle_maintenance else "normal")
+        cycle_status.configure(text=("Maintenance required. Close and review local storage before restarting."
+                                     if cycle_maintenance else "Paused. Select Engage to start a new cycle."))
         scenario_report=None
         clear_embedded()
         exporter.configure(state="disabled")
@@ -559,6 +561,9 @@ def main(*, data_directory=None, gui_smoke=False):
             f"{result['escalated']} escalated; Resume offline explicitly.")
         return result
     def resume():
+        if cycle_maintenance:
+            halt_status.configure(text="HALTED — Scout storage requires maintenance and a new startup review.")
+            return
         if busy():
             halt_status.configure(text="Wait for interrupted worker to finish; then resume offline.")
             return
@@ -1681,7 +1686,7 @@ def main(*, data_directory=None, gui_smoke=False):
         root.after(100, poll_cycle)
 
     def poll_cycle():
-        nonlocal future, timer, next_due, latest_brief
+        nonlocal future, timer, next_due, latest_brief, cycle_maintenance
         while True:
             try:
                 stage = updates.get_nowait()
@@ -1697,6 +1702,22 @@ def main(*, data_directory=None, gui_smoke=False):
             next_status = summarize(brief)
             review.update_cycles(brief)
             latest_brief = brief
+        except engagement.CycleMaintenanceRequired:
+            # The worker cannot persist a RuntimeGuard halt (owner thread only).
+            # Stop scheduling before any refresh; keep resume blocked this session.
+            cycle_maintenance = True
+            future = None
+            try:
+                stop.set()
+            except Exception:
+                pass  # The in-memory halt is asserted before persistence.
+            show_halted("HALTED — Scout storage requires maintenance and a new startup review.")
+            resume_button.configure(state="disabled")
+            try:
+                refresh()
+            except (ValueError, sqlite3.DatabaseError):
+                pass
+            return
         except Exception:
             next_status = "Cycle interrupted. Review Reports for the recorded task status."
         future = None
