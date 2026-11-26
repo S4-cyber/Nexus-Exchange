@@ -87,3 +87,26 @@ independent review not performed. Superpowers unavailable. Atomic review
 candidate requires exact hosted tests and Windows packaging. Formal main
 acceptance remains 0/42. No new services, provider requests, expenditure,
 or commercial execution.
+
+## GRI-8 — snapshot-bound search history (2026-11-25)
+
+Receipt history now streams bounded metadata and checks displayed archive
+references within one explicit read transaction. Every receipt's digest and
+schema is checked even beyond the output limit; only displayed references
+are cross-checked (not a full archive audit). Cursor closure and rollback
+are guaranteed, and a caller-owned transaction is rejected without mutation.
+Three regression methods exercise a concurrent WAL writer, hidden corruption
+and capacity limits, and caller transaction preservation. WAL is used only
+by the synthetic test, not enabled in production by this change.
+
+PR #102 chronology code, tests and Scout receipt documentation are already
+identical at PR #111 head 4916c76fe73a19aa6524757ddec6769a9ca9f58b (blobs 39b8d0712151ed4d7b560c704ec1c14c90804b55,
+f821f74afc2c9776f98ef9b46c6eb69e0abf978a,
+9a3cc50057128ae060bbed8186ced9f22bc88bb8). Its separate Python/Windows
+runs 45671905049 and 45671904645 succeeded. Do not cherry-pick duplicate code.
+The exact integrated predecessor passed 926 tests per Python 3.10/3.13
+(one skipped) and Windows unit/source/frozen/GUI/fixture/Genesis/security
+checks and artifact upload (runs 45746144597, 45746144735). Full local
+checkout DNS failed; new hosted tests and independent review pending.
+No provider calls, actual inference, dependency additions, authority or
+spending; no Operative writes. Formal accepted gates remain 0/42.
