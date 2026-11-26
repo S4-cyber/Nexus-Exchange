@@ -156,5 +156,64 @@ class AdvisoryAttemptTests(unittest.TestCase):
             self.assertEqual(store.status(PLAN, halted=False)["attempts_used"], 1)
 
 
+    def test_ledger_read_bounds_storage_before_text_decode(self):
+        with AdvisoryAttemptStore(self.path) as store:
+            self.reserve(store)
+            original = store.db.execute("SELECT payload,digest FROM advisory_attempts_v1").fetchone()
+            seen = []
+            def decode(raw):
+                seen.append(len(raw))
+                return raw.decode("utf-8")
+            store.db.text_factory = decode
+            self.assertEqual(store.status(PLAN, halted=False)["state"], "RESERVED")
+            self.assertEqual(seen, [])
+            for column, value in (
+                ("payload", "x" * 8193), ("payload", "x\x00" + "x" * 8192),
+                ("payload", "é" * 4097), ("payload", b"{}"),
+                ("digest", "a" * 65), ("digest", b"a" * 64),
+                ("digest", b"\xff" * 64),
+            ):
+                with self.subTest(column=column, kind=type(value).__name__, size=len(value)):
+                    store.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=?", original)
+                    if value == b"\xff" * 64:
+                        store.db.execute("UPDATE advisory_attempts_v1 SET digest=CAST(? AS TEXT)", (value,))
+                    else:
+                        store.db.execute("UPDATE advisory_attempts_v1 SET " + column + "=?", (value,))
+                    seen.clear()
+                    with self.assertRaises(ValueError):
+                        store.preview_budget(PLAN, halted=False)
+                    self.assertEqual(seen, [])
+                    self.assertFalse(store.db.in_transaction)
+                    self.assertEqual(store.db.execute("SELECT COUNT(*) FROM advisory_attempts_v1").fetchone(), (1,))
+            store.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=?", original)
+            self.assertEqual(store.status(PLAN, halted=False)["state"], "RESERVED")
+
+    def test_runtime_enumeration_bounds_corrupt_keys_and_rolls_back(self):
+        with AdvisoryAttemptStore(self.path) as store:
+            self.reserve(store)
+            original = store.db.execute("SELECT payload,digest FROM advisory_attempts_v1").fetchone()
+            seen = []
+            def decode(raw):
+                seen.append(len(raw))
+                return raw.decode("utf-8")
+            store.db.text_factory = decode
+            self.assertEqual(store._runtime_pending(now=NOW), 1)
+            for value in ("x" * 8193, "a" * 64 + "\x00" + "x" * 8192, b"a" * 64, b"\xff" * 64):
+                with self.subTest(kind=type(value).__name__, size=len(value)):
+                    store.db.execute("DELETE FROM advisory_attempts_v1 WHERE plan_id!=?", (PLAN,))
+                    if value == b"\xff" * 64:
+                        store.db.execute("INSERT INTO advisory_attempts_v1 VALUES (CAST(? AS TEXT),?,?)",
+                                         (value, *original))
+                    else:
+                        store.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (value, *original))
+                    seen.clear()
+                    with self.assertRaises(ValueError):
+                        store._runtime_recover_all(now=NOW)
+                    self.assertEqual(seen, [])
+                    self.assertFalse(store.db.in_transaction)
+                    self.assertEqual(store.db.execute("SELECT COUNT(*) FROM advisory_attempts_v1").fetchone(), (2,))
+                    self.assertEqual(store.status(PLAN, halted=False)["state"], "RESERVED")
+
+
 if __name__ == "__main__":
     unittest.main()
