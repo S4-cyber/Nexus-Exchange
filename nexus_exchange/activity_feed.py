@@ -4,7 +4,7 @@ from hashlib import sha256
 import sqlite3
 
 from .event_store import read_projection
-from .activity_rows import HOLD_KEY, read_scout_rows
+from .activity_rows import HOLD_KEY, read_scout_rows, write_scout_rows
 
 STATES = ("Pending", "Engaged", "Completed", "Finding", "Needs attention", "Stopped", "Skipped")
 JOURNAL_STATES = dict(queued="Pending", running="Engaged", succeeded="Completed",
@@ -21,21 +21,7 @@ class ActivityFeed:
         db.execute("CREATE INDEX IF NOT EXISTS scout_activity_run ON scout_activity(run,state)")
 
     def put(self, run, rows, now):
-        stamp = now.astimezone(timezone.utc).isoformat(timespec="microseconds")
-        values = []
-        for key, state, title, detail in rows:
-            if state not in STATES:
-                raise ValueError("Unknown activity state")
-            values.append((key, run, state, title[:512], detail[:2048], stamp))
-        if not values:
-            return
-        self.db.execute("BEGIN IMMEDIATE")
-        try:
-            self.db.executemany("INSERT OR REPLACE INTO scout_activity VALUES (?,?,?,?,?,?)", values)
-            self.db.execute("COMMIT")
-        except BaseException:
-            self.db.execute("ROLLBACK")
-            raise
+        write_scout_rows(self.db, run, rows, now, STATES)
 
     def settle(self, run=None, *, failed=False):
         # An interrupted cycle never leaves a queued or engaged row looking live after restart.
