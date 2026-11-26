@@ -236,14 +236,11 @@ def open_discovery_window(parent,*,directory,halt_check,blocked_check,launch,edi
     import tkinter as tk
     from tkinter import ttk, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
-    from .cockpit import install_cockpit, fit_geometry
+    from .workspace_host import open_workspace
     from .lead_store import LeadStore
     from .discovery_history import recent_hint, hint_text, review_receipt, receipt_review_text
     from .discovery_performance import analyze,empty_history,priority_label,option_performance_text,performance_text
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Capability search planner")
-    window.geometry(fit_geometry(window,1000,660))
+    window, content = open_workspace(parent, "Nexus Exchange | Capability search planner", 1000, 660)
     ttk.Label(content,text="Plan a search",font=("Segoe UI",18)).pack(pady=6)
     instructions = "Choose the service you can provide, then select a source to review the search before it runs."
     guidance = ttk.Label(content, text=instructions, wraplength=840, justify="left")

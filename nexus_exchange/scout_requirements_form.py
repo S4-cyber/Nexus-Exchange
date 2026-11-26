@@ -82,7 +82,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
     from tkinter.scrolledtext import ScrolledText
-    from .cockpit import install_cockpit, fit_geometry
+    from .workspace_host import open_workspace
     from .operator_capabilities import CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
     from .service_handoff import review_scope
     from .csv_workspace import preview_text
@@ -94,10 +94,7 @@ def open_service_requirements_window(parent, workspace, context, title, *, plan_
 
     workspace.resolve(context)
     context = dict(context)
-    window = tk.Toplevel(parent)
-    content = install_cockpit(window).content
-    window.title("Nexus Exchange | Scout service requirements")
-    window.geometry(fit_geometry(window, 1060, 740))
+    window, content = open_workspace(parent, "Nexus Exchange | Scout service requirements", 1060, 740)
     ttk.Label(content, text="SCOUT — Local service requirements", font=("Segoe UI", 18)).pack(pady=6)
     ttk.Label(content, text=title, wraplength=900).pack(padx=12)
     ttk.Label(content, text="Selected saved plan: " + (plan_id or "None — save a plan and refresh Matrix"), wraplength=900).pack(padx=12)

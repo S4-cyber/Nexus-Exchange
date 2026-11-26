@@ -97,8 +97,10 @@ def finding_row(source, label, lead):
     deadline = lead.get("deadline") or lead.get("earliest_deadline_date")
     if deadline:
         lines.append("Reported deadline: " + deadline)
-    tasks = lead.get("todo") or []
-    if tasks and isinstance(tasks[0].get("instruction"), str):
-        lines.append(tasks[0]["instruction"])
+    tasks = lead.get("todo")
+    if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+        instruction = tasks[0].get("instruction")
+        if isinstance(instruction, str):
+            lines.append(instruction[:2048].encode("utf-8", errors="replace").decode("utf-8"))
     lines.append(lead["source_url"])
     return (finding_key(source, lead["notice_id"]), "Finding", lead["title"], "\n".join(lines))

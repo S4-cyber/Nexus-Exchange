@@ -159,6 +159,8 @@ def help_for(label,widget_class):
     key=cleaned.casefold()
     if key in HELPS:
         return HELPS[key]
+    if key == "back" or key.startswith("back to "):
+        return "Close this view and return. To keep it open, switch tabs instead."
     if widget_class in ("Checkbutton","TCheckbutton","Radiobutton","TRadiobutton"):
         return "Choose or clear this option: "+cleaned[:74]+". This is a local setting, not external authorization."
     if widget_class in ("Button","TButton","TMenubutton","Menubutton"):

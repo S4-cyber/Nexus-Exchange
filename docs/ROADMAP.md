@@ -771,3 +771,21 @@ review of source authorization and receipt-to-Operator qualification.
 - EventStore read, append and recovery now share a row-count and 8192-byte per-record bound with SQL storage-class projection, strict UTF-8 decoding and duplicate JSON field rejection. Read validates the ordered task state projection; malformed history is a maintenance hold, not silently skipped. Existing generated UTF-8 records remain compatible, including maximum-length non-BMP fields. No migration or automatic deletion; aggregate memory limits and full-history scan optimization still require design and measurement.
 - Local Python 3.13.5, real SQLite, exact five source/test base blob hashes matched, no mocks for the actual module dependencies. Red: 11 methods with 6 failing subcases and 1 error; green: 11/11 methods (4 new). Synthetic in-memory recovery benchmark: 10,000 events, 100 interrupted tasks, 3 samples each, baseline median 0.455 s and candidate 0.511 s. Not a speedup or a Windows/production benchmark. Full repository tests unavailable locally due to Git DNS; independent QA and hosted regression pending.
 - Read-only Operative journal at 6a1df5c2003ae6fa3f3536f5cdd72ab7ddfbfa11 (blob 59ee08e7734347897b29af33603dffba783ec9ad) and pinned agency-agents handoff reviewed. Mem0 8096993d69396bf97311249206915cadb2eb998f Apache-2.0 / Python >=3.10 metadata rechecked; defer installation due to model, telemetry and storage dependencies. No external code, inference, services, commercial authority or costs. Main remains 261a3343de17b537594a333133b9ad118442e6cc; accepted gates 0/42. Next: exact-head hosted verification, independent consolidation review, aggregate memory/recovery performance and end-to-end simulated lifecycle.
+
+## Desktop engagement continuity (2026-11-26 Pacific)
+
+The review candidate combines the verified source checks from #112 (a64b6dd,
+Windows run 45854758428) and the 30-cycle report history from #113
+(2005aba, Windows run 45856420866). One-button engagement now distinguishes
+rejected source results, unavailable archive writes and unreadable shortlists.
+Reports records the affected stage while independent local file work can finish.
+A later cycle retries discovery through the normal scheduler. Emergency halt
+still blocks pending work. Five new regression cases failed against the combined
+baseline. The suite also checks next-cycle recovery and existing file reuse.
+This is desktop review work on a candidate branch. Formal main acceptance is
+pending. No new account, dependency, paid infrastructure or transaction authority.
+
+The desktop review also consolidates research and advanced operations into
+one scrollable Tools tab with Back navigation. Native file selection and explicit
+action confirmations stay available. The provided transparent emblem appears in
+the main header, window icon and Windows executable at native icon sizes.

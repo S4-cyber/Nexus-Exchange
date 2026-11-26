@@ -5,7 +5,7 @@ import json
 import sqlite3
 import webbrowser
 from queue import Empty, SimpleQueue
-from nexus_exchange import engagement
+from nexus_exchange import engagement, cycle_history
 from nexus_exchange.engagement_reports import EngagementReports
 from nexus_exchange.activity_feed import ActivityFeed, finding_row, with_shortlist
 from nexus_exchange.activity_panel import ActivityPanel
@@ -121,7 +121,9 @@ def main(*, data_directory=None, gui_smoke=False):
     from tkinter import ttk, filedialog, messagebox, simpledialog
     from tkinter.scrolledtext import ScrolledText
     from nexus_exchange.cockpit import install_cockpit, fit_geometry, smoke_cockpit, action_menu, WorkspaceViewport
+    from nexus_exchange.workspace_host import WorkspaceHost, install_identity, open_workspace
     root = tk.Tk()
+    logo = install_identity(root)
     root.title("Nexus Exchange | Scout preview")
     root.geometry(fit_geometry(root,1120,820))
     directory = Path(data_directory) if data_directory is not None else Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "NexusExchange"
@@ -177,6 +179,7 @@ def main(*, data_directory=None, gui_smoke=False):
         pages[name] = ttk.Frame(tabs, padding=(14, 10))
         tabs.add(pages[name], text=name)
     tabs.enable_traversal()
+    tools_host = WorkspaceHost(tabs)
     home, research, reports, accounts, settings, help_page = pages.values()
 
     def heading(parent, text):
@@ -201,7 +204,7 @@ def main(*, data_directory=None, gui_smoke=False):
         except (OSError, ValueError):
             messagebox.showinfo(name, f"Work folder: {directory / name}", parent=root)
 
-    review = EngagementReports(reports, open_work_folder)
+    review = EngagementReports(reports, open_work_folder, cycle_history.CycleHistory(store.db))
     report_actions = review.actions
     result_panel = ttk.Frame(review.tabs)
     output = ScrolledText(result_panel, width=1, height=4, wrap="word", padx=8, pady=4)
@@ -571,9 +574,6 @@ def main(*, data_directory=None, gui_smoke=False):
             window.pack(fill="both", expand=True)
             content = ttk.Frame(window)
             content.pack(fill="both", expand=True)
-        else:
-            window = tk.Toplevel(root)
-            content = install_cockpit(window).content
         source_format=report.get("format","nexus-sam-research-v1")
         label,link_for={
             "nexus-sam-research-v1":("SAM",notice_url),
@@ -584,8 +584,7 @@ def main(*, data_directory=None, gui_smoke=False):
             "nexus-usaspending-research-v1":("USAspending award intelligence",award_url),
         }[source_format]
         if not embed:
-            window.title("Nexus Exchange | "+label+" research leads")
-            window.geometry(fit_geometry(window,1050,700))
+            window, content = open_workspace(root, label + " research leads", 1050, 700)
         count = sum(lead["research_candidate"] for lead in report["leads"])
         ttk.Label(content,text=f"{report['returned']} notices | {count} research candidates | {report['requests']} requests").pack(pady=6)
         ttk.Label(content,text="No lead is approved for execution. Unknown cash exposure blocks Genesis.",wraplength=1000).pack()
@@ -684,10 +683,7 @@ def main(*, data_directory=None, gui_smoke=False):
         display()
         return window
     def trade_routes_window():
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Commercial routes")
-        window.geometry(fit_geometry(window,1050,700))
+        window, content = open_workspace(root, "Nexus Exchange | Commercial routes", 1050, 700)
         ttk.Label(content,text="Commercial routes — research and compliance only",font=("Segoe UI",16)).pack(pady=8)
         ttk.Label(content,text="No route grants authority or establishes zero cash exposure.").pack()
         tree=ttk.Treeview(content,columns=("route","model","capital","gate"),show="headings",height=12)
@@ -723,10 +719,7 @@ def main(*, data_directory=None, gui_smoke=False):
     def trade_catalog():
         from nexus_exchange.fx_reference import CURRENCIES, fetch_reference
         from nexus_exchange.sec_company import fetch_company, normalize_cik, _declared_agent
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Scout global trade catalog")
-        window.geometry(fit_geometry(window,1050,760))
+        window, content = open_workspace(root, "Nexus Exchange | Scout global trade catalog", 1050, 760)
         ttk.Label(content,text="SCOUT — Global trade sources",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(content,text="Documented sources, not connected accounts or verified revenue. SAM pilot is separate.").pack()
         filters=ttk.Frame(content)
@@ -1015,10 +1008,7 @@ def main(*, data_directory=None, gui_smoke=False):
         reload()
         return window
     def revenue_workspace():
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Scout revenue pathways")
-        window.geometry(fit_geometry(window,900,760))
+        window, content = open_workspace(root, "Nexus Exchange | Scout revenue pathways", 900, 760)
         ttk.Label(content,text="SCOUT — Revenue pathways",font=("Segoe UI",18)).pack(pady=10)
         ttk.Label(content,text="Planning only. Budget entries do not connect a bank or authorize spending.").pack()
         settings = ttk.Frame(content)
@@ -1139,12 +1129,7 @@ def main(*, data_directory=None, gui_smoke=False):
         return open_discovery_window(root,directory=directory,halt_check=stop.is_set,
             blocked_check=council_blocked,launch=planned_discovery,edit_profile=owner_profile_window,smoke=smoke)
     def owner_profile_window(*, parent=root, on_changed=None):
-        window = tk.Toplevel(parent)
-        if on_changed is not None:
-            window.transient(parent)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Search settings")
-        window.geometry(fit_geometry(window,720,490))
+        window, content = open_workspace(parent, "Nexus Exchange | Search settings", 720, 490)
         heading(content, "Search settings")
         buttons = action_row(content)
         message = ttk.Label(content, wraplength=600, justify="left")
@@ -1289,10 +1274,7 @@ def main(*, data_directory=None, gui_smoke=False):
             return initial
         current_context()
         if previous is None:
-            window = tk.Toplevel(parent)
-            content = install_cockpit(window).content
-            window.title("Nexus Exchange | Persistent To Do")
-            window.geometry(fit_geometry(window, 1000, 720))
+            window, content = open_workspace(parent, "Nexus Exchange | Persistent To Do", 1000, 720)
         else:
             previous.pack_forget()
             window = ttk.Frame(parent, name="checklist")
@@ -1458,10 +1440,7 @@ def main(*, data_directory=None, gui_smoke=False):
             council_action=council_action,council_blocked=council_blocked,
             operator_action=operator_action,operator_blocked=council_blocked,csv_action=csv_action)
     def browse_leads():
-        window = tk.Toplevel(root)
-        content=install_cockpit(window).content
-        window.title("Nexus Exchange | Unified Scout history")
-        window.geometry(fit_geometry(window,1050,720))
+        window, content = open_workspace(root, "Nexus Exchange | Unified Scout history", 1050, 720)
         ttk.Label(content,text="SCOUT — Historical lead memory",font=("Segoe UI",18)).pack(pady=8)
         ttk.Label(content,text="Saved observations only. Owner profile changes review order, never eligibility.").pack()
         filters=ttk.Frame(content)
@@ -1641,20 +1620,14 @@ def main(*, data_directory=None, gui_smoke=False):
         reload()
         return window
 
-    def read_brief():
-        try:
-            with (directory / engagement.BRIEF).open(encoding="utf-8") as handle:
-                return json.loads(handle.read(1024 * 1024))
-        except FileNotFoundError:
-            return None
-
     def summarize(brief):
         found = sum(item["found"] for item in brief["sources"])
         jobs = brief["jobs"]
-        return (f"{brief['status']} · Notices {found} · Shortlisted {len(brief['shortlist'])}"
+        return (f"{brief['status']} · Notices {found} · {engagement.shortlist_summary(brief)}"
                 f" · Files created {jobs['produced']} · Files held {jobs['held']}")
 
     def open_brief():
+        review.show_latest()
         tabs.select(reports)
         review.tabs.select(review.summary)
 
@@ -1693,7 +1666,7 @@ def main(*, data_directory=None, gui_smoke=False):
         try:
             brief = future.result()
             next_status = summarize(brief)
-            review.display(brief)
+            review.update_cycles(brief)
             latest_brief = brief
         except Exception:
             next_status = "Cycle interrupted. Review Reports for the recorded task status."
@@ -1759,7 +1732,7 @@ def main(*, data_directory=None, gui_smoke=False):
 
     safety_buttons = ttk.Frame(chrome.safety)
     safety_buttons.pack(fill="x")
-    ttk.Label(safety_buttons, text="Nexus Exchange", font=("Segoe UI", 15, "bold")).pack(side="left")
+    ttk.Label(safety_buttons, image=logo, compound="left", text=" Nexus Exchange", font=("Segoe UI", 15, "bold")).pack(side="left")
     halt_button = ttk.Button(safety_buttons, text="Emergency halt", command=halt, style="Halt.TButton")
     halt_button.pack(side="right")
     resume_button = ttk.Button(settings, text="Resume offline", command=resume)
@@ -1778,24 +1751,24 @@ def main(*, data_directory=None, gui_smoke=False):
     engage_button.pack(side="left")
     ttk.Button(home_actions, text="View latest brief", command=open_brief).pack(side="left", padx=5)
     try:
-        previous = read_brief()
-        review.display(previous)
+        previous = cycle_history.latest(directory)
+        review.update_cycles(previous)
         latest_brief = previous
         refresh()
         cycle_status.configure(text=("Last cycle · " + summarize(previous)) if previous else "Ready for the first search.")
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError, RecursionError, sqlite3.Error):
         latest_brief = None
-        review.display(None, error="Select Engage to rebuild the latest brief from the lead archive.")
+        review.update_cycles(None, error="Select Engage to rebuild the latest brief from the lead archive.")
         cycle_status.configure(text="Select Engage to rebuild the latest brief.")
     refresh_accounts = install_accounts(accounts, directory, account_task, busy, webbrowser.open)
     heading(research, "Find opportunities")
     find_actions = action_row(research)
-    ttk.Button(find_actions, text="Explore sources", command=revenue_workspace).pack(side="left")
-    ttk.Button(find_actions, text="Plan a search", command=discovery_window).pack(side="left", padx=5)
+    tools_host.button(find_actions, "Explore sources", revenue_workspace).pack(side="left")
+    tools_host.button(find_actions, "Plan a search", discovery_window).pack(side="left", padx=5)
     heading(research, "Review saved leads")
     lead_actions = action_row(research)
-    ttk.Button(lead_actions, text="Browse leads", command=browse_leads).pack(side="left")
-    ttk.Button(lead_actions, text="Compare leads", command=ranked_matrix).pack(side="left", padx=5)
+    tools_host.button(lead_actions, "Browse leads", browse_leads).pack(side="left")
+    tools_host.button(lead_actions, "Compare leads", ranked_matrix).pack(side="left", padx=5)
     heading(research, "Work from a file")
     file_actions = action_row(research)
     importer = ttk.Button(file_actions, text="Import opportunities", command=import_file)
@@ -1809,7 +1782,7 @@ def main(*, data_directory=None, gui_smoke=False):
 
     heading(settings, "Advanced preferences")
     resume_button.pack(anchor="w", pady=(0,4))
-    ttk.Button(settings, text="Search settings", command=owner_profile_window).pack(anchor="w")
+    tools_host.button(settings, "Search settings", owner_profile_window).pack(anchor="w")
     heading(settings, "Appearance")
     ttk.Checkbutton(settings, text="Animate stars", variable=chrome.motion).pack(anchor="w")
     heading(settings, "Recovery")
@@ -1818,7 +1791,7 @@ def main(*, data_directory=None, gui_smoke=False):
 
     heading(help_page, "Getting started")
     for line in ("1. Choose Engage on Home. Search or filter the live list and select any task or finding for details.",
-                 "2. Reports shows the same live activity, the latest cycle brief and individual file results.",
+                 "2. Reports shows the same live activity, up to 30 recent cycle briefs and their file results. Choose a cycle to review it.",
                  "3. Emergency halt stops scheduling. After closing and reopening the application, choose Engage to start again."):
         ttk.Label(help_page, text=line, wraplength=440, justify="left").pack(anchor="w", pady=2)
     ttk.Label(help_page, text="In Reports → Work files, open the inbox to add CSVs or flat JSON records with text values. Scout checks CSV columns and converts JSON to CSV. Select a file to see its result or what needs attention.", wraplength=490, justify="left").pack(anchor="w", pady=4)
@@ -1850,6 +1823,27 @@ def main(*, data_directory=None, gui_smoke=False):
             if (tabs.tab(tabs.select(), "text") != tab_name or not halt_button.winfo_ismapped()
                     or halt_button.winfo_rooty() >= page_widget.winfo_rooty() or not stop.is_set()):
                 raise RuntimeError("Tab navigation lost the global halt control or changed runtime state")
+        tabs.select(research)
+        research_buttons = find_actions.winfo_children()
+        root.update()
+        research_buttons[0].focus_force()
+        research_buttons[0].invoke()
+        first_tool = tools_host.stack[-1]
+        if (first_tool.winfo_toplevel() is not root or tabs.select() != str(tools_host.page)
+                or any(isinstance(w, tk.Toplevel) for w in root.winfo_children())):
+            raise RuntimeError("Research opened a second native window")
+        tabs.select(research)
+        research_buttons[0].invoke()
+        if tools_host.stack != [first_tool] or not halt_button.winfo_viewable():
+            raise RuntimeError("Reopening Research added a duplicate tool or hid Emergency halt")
+        tools_host.back.invoke()
+        if tools_host.stack or tabs.select() != str(research) or str(tools_host.page) in tabs.tabs():
+            raise RuntimeError("Back did not return to Research and remove the empty Tools tab")
+        root.update()
+        if root.focus_get() != research_buttons[0]:
+            raise RuntimeError("Back did not restore focus to the launching control")
+        if logo.width() != 32 or logo.height() != 32 or not logo.transparency_get(0, 0):
+            raise RuntimeError("Expected a proportional transparent header logo")
         tabs.select(home)
         if os.name == "nt":
             from nexus_exchange.account_vault import AccountVault
@@ -1862,6 +1856,11 @@ def main(*, data_directory=None, gui_smoke=False):
         work_folder(directory, INBOX).joinpath("fix.csv").write_text("id\n=formula\n", encoding="utf-8")
         from threading import Event
         release_search = Event()
+        # Exercise the upgrade path through the packaged UI using a previous-format brief.
+        old_brief = dict(format="nexus-engagement-brief-v1", finished="2025-05-01T10:00:00+00:00",
+                         status="Partial coverage", sources=[], notes=["Earlier cycle fixture"], shortlist=[],
+                         jobs=dict(produced=0, existing=0, held=0, full=False, items=[]), external_actions=0)
+        (directory / cycle_history.BRIEF).write_text(json.dumps(old_brief), encoding="utf-8")
         engage_button.invoke()
         deadline = monotonic() + 8
         try:
@@ -1880,7 +1879,7 @@ def main(*, data_directory=None, gui_smoke=False):
         while future is not None and monotonic() < deadline:
             root.update()
             sleep(0.01)
-        brief = read_brief()
+        brief = cycle_history.latest(directory)
         if future is not None or not engaged or not brief or len(brief["sources"]) != 2 or timer is None:
             raise RuntimeError("One-click first-run engagement did not compile and schedule the next search")
         open_brief()
@@ -1891,6 +1890,18 @@ def main(*, data_directory=None, gui_smoke=False):
         if (not review.listing.winfo_ismapped() or len(review.items) != 2
                 or "fix.csv" not in review.detail.cget("text") or brief["jobs"]["produced"] != 1):
             raise RuntimeError("Work files did not show the completed and held inbox jobs")
+        picker = review.pickers[1]
+        picker.current(1)
+        picker.event_generate("<<ComboboxSelected>>")
+        root.update()
+        if review.items or "Earlier cycle fixture" not in review.text.get("1.0", "end"):
+            raise RuntimeError("Cycle selector did not switch the brief and its file results together")
+        review.update_cycles(brief)
+        if not review.pinned or review.items:
+            raise RuntimeError("Live update changed the selected historical cycle")
+        open_brief()
+        if review.pinned is not None or len(review.items) != 2:
+            raise RuntimeError("Home did not restore the latest report")
         tabs.select(home)
         halt_button.invoke()
         if timer is not None or engaged or not stop.is_set():
@@ -2045,7 +2056,9 @@ def main(*, data_directory=None, gui_smoke=False):
         if not start_search.instate(["disabled"]):
             raise RuntimeError("A fresh planner must wait for search settings")
         control(setup, ttk.Button, "Search settings").invoke()
-        editor = next(widget for widget in setup.winfo_children() if isinstance(widget, tk.Toplevel))
+        editor = tools_host.stack[-1]
+        if editor is setup or editor.previous is not setup or editor.winfo_toplevel() is not root:
+            raise RuntimeError("Search settings did not open inside the current workspace")
         hours = next(widget for widget in descendants(editor) if widget.winfo_name() == "hours")
         hours.delete(0, "end")
         hours.insert(0, "20")

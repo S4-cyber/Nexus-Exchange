@@ -1,23 +1,22 @@
 """One bounded engagement cycle. The desktop owns the repeating schedule."""
 from datetime import datetime, timedelta, timezone
-import json
-import os
 from pathlib import Path
+import sqlite3
 from uuid import uuid4
 
 from . import canada_search, fts_search, sam_search
 from .account_providers import balances, planning_limit, renew_document
 from .account_vault import AccountVault
+from .cycle_history import BRIEF, CycleHistory
 from .event_store import EventStore
 from .activity_feed import ActivityFeed, finding_row
 from .engagement_files import run_files
-from .lead_store import LeadStore
+from .lead_store import ArchiveCapacityError, LeadStore, SOURCES
 from .operator_capabilities import assess_lead, CSV_ID, JSON_ID, PROFILE_ID, RECONCILE_ID
 from .review_ranking import RankingStore
 from .scout_discovery import (build_plan, execute_discovery, load_profile, NoSavedProfile,
                               READY, SOURCE_LABELS)
 
-BRIEF = "engagement-latest.json"
 SERVICES = ((CSV_ID, "csv"), (JSON_ID, "json"), (PROFILE_ID, "data quality"), (RECONCILE_ID, "reconciliation"))
 
 
@@ -142,6 +141,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         period = int(stamp.timestamp() // 3600)
         capability, term = SERVICES[period % len(SERVICES)]
         path = directory / "scout-leads.sqlite3"
+        archive_hold = None
         for source in sources:
             ensure_active(stopped)
             label = SOURCE_LABELS[source]
@@ -166,6 +166,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                     notes.append(label + " skipped under current search preferences.")
                     continue
                 selection = choices[(period // len(SERVICES)) % len(choices)]["option_id"]
+            if archive_hold:
+                detail = "Search skipped this cycle. " + archive_hold
+                stage(source, "Skipped", label, detail)
+                outcomes.append(dict(source=source, status="Skipped", detail=detail, found=0, saved=0))
+                continue
             stage(source, "Engaged", label, "Searching the public source.")
             progress("Searching " + label)
             try:
@@ -187,18 +192,47 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
             ensure_active(stopped)
             receipt = (dict(plan=plan, profile=profile, option_id=selection, started_at=now,
                             task_id=uuid4().hex) if profile else None)
-            with LeadStore(path) as store:
-                saved = store.record(report, now=clock(), halted=False, halt_check=stopped, discovery=receipt)
+            rejection = None
+            try:
+                if not isinstance(report, dict) or SOURCES.get(report.get("format"), (None,))[0] != source:
+                    raise ValueError("Unexpected source report.")
+                with LeadStore(path) as store:
+                    saved = store.record(report, now=clock(), halted=False, halt_check=stopped, discovery=receipt)
+            except PermissionError:
+                raise
+            except ArchiveCapacityError:
+                archive_hold = "The local search archive has reached its storage limit."
+            except (sqlite3.Error, OSError):
+                archive_hold = "Scout could not write to the local search archive. Check disk space and file access."
+            except (ValueError, TypeError, KeyError):
+                rejection = "The source results could not be verified for storage."
+            ensure_active(stopped)
+            if archive_hold or rejection:
+                detail = archive_hold or rejection
+                stage(source, "Needs attention", label, detail)
+                outcomes.append(dict(source=source, status="Not saved", detail=detail, found=0, saved=0))
+                continue
             activity.put(task, [finding_row(source, label, lead) for lead in report["leads"]], clock())
             stage(source, "Completed", label, f"{report['returned']} notices returned · {saved} observations saved.")
             outcomes.append(dict(source=source, status="Searched", found=report["returned"], saved=saved))
         ensure_active(stopped)
         progress("Checking source holds and compiling the review brief")
         stage("brief", "Engaged", "Compile review shortlist")
-        rows = compile_brief(path, profile, bank, clock(), stopped)
-        progress("Processing and checking local work files")
+        shortlist_issue = None
+        try:
+            rows = compile_brief(path, profile, bank, clock(), stopped)
+        except PermissionError:
+            raise
+        except (sqlite3.Error, OSError, ValueError, LookupError, TypeError, RecursionError):
+            rows = []
+            shortlist_issue = "Scout could not verify the saved shortlist for this cycle."
         ensure_active(stopped)
-        stage("brief", "Completed", "Compile review shortlist", f"{len(rows)} leads shortlisted for review.")
+        if shortlist_issue:
+            notes.append(shortlist_issue)
+            stage("brief", "Needs attention", "Compile review shortlist", shortlist_issue)
+        else:
+            stage("brief", "Completed", "Compile review shortlist", f"{len(rows)} leads shortlisted for review.")
+        progress("Processing and checking local work files")
         stage("files", "Engaged", "Process local work files")
         jobs = run_files(directory, stopped, report=stages)
         file_note = jobs.get("issue") or ("Inbox exceeds 128 entries." if jobs["full"] else
@@ -212,20 +246,16 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         if jobs["held"]:
             notes.append("Review held inputs in Reports → Work files.")
         succeeded = sum(s["status"] == "Searched" for s in outcomes)
-        status = ("No sources enabled" if not outcomes else "Sources unavailable" if not succeeded
+        research_issue = shortlist_issue or (not succeeded and any(s["status"] == "Not saved" for s in outcomes))
+        status = ("Research needs attention" if research_issue else
+                  "No sources enabled" if not outcomes else "Sources unavailable" if not succeeded
                   else "Partial coverage" if succeeded < len(outcomes) else "Completed")
-        brief = dict(format="nexus-engagement-brief-v1", finished=clock().isoformat(), status=status,
-                     sources=outcomes, jobs=jobs, notes=notes, shortlist=rows, external_actions=0)
-        target = directory / BRIEF
-        temp = target.with_suffix(".tmp")
-        try:
-            temp.write_text(json.dumps(brief, ensure_ascii=True, indent=2), encoding="utf-8")
-            ensure_active(stopped)
-            os.replace(temp, target)
-        finally:
-            temp.unlink(missing_ok=True)
+        brief = dict(format="nexus-engagement-brief-v1", cycle_id=task, finished=clock().isoformat(), status=status,
+                     sources=outcomes, jobs=jobs, notes=notes, shortlist=rows,
+                     shortlist_available=shortlist_issue is None, external_actions=0)
+        CycleHistory(event.db).publish(directory, brief, lambda: ensure_active(stopped))
         activity.settle(task)
-        journal("failed" if outcomes and not succeeded else "succeeded")
+        journal("failed" if research_issue or (outcomes and not succeeded) else "succeeded")
         return brief
     except Exception:
         activity.settle(task, failed=not stopped())
@@ -233,6 +263,12 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         raise
     finally:
         event.close()
+
+
+def shortlist_summary(brief):
+    if not brief.get("shortlist_available", True):
+        return "Shortlist unavailable"
+    return f"Shortlisted {len(brief['shortlist'])}"
 
 
 def brief_text(brief):
@@ -244,7 +280,7 @@ def brief_text(brief):
     jobs = brief["jobs"]
     lines.append(f"Local work files: {jobs['produced']} produced, {jobs['existing']} already complete, {jobs['held']} need review.")
     lines.extend(brief["notes"])
-    lines.append(f"Review shortlist from saved leads: {len(brief['shortlist'])}")
+    lines.append(shortlist_summary(brief))
     for row in brief["shortlist"]:
         lines.extend(("", row["title"], SOURCE_LABELS[row["source"]] + " · " + row["review"].replace("_"," ").lower(),
                       row["next_step"], row["url"]))

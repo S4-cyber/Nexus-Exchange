@@ -185,11 +185,8 @@ def open_correspondence_window(parent, controller, *, smoke=False):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
     from tkinter.scrolledtext import ScrolledText
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title('Operator | Local correspondence')
-    window.geometry(fit_geometry(window,900,720))
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, 'Operator | Local correspondence', 900, 720)
     ttk.Label(content,text='LOCAL CORRESPONDENCE — DO NOT SEND',font=('Segoe UI',16)).pack(pady=5)
     ttk.Label(content,text='Fixed RFQ: '+controller.scope['draft_id'],wraplength=850).pack()
     ttk.Label(content,text='Declared supplier: '+controller.supplier['name']+

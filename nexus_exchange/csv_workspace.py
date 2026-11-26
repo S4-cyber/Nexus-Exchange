@@ -155,11 +155,8 @@ def open_csv_window(parent,*,plan_id,action,blocked_check,smoke_paths=None,smoke
     reconcile_mode=operation=="RECONCILE"
     profile_mode=operation=="COLUMN_PROFILE"
     json_source=source_format==JSON_SOURCE
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Operator CSV reconciliation" if reconcile_mode else "Nexus Exchange | Operator CSV quality report" if profile_mode else "Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable")
-    window.geometry(fit_geometry(window,1000,650))
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, "Nexus Exchange | Operator CSV reconciliation" if reconcile_mode else "Nexus Exchange | Operator CSV quality report" if profile_mode else "Nexus Exchange | Operator JSON-to-CSV" if json_source else "Nexus Exchange | Operator CSV deliverable", 1000, 650)
     ttk.Label(content,text="OPERATOR — CSV reconciliation" if reconcile_mode else "OPERATOR — CSV column quality report" if profile_mode else "OPERATOR — JSON-to-CSV work sample" if json_source else "OPERATOR — Local CSV work sample",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(content,text="Saved plan: "+plan_id,wraplength=950).pack()
     ttk.Label(content,text=("Choose left and right UTF-8 CSV files with identical declared columns and unique keys. Compare exact strings; report keys, record status and changed columns, never non-key values. Combined row limit 2000. No source changes." if reconcile_mode else "Select UTF-8 CSV and declare its exact input columns, unique key and row count. Produce aggregate empty, whitespace, nonblank, distinct and length counts per column; no source cell values or data correction." if profile_mode else "Select UTF-8 JSON containing an array of flat records. Every field value must be a string; declare all columns and a unique key. No coercion, missing fields, transmission or payment." if json_source else "Select a local UTF-8 CSV; declare exact requirements. Preview checks bytes and rows, not customer acceptance. No transmission or payment."),wraplength=950).pack(pady=4)

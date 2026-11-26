@@ -233,12 +233,8 @@ def open_council_window(parent,*,plan_id,action,blocked_check,smoke=False):
     from tkinter.scrolledtext import ScrolledText
 
     workspace=CouncilWorkspace(plan_id,action=action,blocked_check=blocked_check)
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Council review and audit")
-    window.geometry(fit_geometry(window,1160,810))
-    window.minsize(850,650)
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, "Nexus Exchange | Council review and audit", 1160, 810, minimum=(850, 650))
     ttk.Label(content,text="COUNCIL — Local scenario review",font=("Segoe UI",18)).pack(pady=6)
     ttk.Label(content,text="Saved plan: "+plan_id,wraplength=1080).pack(padx=12)
     ttk.Label(content,text="Explicit reviews consume one of three attempts. No independent factual verification or external authority.",

@@ -71,6 +71,10 @@ def _report_inputs(report):
     return rows, hashes, truncated
 
 
+class ArchiveCapacityError(ValueError):
+    """A bounded observation or search-receipt archive has reached its limit."""
+
+
 class ResultChangedError(ValueError):
     """The displayed result no longer matches the current archived observation."""
 
@@ -97,6 +101,8 @@ def _project(fmt,lead,hashes,truncated):
     deadline=lead.get("deadline")
     op=normalize(dict(source=source,external_id=identity,title=lead.get("title"),
         source_url=url,retrieved_at=stamp.isoformat(),deadline=deadline,currency=None,amount=None))
+    # The archive, live activity and native report must all be able to represent this title.
+    op.title.encode("utf-8")
     reasons=lead.get("blockers")
     if type(reasons) is not list or not 1<=len(reasons)<=64 or any(
             type(r) is not str or not re.fullmatch("[A-Z][A-Z0-9_]{0,95}",r) for r in reasons):
@@ -194,7 +200,7 @@ class LeadStore:
                         raise ValueError("conflicting observation at same retrieval time")
                     continue
                 if count+inserted>=MAX_ROWS:
-                    raise ValueError("lead archive capacity review required")
+                    raise ArchiveCapacityError("lead archive capacity review required")
                 self.db.execute("INSERT INTO scout_observations_v1 VALUES (?,?,?,?,?)",
                     (source,key,stamp,payload,digest))
                 inserted+=1

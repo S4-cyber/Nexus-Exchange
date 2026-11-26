@@ -167,12 +167,8 @@ def open_ranking_window(parent,*,directory,halt_check,review_tasks=None,council_
     from tkinter.scrolledtext import ScrolledText
 
     workspace=RankingWorkspace(directory,halt_check=halt_check)
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Scout opportunity Matrix")
-    window.geometry(fit_geometry(window,1160,760))
-    window.minsize(760,540)
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, "Nexus Exchange | Scout opportunity Matrix", 1160, 760, minimum=(760, 540))
     ttk.Label(content,text="SCOUT — Ranked opportunity Matrix",font=("Segoe UI",18)).pack(pady=8)
     ttk.Label(content,text="Historical snapshots and hypothetical USD assumptions only. No verified earnings, availability, or authority.",
               wraplength=1050).pack(padx=12,pady=4)
