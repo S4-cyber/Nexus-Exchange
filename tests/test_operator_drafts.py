@@ -121,7 +121,7 @@ class OperatorDraftTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.acknowledge(key, confirmed=True, now=NOW-timedelta(seconds=1), halted=False)
             store.db.execute("CREATE TRIGGER reject_ack BEFORE UPDATE ON operator_drafts_v1 BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-            with self.assertRaises(sqlite3.IntegrityError):
+            with patch.object(store, '_guard_write', return_value=None), self.assertRaises(sqlite3.IntegrityError):
                 store.acknowledge(key, confirmed=True, now=NOW, halted=False)
             self.assertFalse(store.db.in_transaction)
             self.assertEqual(store.get(key, halted=False)['state'], 'DRAFT_ONLY')
