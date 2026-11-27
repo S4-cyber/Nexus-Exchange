@@ -78,18 +78,32 @@ class CycleHistory:
                 previous = None
             if previous is not None:
                 old = encode(previous)
+                expected = (sha256(old).hexdigest(), previous["finished"], previous["status"], old)
                 self.db.execute("BEGIN IMMEDIATE")
                 try:
                     self.db.execute("""INSERT INTO cycle_briefs VALUES (?,?,?,?)
-                        ON CONFLICT(digest) DO NOTHING""", (sha256(old).hexdigest(), previous["finished"],
-                                                            previous["status"], old))
+                        ON CONFLICT(digest) DO NOTHING""", expected)
                     self.db.execute("""DELETE FROM cycle_briefs WHERE rowid IN
                         (SELECT rowid FROM cycle_briefs ORDER BY rowid DESC LIMIT -1 OFFSET ?)""",
                                     (KEEP_CYCLES,))
                     check_active()
+                    # A conflict, ignored insert or trigger must not silently
+                    # discard the previous brief. Compare in SQLite so corrupt
+                    # oversized bodies are never transferred to Python.
+                    verified = self.db.execute("""SELECT count(*), count(CASE WHEN
+                        typeof(digest)='text' AND digest COLLATE BINARY=?
+                        AND typeof(finished)='text' AND finished COLLATE BINARY=?
+                        AND typeof(status)='text' AND status COLLATE BINARY=?
+                        AND typeof(body)='blob' AND body=? THEN 1 END)
+                        FROM cycle_briefs WHERE digest=?""", (*expected, expected[0])).fetchone()
+                    count = self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cycle_briefs LIMIT ?)",
+                                            (KEEP_CYCLES + 1,)).fetchone()
+                    if verified != (1, 1) or count[0] > KEEP_CYCLES:
+                        raise ValueError("Saved cycle archive verification failed.")
                     self.db.execute("COMMIT")
                 except BaseException:
-                    self.db.execute("ROLLBACK")
+                    if self.db.in_transaction:
+                        self.db.execute("ROLLBACK")
                     raise
             check_active()
             os.replace(temp_path, target)
