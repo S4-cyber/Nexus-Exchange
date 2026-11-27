@@ -193,6 +193,46 @@ class SimulatedReceivablesTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         store.payment(plan,key,**args)
 
+    def test_suppressed_receipt_never_reports_success(self):
+        self.accept_note()
+        original=self.create()
+        with InvoiceStore(self.path,existing_only=True) as store:
+            store.db.execute("CREATE TRIGGER suppressed BEFORE INSERT ON sim_receipts_v1 "
+                             "BEGIN SELECT RAISE(IGNORE); END")
+            with self.assertRaisesRegex(ValueError,"trigger"):
+                self.payment(original)
+            # Independently exercise the publication check on the same connection,
+            # even if the preventative guard is unavailable. Synthetic test only.
+            with patch.object(store,"_guard_write",return_value=None):
+                with self.assertRaisesRegex(ValueError,"publication mismatch"):
+                    store.payment(self.plan,original["invoice"]["invoice_id"],
+                        expected_head=original["head_sha256"],sim_reference="SIM-FIRST",
+                        amount="50.00",paid_on=self.issue,now=self.now,confirmed=True,halted=False)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(self.history(original),original)
+            store.db.execute("DROP TRIGGER suppressed")
+        self.assertEqual(self.payment(original)["simulated_received_cents"],5000)
+
+    def test_temporary_shadow_and_trigger_do_not_capture_receipts(self):
+        self.accept_note()
+        original=self.create()
+        with InvoiceStore(self.path,existing_only=True) as store:
+            args=dict(expected_head=original["head_sha256"],sim_reference="SIM-TEMP",
+                      amount="1",paid_on=self.issue,now=self.now,confirmed=True,halted=False)
+            key=original["invoice"]["invoice_id"]
+            store.db.execute("CREATE TEMP TABLE sim_receipts_v1 AS SELECT * FROM main.sim_receipts_v1")
+            self.assertEqual(store.history(self.plan,key,now=self.now,halted=False),original)
+            with self.assertRaisesRegex(ValueError,"shadow"):
+                store.payment(self.plan,key,**args)
+            store.db.execute("DROP TABLE temp.sim_receipts_v1")
+            store.db.execute("CREATE TEMP TRIGGER suppressed BEFORE INSERT ON main.sim_receipts_v1 "
+                             "BEGIN SELECT RAISE(IGNORE); END")
+            with self.assertRaisesRegex(ValueError,"trigger"):
+                store.payment(self.plan,key,**args)
+            store.db.execute("DROP TRIGGER temp.suppressed")
+            self.assertEqual(store.history(self.plan,key,now=self.now,halted=False),original)
+            self.assertEqual(store.payment(self.plan,key,**args)["simulated_received_cents"],100)
+
     def test_halt_unknown_action_and_capacity(self):
         self.accept_note()
         record=self.create()

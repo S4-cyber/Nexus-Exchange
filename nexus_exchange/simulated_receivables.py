@@ -193,11 +193,25 @@ class InvoiceStore:
                 self.db.execute("ROLLBACK")
             raise
 
+    def _guard_write(self):
+        """Reject unexpected schema objects before a durable simulation write."""
+        for table in ("sim_invoices_v1", "sim_receipts_v1"):
+            if self.db.execute("SELECT type FROM main.sqlite_master WHERE name=? COLLATE NOCASE",
+                               (table,)).fetchone()!=("table",):
+                raise ValueError("simulated ledger table missing")
+            if self.db.execute("SELECT 1 FROM sqlite_temp_master WHERE name=? COLLATE NOCASE "
+                               "AND type IN ('table','view') LIMIT 1",(table,)).fetchone() is not None:
+                raise ValueError("unexpected simulated ledger shadow")
+            for catalog in ("main.sqlite_master","sqlite_temp_master"):
+                if self.db.execute("SELECT 1 FROM "+catalog+" WHERE type='trigger' "
+                                   "AND tbl_name=? COLLATE NOCASE LIMIT 1",(table,)).fetchone() is not None:
+                    raise ValueError("unexpected simulated ledger trigger")
+
     def _read(self,plan_id,key,now):
         _hash(plan_id)
         _hash(key)
         row=self.db.execute("""SELECT invoice_id,plan_id,obligation_id,created_at,payload,digest
-            FROM sim_invoices_v1 WHERE invoice_id=?""",(key,)).fetchone()
+            FROM main.sim_invoices_v1 WHERE invoice_id=?""",(key,)).fetchone()
         if row is None or row[1]!=plan_id:
             raise ValueError("simulated invoice unavailable or outside selected plan")
         data=_decode(row[4],row[5])
@@ -208,7 +222,7 @@ class InvoiceStore:
         if ((invoice["invoice_id"],invoice["plan_id"],invoice["obligation_id"],created)!=row[:4]
                 or prior_time>now):
             raise ValueError("simulated invoice stored identity mismatch")
-        rows=self.db.execute("""SELECT sequence,sim_reference,payload,digest FROM sim_receipts_v1
+        rows=self.db.execute("""SELECT sequence,sim_reference,payload,digest FROM main.sim_receipts_v1
             WHERE invoice_id=? ORDER BY sequence LIMIT ?""",(key,MAX_RECEIPTS+1)).fetchall()
         if len(rows)>MAX_RECEIPTS:
             raise ValueError("simulated receipt capacity exceeded")
@@ -253,7 +267,8 @@ class InvoiceStore:
         invoice=_validate_invoice(invoice)
         key,plan=invoice["invoice_id"],invoice["plan_id"]
         with self._transaction(write=True,halted=halted,halt_check=halt_check):
-            prior=self.db.execute("SELECT invoice_id FROM sim_invoices_v1 WHERE plan_id=?",(plan,)).fetchone()
+            self._guard_write()
+            prior=self.db.execute("SELECT invoice_id FROM main.sim_invoices_v1 WHERE plan_id=?",(plan,)).fetchone()
             if prior is not None:
                 if prior[0]!=key:
                     raise ValueError("one simulated invoice per saved plan; alternate issue requires review")
@@ -261,16 +276,25 @@ class InvoiceStore:
                 if _json(result["invoice"])!=_json(invoice):
                     raise ValueError("conflicting simulated invoice identity")
                 return result
-            if self.db.execute("SELECT 1 FROM sim_invoices_v1 WHERE obligation_id=?",
+            if self.db.execute("SELECT 1 FROM main.sim_invoices_v1 WHERE obligation_id=?",
                                (invoice["obligation_id"],)).fetchone() is not None:
                 raise ValueError("obligation already assigned a simulated invoice")
-            if self.db.execute("SELECT COUNT(*) FROM sim_invoices_v1").fetchone()[0]>=MAX_INVOICES:
+            if self.db.execute("SELECT COUNT(*) FROM main.sim_invoices_v1").fetchone()[0]>=MAX_INVOICES:
                 raise ValueError("simulated invoice capacity review required")
             created=_stamp(now)
             payload=_json(dict(invoice=invoice,created_at=created))
-            self.db.execute("INSERT INTO sim_invoices_v1 VALUES (?,?,?,?,?,?)",
-                (key,plan,invoice["obligation_id"],created,payload,_digest(payload)))
-            return self._read(plan,key,now)
+            digest=_digest(payload)
+            changed=self.db.execute("INSERT INTO main.sim_invoices_v1 VALUES (?,?,?,?,?,?)",
+                (key,plan,invoice["obligation_id"],created,payload,digest))
+            if changed.rowcount!=1:
+                raise ValueError("simulated invoice publication mismatch")
+            result=self._read(plan,key,now)
+            if (result["invoice"]!=invoice or result["created_at"]!=created
+                    or result["head_sha256"]!=digest or result["registration_sha256"]!=digest
+                    or result["receipts"] or result["simulated_received_cents"]!=0
+                    or result["simulated_outstanding_cents"]!=invoice["gross_cents"]):
+                raise ValueError("simulated invoice publication mismatch")
+            return result
 
     def history(self,plan_id,key,*,now,halted=None,halt_check=None):
         now=_now(now)
@@ -281,7 +305,7 @@ class InvoiceStore:
         _hash(plan_id)
         now=_now(now)
         with self._transaction(write=False,halted=halted,halt_check=halt_check):
-            row=self.db.execute("SELECT invoice_id FROM sim_invoices_v1 WHERE plan_id=?",(plan_id,)).fetchone()
+            row=self.db.execute("SELECT invoice_id FROM main.sim_invoices_v1 WHERE plan_id=?",(plan_id,)).fetchone()
             return None if row is None else self._read(plan_id,row[0],now)
 
     def payment(self,plan_id,key,*,expected_head,sim_reference,amount,paid_on,now,
@@ -295,10 +319,11 @@ class InvoiceStore:
         paid_date=_date(paid_on)
         now=_now(now)
         with self._transaction(write=True,halted=halted,halt_check=halt_check):
+            self._guard_write()
             record=self._read(plan_id,key,now)
             if record["head_sha256"]!=expected_head:
                 raise ValueError("simulated invoice changed; inspect again")
-            if self.db.execute("SELECT 1 FROM sim_receipts_v1 WHERE sim_reference=?",(ref,)).fetchone() is not None:
+            if self.db.execute("SELECT 1 FROM main.sim_receipts_v1 WHERE sim_reference=?",(ref,)).fetchone() is not None:
                 raise ValueError("duplicate synthetic receipt reference")
             if cents>record["simulated_outstanding_cents"]:
                 raise ValueError("simulated overpayment or already settled")
@@ -311,6 +336,17 @@ class InvoiceStore:
             event=dict(invoice_id=key,sequence=len(events)+1,previous_sha256=expected_head,
                        sim_reference=ref,amount_cents=cents,paid_on=paid_on,recorded_at=_stamp(now))
             payload=_json(event)
-            self.db.execute("INSERT INTO sim_receipts_v1 VALUES (?,?,?,?,?)",
-                (key,event["sequence"],ref,payload,_digest(payload)))
-            return self._read(plan_id,key,now)
+            digest=_digest(payload)
+            changed=self.db.execute("INSERT INTO main.sim_receipts_v1 VALUES (?,?,?,?,?)",
+                (key,event["sequence"],ref,payload,digest))
+            if changed.rowcount!=1:
+                raise ValueError("simulated receipt publication mismatch")
+            result=self._read(plan_id,key,now)
+            if (result["invoice"]!=record["invoice"] or result["created_at"]!=record["created_at"]
+                    or result["registration_sha256"]!=record["registration_sha256"]
+                    or result["receipts"]!=events+[dict(event,event_sha256=digest)]
+                    or result["head_sha256"]!=digest
+                    or result["simulated_received_cents"]!=record["simulated_received_cents"]+cents
+                    or result["simulated_outstanding_cents"]!=record["simulated_outstanding_cents"]-cents):
+                raise ValueError("simulated receipt publication mismatch")
+            return result
