@@ -210,6 +210,11 @@ class RecipientStore:
         key=candidate["recipient_id"]
         scope=candidate["scope"]
         with self._transaction():
+            # Do not allow a damaged database to suppress or rewrite a declaration.
+            for catalog in ("sqlite_master", "sqlite_temp_master"):
+                if self.db.execute("SELECT 1 FROM "+catalog+" WHERE type='trigger' AND tbl_name=? COLLATE NOCASE LIMIT 1",
+                        ("operator_recipients_v1",)).fetchone() is not None:
+                    raise ValueError("unexpected recipient storage trigger")
             row=self.db.execute("SELECT "+_READ_COLUMNS+" FROM operator_recipients_v1 WHERE recipient_id=?",
                 (MAX_PAYLOAD,key)).fetchone()
             if row is not None:
@@ -224,7 +229,11 @@ class RecipientStore:
             digest=_digest(payload)
             row=(key,scope["plan_id"],scope["draft_id"],stamp,payload,digest)
             _decode(row)
-            self.db.execute("INSERT INTO operator_recipients_v1 VALUES (?,?,?,?,?,?)",row)
+            inserted=self.db.execute("INSERT INTO operator_recipients_v1 VALUES (?,?,?,?,?,?)",row)
+            stored=self.db.execute("SELECT "+_READ_COLUMNS+" FROM operator_recipients_v1 WHERE recipient_id=?",
+                (MAX_PAYLOAD,key)).fetchone()
+            if inserted.rowcount!=1 or stored!=row or _decode(stored)!=data:
+                raise ValueError("recipient storage publication mismatch")
             return _view(data)
 
     def list_draft(self,draft,*,limit=100,halted=None):

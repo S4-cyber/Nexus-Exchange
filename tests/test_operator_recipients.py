@@ -182,3 +182,44 @@ class RecipientTests(unittest.TestCase):
                 with self.subTest(error=type(failure)),patch.object(module.json,"loads",side_effect=failure):
                     with self.assertRaisesRegex(ValueError,"^recipient storage validation failed$"):
                         store.get(rfq,candidate["recipient_id"],halted=False)
+
+    def test_recipient_save_rejects_silent_insert_suppression_and_rewrite(self):
+        rfq=draft()
+        candidate=self.prepare()
+        with RecipientStore(self.path) as store:
+            for statement in (
+                "CREATE TRIGGER bad BEFORE INSERT ON operator_recipients_v1 "
+                "BEGIN SELECT RAISE(IGNORE); END",
+                "CREATE TRIGGER bad AFTER INSERT ON operator_recipients_v1 "
+                "BEGIN UPDATE operator_recipients_v1 SET payload='{}'; END",
+                "CREATE TEMP TRIGGER bad BEFORE INSERT ON operator_recipients_v1 "
+                "BEGIN SELECT RAISE(IGNORE); END",
+            ):
+                with self.subTest(statement=statement):
+                    store.db.execute(statement)
+                    try:
+                        with self.assertRaisesRegex(ValueError,"unexpected recipient storage trigger"):
+                            store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+                        self.assertFalse(store.db.in_transaction)
+                        self.assertEqual(store.db.execute("SELECT COUNT(*) FROM operator_recipients_v1").fetchone()[0],0)
+                    finally:
+                        store.db.execute("DROP TRIGGER bad")
+            saved=store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+            self.assertEqual(saved,store.get(rfq,candidate["recipient_id"],halted=False))
+            self.assertEqual(saved,store.save(rfq,candidate,now=NOW,confirmed=True,halted=False))
+            self.assertFalse(saved["send_enabled"])
+            self.assertFalse(saved["external_authority"])
+
+    def test_recipient_replay_rejects_trigger_without_mutating_existing_record(self):
+        rfq=draft()
+        candidate=self.prepare()
+        with RecipientStore(self.path) as store:
+            saved=store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+            store.db.execute("CREATE TRIGGER bad AFTER INSERT ON operator_recipients_v1 "
+                             "BEGIN DELETE FROM operator_recipients_v1; END")
+            with self.assertRaisesRegex(ValueError,"unexpected recipient storage trigger"):
+                store.save(rfq,candidate,now=NOW,confirmed=True,halted=False)
+            self.assertFalse(store.db.in_transaction)
+            self.assertEqual(saved,store.get(rfq,candidate["recipient_id"],halted=False))
+        with RecipientStore(self.path,existing_only=True) as store:
+            self.assertEqual(saved,store.get(rfq,candidate["recipient_id"],halted=False))
