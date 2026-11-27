@@ -4,7 +4,8 @@ from datetime import datetime
 import re
 import sqlite3
 
-from .operator_drafts import _hash, _stamp, _stored_stamp
+from .operator_drafts import _hash, _json, _stamp, _stored_stamp
+from .quote_history import historical_receipt, publish_receipt
 from .quote_comparison import MAX_QUOTES, MAX_CENTS, _FLAGS, compare_quotes
 from .correspondence_workspace import CorrespondenceWorkspace
 
@@ -47,13 +48,15 @@ def parse_terms(raw, count):
 
 
 class QuoteReview:
-    """Stage explicit declarations; never persist, select, or send a quote."""
+    """Stage declarations; only explicit historical file export may persist a review."""
     def __init__(self, workspace):
         self.workspace = workspace
         self._staged = []
+        self._last_result = None
 
     def clear(self):
         self._staged.clear()
+        self._last_result = None
 
     def _scoped_correspondence(self, draft_id, fields):
         self.workspace._permit()
@@ -109,6 +112,7 @@ class QuoteReview:
                         declaration=declaration)
         self.workspace._permit()
         self._staged.append(deepcopy((entry, snapshot)))
+        self._last_result = None
 
     def summary(self):
         self.workspace._permit()
@@ -124,6 +128,12 @@ class QuoteReview:
             for e, s in self._staged)
 
     def compare(self, *, confirmed=None):
+        self._last_result = None
+        result = self._compare(confirmed=confirmed)
+        self._last_result = deepcopy(result)
+        return result
+
+    def _compare(self, *, confirmed=None):
         self.workspace._permit()
         if confirmed is not True:
             raise PermissionError("explicit local comparison confirmation required")
@@ -138,16 +148,40 @@ class QuoteReview:
             raise ValueError("quotation review authority mismatch")
         now = datetime.fromisoformat(_stored_stamp(result.get("compared_at")))
         expected = compare_quotes([s for _, s in self._staged], now=now, halted=False)
-        if result != expected:
+        if _json(result) != _json(expected):
             raise ValueError("comparison differs from staged evidence; clear and restage")
         self.workspace._permit()
         return expected
+
+    def history_pin(self):
+        self.workspace._permit()
+        if self._last_result is None:
+            raise ValueError("compare staged quotations first")
+        return self._last_result["comparison_sha256"]
+
+    def export_history(self, path, *, expected_comparison, confirmed=None):
+        """Export the previously reviewed result only after fresh scope checks."""
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError("explicit local history export required")
+        if self.history_pin() != _hash(expected_comparison):
+            raise ValueError("review changed; compare again")
+        reviewed = deepcopy(self._last_result)
+        try:
+            current = self._compare(confirmed=True)
+            receipt = historical_receipt(reviewed, current)
+            if self.history_pin() != expected_comparison:
+                raise ValueError("review changed; compare again")
+            return publish_receipt(path, receipt, permit=self.workspace._permit)
+        except BaseException:
+            self._last_result = None
+            raise
 
 
 def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
     """Inline tab; result and staged data cleared by the parent halt monitor."""
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import ttk, messagebox, filedialog
     from tkinter.scrolledtext import ScrolledText
 
     review = QuoteReview(workspace)
@@ -167,7 +201,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         ttk.Label(form, text=label).grid(row=i, column=0, sticky="w", pady=1)
         ttk.Entry(form, textvariable=fields[key], width=68).grid(row=i, column=1, sticky="ew", padx=4)
     form.columnconfigure(1, weight=1)
-    status = ttk.Label(parent, text="Stage at least two declarations; nothing is saved or sent.", wraplength=950)
+    status = ttk.Label(parent, text="Stage at least two declarations; nothing is sent. History export is optional.", wraplength=950)
     status.pack(fill="x", padx=5)
     output = ScrolledText(parent, height=8, wrap="word", state="disabled")
     output.pack(fill="both", expand=True, padx=5, pady=3)
@@ -262,7 +296,24 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                 lines.append("Cost ranking withheld: different declared delivery or payment timing.")
             lines.append("No supplier selected. No external authority.")
             write("\n".join(lines) + "\n\n" + summary)
-            status.configure(text="Read-only comparison; refresh by explicitly comparing again.")
+            status.configure(text="Read-only comparison; optionally export a historical review file.")
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            error(exc)
+
+    def export_history():
+        try:
+            pin = review.history_pin()
+            path = filedialog.asksaveasfilename(parent=parent, defaultextension=".json",
+                filetypes=[("Historical quotation review", "*.json")],
+                title="Save a new local historical review file")
+            if not path:
+                return
+            if not messagebox.askyesno("Historical review only",
+                    "Save this reviewed comparison after rechecking current evidence? "
+                    "The file is historical, not a current decision or authority.", parent=parent):
+                return
+            digest = review.export_history(path, expected_comparison=pin, confirmed=True)
+            status.configure(text="Historical review file saved. SHA-256: " + digest)
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
@@ -270,6 +321,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
     buttons.pack(fill="x", padx=5)
     for label, callback in (("Load saved recipients", load_recipients),
                             ("Stage selected draft", stage), ("Compare staged", compare),
+                            ("Save review file", export_history),
                             ("Clear review", clear)):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
     return clear

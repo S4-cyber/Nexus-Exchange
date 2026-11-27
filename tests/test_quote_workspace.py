@@ -1,4 +1,8 @@
 import unittest
+import json
+import hashlib
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock
 from nexus_exchange.operator_workspace import OperatorWorkspace
 from nexus_exchange.quote_workspace import QuoteReview, parse_terms
@@ -99,3 +103,63 @@ class QuoteWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.review.summary(), before)
         self.stage(b)
         self.assertEqual(self.review.compare(confirmed=True)["lowest_declared_total_cents"], 800)
+
+    def test_explicit_history_file_preserves_exact_review_without_overwrite(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "review.json"
+            with self.assertRaises(ValueError):
+                self.review.history_pin()
+            result = self.review.compare(confirmed=True)
+            pin = self.review.history_pin()
+            for confirmed in (None, False, 1):
+                with self.assertRaises(PermissionError):
+                    self.review.export_history(target, expected_comparison=pin, confirmed=confirmed)
+            self.assertFalse(target.exists())
+            digest = self.review.export_history(target, expected_comparison=pin, confirmed=True)
+            content = target.read_bytes()
+            self.assertEqual(digest, hashlib.sha256(content).hexdigest())
+            receipt = json.loads(content)
+            self.assertEqual(receipt["comparison"], result)
+            self.assertIs(receipt["historical_only"], True)
+            self.assertIs(receipt["current_decision"], False)
+            self.assertIs(receipt["external_authority"], False)
+            with self.assertRaises(FileExistsError):
+                self.review.export_history(target, expected_comparison=pin, confirmed=True)
+            self.assertEqual(target.read_bytes(), content)
+            self.assertEqual(list(Path(directory).iterdir()), [target])
+
+    def test_history_rejects_changed_review_and_halt(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        result = self.review.compare(confirmed=True)
+        pin = self.review.history_pin()
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "review.json"
+            self.workspace.action = Mock(return_value=dict(result, lowest_declared_total_cents=801))
+            with self.assertRaises(ValueError):
+                self.review.export_history(target, expected_comparison=pin, confirmed=True)
+            self.assertFalse(target.exists())
+            self.workspace.action = self.guard.operator_action
+            self.review.compare(confirmed=True)
+            pin = self.review.history_pin()
+            self.guard.set()
+            with self.assertRaises(PermissionError):
+                self.review.export_history(target, expected_comparison=pin, confirmed=True)
+            self.assertFalse(target.exists())
+            self.review.clear()
+            self.guard.resume()
+            with self.assertRaises(ValueError):
+                self.review.history_pin()
+
+    def test_comparison_rejects_numeric_type_substitution(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        result = self.review.compare(confirmed=True)
+        self.workspace.action = Mock(return_value=dict(result, lowest_declared_total_cents=800.0))
+        with self.assertRaises(ValueError):
+            self.review.compare(confirmed=True)
