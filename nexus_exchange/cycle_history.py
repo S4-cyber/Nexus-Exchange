@@ -1,5 +1,5 @@
 """Local cycle history for the desktop. The current brief keeps its original file format."""
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import math
@@ -71,6 +71,10 @@ def encode(brief):
     return json.dumps(brief, ensure_ascii=True, sort_keys=True, allow_nan=False).encode("ascii")
 
 
+def _valid_digest(value):
+    return type(value) is str and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 class CycleHistory:
     def __init__(self, db):
         self.db = db
@@ -79,18 +83,52 @@ class CycleHistory:
 
     def earlier(self, current):
         digest = sha256(encode(current)).hexdigest() if current else ""
-        return self.db.execute("""SELECT digest,strftime('%Y-%m-%dT%H:%M:%S',finished),status FROM cycle_briefs
-            WHERE digest != ? AND typeof(digest)='text' AND length(digest)=64
-            AND typeof(status)='text' AND length(CAST(status AS BLOB))<=256
-            AND typeof(finished)='text' AND length(finished)<=64 AND julianday(finished) IS NOT NULL
+        # At most 29 bounded reports, validated one at a time. Index metadata
+        # alone is not evidence of the report's status or timestamp.
+        keys = self.db.execute("""SELECT CASE WHEN typeof(digest)='text'
+            AND length(CAST(digest AS BLOB))=64 THEN CAST(digest AS BLOB) END
+            FROM cycle_briefs WHERE digest != ? OR digest IS NULL
             ORDER BY rowid DESC LIMIT ?""", (digest, KEEP_CYCLES - 1)).fetchall()
+        results = []
+        seen = set()
+        for (raw_key,) in keys:
+            if type(raw_key) is not bytes:
+                raise ValueError("Invalid saved cycle archive index.")
+            try:
+                key = raw_key.decode("ascii")
+            except UnicodeDecodeError:
+                raise ValueError("Invalid saved cycle archive index.") from None
+            if not _valid_digest(key) or key in seen:
+                raise ValueError("Invalid saved cycle archive index.")
+            seen.add(key)
+            try:
+                brief = self.read(key)
+                stamp = datetime.fromisoformat(brief["finished"]).astimezone(timezone.utc)
+                results.append((key, stamp.replace(tzinfo=None).isoformat(timespec="seconds"), brief["status"]))
+            except (ValueError, OverflowError):
+                results.append((key, "", "Archive entry needs review"))
+        return results
 
     def read(self, digest):
-        row = self.db.execute("""SELECT body FROM cycle_briefs
-            WHERE digest=? AND typeof(body)='blob' AND length(body)<=?""", (digest, MAX_BYTES)).fetchone()
-        if row is None or sha256(row[0]).hexdigest() != digest:
+        if not _valid_digest(digest):
             raise ValueError("Saved cycle report unavailable.")
-        return decode(row[0])
+        rows = self.db.execute("""SELECT
+            CASE WHEN typeof(body)='blob' AND length(body)<=? THEN body END,
+            CASE WHEN typeof(finished)='text' AND length(CAST(finished AS BLOB))<=256
+                THEN CAST(finished AS BLOB) END,
+            CASE WHEN typeof(status)='text' AND length(CAST(status AS BLOB))<=256
+                THEN CAST(status AS BLOB) END
+            FROM cycle_briefs WHERE digest COLLATE BINARY=? LIMIT 2""",
+                               (MAX_BYTES, digest)).fetchall()
+        if len(rows) != 1:
+            raise ValueError("Saved cycle report unavailable.")
+        body, finished, status = rows[0]
+        if type(body) is not bytes or sha256(body).hexdigest() != digest:
+            raise ValueError("Saved cycle report unavailable.")
+        brief = decode(body)
+        if finished != brief["finished"].encode("utf-8") or status != brief["status"].encode("utf-8"):
+            raise ValueError("Saved cycle report metadata mismatch.")
+        return brief
 
     def publish(self, directory, brief, check_active):
         # RuntimeGuard gives the desktop sole ownership. Preserve the previous brief

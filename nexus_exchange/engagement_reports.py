@@ -78,7 +78,7 @@ class EngagementReports:
         first_label = "Latest cycle"
         try:
             earlier = self.history.earlier(latest)
-        except sqlite3.Error:
+        except (sqlite3.Error, ValueError, OverflowError):
             earlier = []
             first_label += " (history unavailable)"
         self.latest = latest
@@ -86,7 +86,7 @@ class EngagementReports:
         labels = [first_label]
         occurrences = {}
         for _, stamp, status in earlier:
-            label = stamp[:19].replace("T", " ") + " UTC · " + status
+            label = stamp[:19].replace("T", " ") + " UTC · " + status if stamp else status
             count = occurrences.get(label, 0) + 1
             occurrences[label] = count
             labels.append(label if count == 1 else f"{label} ({count})")
@@ -94,8 +94,11 @@ class EngagementReports:
         for picker in self.pickers:
             picker.configure(values=labels)
         if self.pinned and self.pinned in self.keys:
-            self.choice.set(labels[self.keys.index(self.pinned)])
-            return  # Leave the historical report's scroll position and file selection alone.
+            index = self.keys.index(self.pinned)
+            self.choice.set(labels[index])
+            if not earlier[index - 1][1]:
+                self.display(None, error="This cycle report could not be read. Choose another cycle.")
+            return  # Leave valid historical report scroll position and file selection alone.
         self.show_latest()
 
     def show_latest(self):
