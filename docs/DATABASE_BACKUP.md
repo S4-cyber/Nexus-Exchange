@@ -101,3 +101,17 @@ local structural/content integrity, not authentication or report-to-journal
 agreement. Six focused tests and three existing history tests passed locally
 on Python 3.13.5; combined-backup integration test and hosted/native verification
 of this increment are pending.
+
+
+## Combined snapshot advisory integrity (review candidate)
+
+V2 checks the entire bounded advisory-attempt ledger using the same canonical
+record decoder as RuntimeGuard, rejecting malformed rows, duplicates, excess
+capacity and unexpected ledger triggers. The optional launch marker in the
+events database is also checked without initialization or clearing. Legacy
+absence of that table remains valid. Valid unresolved reservations and launch
+markers are preserved byte-for-byte; this does not establish worker exit,
+permit retry, clear quarantine, authorize resume or authenticate history.
+V1 behavior is unchanged. Two new integration methods exercise source and
+rehashed backup corruption, restore preservation and malformed launch markers.
+Local checkout DNS failed; hosted regression and independent review pending.

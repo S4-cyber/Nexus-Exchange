@@ -329,5 +329,74 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertFalse(other.exists())
         self.assertEqual(damaged_backup.read_bytes(), raw)
 
+
+    def test_v2_advisory_ledger_semantics_and_preservation(self):
+        import sqlite3
+        from contextlib import closing
+        from hashlib import sha256
+        from nexus_exchange.advisory_attempts import AdvisoryAttemptStore
+        from nexus_exchange.advisory_process import FIXTURE_MODEL_SHA256
+        from nexus_exchange.database_backup import _manifest, _json
+        from test_context_packet import snapshot, NOW
+
+        name = "local-advisory.sqlite3"
+        path = self.source / name
+        original = snapshot()
+        with AdvisoryAttemptStore(path) as store:
+            store.reserve(original, FIXTURE_MODEL_SHA256, now=NOW,
+                          approved=True, halted=False)
+        valid = path.read_bytes()
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("UPDATE advisory_attempts_v1 SET payload='{}'")
+            db.commit()
+        damaged = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "advisory ledger"):
+            self.create(build_id="3"*40)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(path.read_bytes(), damaged)
+        path.write_bytes(valid)
+        manifest = self.create(build_id="3"*40)
+        restore_backup(self.backup, self.dest, confirmed=True)
+        self.assertEqual((self.dest / name).read_bytes(), valid)
+        with AdvisoryAttemptStore(self.dest / name, existing_only=True) as store:
+            self.assertEqual(store.status(original["plan_id"], halted=False)["state"], "RESERVED")
+        target = self.backup / name
+        with closing(sqlite3.connect(target)) as db:
+            db.execute("UPDATE advisory_attempts_v1 SET payload='{}'")
+            db.commit()
+        raw = target.read_bytes()
+        files = [dict(row, bytes=len(raw), sha256=sha256(raw).hexdigest())
+                 if row["name"] == name else row for row in manifest["files"]]
+        updated = _manifest(files, manifest["runtime_state"], "3"*40)
+        (self.backup / MANIFEST).write_bytes((_json(updated)+"\n").encode("ascii"))
+        with self.assertRaisesRegex(ValueError, "advisory ledger"):
+            verify_backup(self.backup)
+        rejected = self.root / "rejected"
+        with self.assertRaisesRegex(ValueError, "advisory ledger"):
+            restore_backup(self.backup, rejected, confirmed=True)
+        self.assertFalse(rejected.exists())
+        self.assertEqual(target.read_bytes(), raw)
+
+    def test_v2_launch_marker_preserved_and_malformed_rejected(self):
+        import sqlite3
+        from contextlib import closing
+        path = self.source / "events.sqlite3"
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("INSERT INTO advisory_launch_v1 VALUES (1,?)", ("a"*64,))
+            db.commit()
+        manifest = self.create(build_id="4"*40)
+        self.assertEqual(verify_backup(self.backup), manifest)
+        restore_backup(self.backup, self.dest, confirmed=True)
+        self.assertEqual((self.dest / "events.sqlite3").read_bytes(), path.read_bytes())
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("UPDATE advisory_launch_v1 SET reservation_id='broken'")
+            db.commit()
+        invalid = path.read_bytes()
+        rejected = self.root / "bad-marker"
+        with self.assertRaisesRegex(ValueError, "advisory launch"):
+            create_backup(self.source, rejected, confirmed=True, build_id="4"*40)
+        self.assertFalse(rejected.exists())
+        self.assertEqual(path.read_bytes(), invalid)
+
 if __name__=="__main__":
     unittest.main()

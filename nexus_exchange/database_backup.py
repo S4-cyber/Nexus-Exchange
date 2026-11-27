@@ -16,6 +16,8 @@ import stat
 
 from .runtime_guard import _lock, MAX_REVISION
 from .event_store import read_projection
+from .advisory_attempts import validate_ledger_snapshot
+from . import advisory_launch_marker
 from .scout import _timestamp
 from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report, validate_archive
 
@@ -210,7 +212,15 @@ def _database(path,name,*,validate_journal=False):
                     # Preserve valid interrupted/unconfirmed history without replay.
                     read_projection(db)
                     validate_archive(db)
+                    marker = db.execute("SELECT type FROM sqlite_master WHERE name=?",
+                                        ("advisory_launch_v1",)).fetchone()
+                    if marker is not None:
+                        if marker != ("table",):
+                            raise ValueError("invalid advisory launch schema")
+                        advisory_launch_marker.pending(db)
                 return state
+            if name == "local-advisory.sqlite3" and validate_journal:
+                validate_ledger_snapshot(db)
         finally:
             pass
     return None

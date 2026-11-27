@@ -110,6 +110,37 @@ def _state(record):
                 historical_only=True, **dict.fromkeys(_FLAGS, False))
 
 
+def validate_ledger_snapshot(db):
+    """Read-only bounded semantic validation of a closed advisory snapshot.
+
+    The caller owns the offline SQLite connection. No reservations are
+    recovered or consumed, and a valid unresolved reservation stays unresolved.
+    """
+    if db.execute("SELECT type FROM sqlite_master WHERE name=?",
+                  ("advisory_attempts_v1",)).fetchone() != ("table",):
+        raise ValueError("advisory ledger schema missing")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                  "AND tbl_name='advisory_attempts_v1' LIMIT 1").fetchone():
+        raise ValueError("unexpected advisory ledger trigger")
+    cursor = db.execute("""SELECT
+        CASE WHEN typeof(plan_id)='text'
+             AND length(CAST(plan_id AS BLOB))=64 THEN CAST(plan_id AS BLOB) END,
+        CASE WHEN typeof(payload)='text'
+             AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
+             THEN CAST(payload AS BLOB) END,
+        CASE WHEN typeof(digest)='text'
+             AND length(CAST(digest AS BLOB))=64 THEN CAST(digest AS BLOB) END
+        FROM advisory_attempts_v1 LIMIT ?""", (MAX_PAYLOAD, MAX_TASKS + 1))
+    seen = set()
+    for key, payload, digest in cursor:
+        plan = _pin(_ascii_field(key))
+        if plan in seen or len(seen) >= MAX_TASKS:
+            raise ValueError("duplicate or excessive advisory ledger identity")
+        _decode(plan, _ascii_field(payload), _ascii_field(digest))
+        seen.add(plan)
+    return len(seen)
+
+
 class AdvisoryAttemptStore:
     """Bounded SQLite ledger for a trusted coordinator; no inference or dispatch."""
     def __init__(self, path, *, existing_only=False):
