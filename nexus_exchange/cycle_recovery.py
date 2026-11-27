@@ -6,6 +6,10 @@ class CycleMaintenanceRequired(RuntimeError):
     """Recovery could not be verified; require a new owner startup review."""
 
 
+class _PublicationHalted(PermissionError):
+    """Explicit halt at the publication boundary, not a filesystem error."""
+
+
 _MESSAGE = 'Scout cycle storage requires maintenance. Automatic engagement paused.'
 _STORAGE_ERRORS = (ValueError, OSError, sqlite3.Error)
 
@@ -26,6 +30,18 @@ class CycleRecovery:
         except _STORAGE_ERRORS:
             raise CycleMaintenanceRequired(_MESSAGE) from None
 
+    def publish(self, publish):
+        """Keep explicit cancellation distinct from storage permission errors."""
+        def check_active():
+            if self._stopped() is not False:
+                raise _PublicationHalted('Engagement halted.')
+        try:
+            publish(check_active)
+        except _PublicationHalted:
+            raise
+        except _STORAGE_ERRORS + (RecursionError,):
+            raise CycleMaintenanceRequired(_MESSAGE) from None
+
     def record(self, state):
         try:
             self._record(state)
@@ -37,7 +53,7 @@ class CycleRecovery:
     def fail(self, error):
         """Try each independent recovery path once; never fabricate a task state."""
         maintenance = isinstance(error, CycleMaintenanceRequired)
-        halted = self._stopped() is not False
+        halted = isinstance(error, _PublicationHalted) or self._stopped() is not False
         if not self._settlement_attempted:
             try:
                 self.settle(failed=not halted)

@@ -162,3 +162,43 @@ class CycleContinuityTests(unittest.TestCase):
             self.assertEqual([row["state"] for row in events.read()], ["queued", "running", "failed"])
         finally:
             events.close()
+
+    def test_archive_publication_rejection_enters_maintenance_and_preserves_prior(self):
+        first = self.run_cycle()
+        prior = (self.directory / engagement.BRIEF).read_bytes()
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            events.db.execute("CREATE TRIGGER skip_archive BEFORE INSERT ON cycle_briefs "
+                              "BEGIN SELECT RAISE(IGNORE); END")
+        finally:
+            events.close()
+        with self.assertRaises(engagement.CycleMaintenanceRequired):
+            self.run_cycle()
+        self.assertEqual((self.directory / engagement.BRIEF).read_bytes(), prior)
+        self.assertEqual(latest(self.directory), first)
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([r["state"] for r in events.read()],
+                             ["queued", "running", "succeeded", "queued", "running", "failed"])
+        finally:
+            events.close()
+
+    def test_explicit_publication_halt_preserves_prior_and_terminalizes_cancelled(self):
+        self.run_cycle()
+        prior = (self.directory / engagement.BRIEF).read_bytes()
+        halted = False
+        original = engagement.CycleHistory.publish
+        def interrupt(history, directory, brief, check):
+            nonlocal halted
+            halted = True
+            return original(history, directory, brief, check)
+        with patch.object(engagement.CycleHistory, "publish", new=interrupt):
+            with self.assertRaises(PermissionError):
+                self.run_cycle(lambda: halted)
+        self.assertEqual((self.directory / engagement.BRIEF).read_bytes(), prior)
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([r["state"] for r in events.read()],
+                             ["queued", "running", "succeeded", "queued", "running", "cancelled"])
+        finally:
+            events.close()

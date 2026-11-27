@@ -266,7 +266,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                      sources=outcomes, jobs=jobs, notes=notes, shortlist=rows,
                      shortlist_available=shortlist_issue is None, external_actions=0)
         recovery.settle()
-        CycleHistory(event.db).publish(directory, brief, lambda: ensure_active(stopped))
+        recovery.publish(lambda check: CycleHistory(event.db).publish(directory, brief, check))
         recovery.record("failed" if research_issue or (outcomes and not succeeded) else "succeeded")
         return brief
     except Exception as error:
