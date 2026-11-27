@@ -141,6 +141,9 @@ class CycleHistory:
             with NamedTemporaryFile(dir=directory, prefix=".cycle-", suffix=".tmp", delete=False) as temp:
                 temp_path = Path(temp.name)
                 temp.write(raw)
+                # Flush report data before publishing the directory entry.
+                temp.flush()
+                os.fsync(temp.fileno())
             check_active()
             try:
                 previous = latest(directory)
@@ -177,6 +180,11 @@ class CycleHistory:
                     raise
             check_active()
             os.replace(temp_path, target)
+            # Verify exact published bytes before returning a journal digest.
+            # This is a bounded local read-back, not a power-loss guarantee.
+            with target.open("rb") as handle:
+                if handle.read(MAX_BYTES + 1) != raw:
+                    raise ValueError("Saved cycle publication verification failed.")
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
