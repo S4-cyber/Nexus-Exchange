@@ -75,6 +75,55 @@ def _valid_digest(value):
     return type(value) is str and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
+def _read(db, digest):
+    if not _valid_digest(digest):
+        raise ValueError("Saved cycle report unavailable.")
+    rows = db.execute("""SELECT
+        CASE WHEN typeof(body)='blob' AND length(body)<=? THEN body END,
+        CASE WHEN typeof(finished)='text' AND length(CAST(finished AS BLOB))<=256
+            THEN CAST(finished AS BLOB) END,
+        CASE WHEN typeof(status)='text' AND length(CAST(status AS BLOB))<=256
+            THEN CAST(status AS BLOB) END
+        FROM cycle_briefs WHERE digest COLLATE BINARY=? LIMIT 2""",
+                           (MAX_BYTES, digest)).fetchall()
+    if len(rows) != 1:
+        raise ValueError("Saved cycle report unavailable.")
+    body, finished, status = rows[0]
+    if type(body) is not bytes or sha256(body).hexdigest() != digest:
+        raise ValueError("Saved cycle report unavailable.")
+    brief = decode(body)
+    if finished != brief["finished"].encode("utf-8") or status != brief["status"].encode("utf-8"):
+        raise ValueError("Saved cycle report metadata mismatch.")
+    return brief
+
+
+def validate_archive(db):
+    """Validate all retained reports on a closed, read-only snapshot."""
+    entries = db.execute("SELECT type, name FROM sqlite_master WHERE name COLLATE NOCASE='cycle_briefs' LIMIT 2").fetchall()
+    if not entries:
+        return 0  # Legacy journal without a desktop archive.
+    if entries != [("table", "cycle_briefs")]:
+        raise ValueError("Invalid saved cycle archive schema.")
+    keys = db.execute("""SELECT CASE WHEN typeof(digest)='text'
+        AND length(CAST(digest AS BLOB))=64 THEN CAST(digest AS BLOB) END
+        FROM cycle_briefs LIMIT ?""", (KEEP_CYCLES + 1,)).fetchall()
+    if len(keys) > KEEP_CYCLES:
+        raise ValueError("Saved cycle archive exceeds the retention limit.")
+    seen = set()
+    for (raw_key,) in keys:
+        if type(raw_key) is not bytes:
+            raise ValueError("Invalid saved cycle archive index.")
+        try:
+            key = raw_key.decode("ascii")
+        except UnicodeDecodeError:
+            raise ValueError("Invalid saved cycle archive index.") from None
+        if not _valid_digest(key) or key in seen:
+            raise ValueError("Invalid saved cycle archive index.")
+        seen.add(key)
+        _read(db, key)
+    return len(seen)
+
+
 class CycleHistory:
     def __init__(self, db):
         self.db = db
@@ -110,25 +159,7 @@ class CycleHistory:
         return results
 
     def read(self, digest):
-        if not _valid_digest(digest):
-            raise ValueError("Saved cycle report unavailable.")
-        rows = self.db.execute("""SELECT
-            CASE WHEN typeof(body)='blob' AND length(body)<=? THEN body END,
-            CASE WHEN typeof(finished)='text' AND length(CAST(finished AS BLOB))<=256
-                THEN CAST(finished AS BLOB) END,
-            CASE WHEN typeof(status)='text' AND length(CAST(status AS BLOB))<=256
-                THEN CAST(status AS BLOB) END
-            FROM cycle_briefs WHERE digest COLLATE BINARY=? LIMIT 2""",
-                               (MAX_BYTES, digest)).fetchall()
-        if len(rows) != 1:
-            raise ValueError("Saved cycle report unavailable.")
-        body, finished, status = rows[0]
-        if type(body) is not bytes or sha256(body).hexdigest() != digest:
-            raise ValueError("Saved cycle report unavailable.")
-        brief = decode(body)
-        if finished != brief["finished"].encode("utf-8") or status != brief["status"].encode("utf-8"):
-            raise ValueError("Saved cycle report metadata mismatch.")
-        return brief
+        return _read(self.db, digest)
 
     def publish(self, directory, brief, check_active):
         # RuntimeGuard gives the desktop sole ownership. Preserve the previous brief

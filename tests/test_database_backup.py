@@ -283,5 +283,51 @@ class DatabaseBackupTests(unittest.TestCase):
             self.assertEqual(view["successful_tasks"],0)
             self.assertFalse(guard.status()["external_authority"])
 
+
+    def test_v2_archive_validation_on_create_verify_and_restore(self):
+        import sqlite3
+        from contextlib import closing
+        from hashlib import sha256
+        from nexus_exchange.cycle_history import CycleHistory, encode
+        from nexus_exchange.database_backup import _manifest, _json
+        original = self.source / "events.sqlite3"
+        brief = dict(format="nexus-engagement-brief-v1", status="Completed",
+                     finished=self.now.isoformat(), jobs={}, notes=[], shortlist=[], sources=[])
+        body = encode(brief)
+        with closing(sqlite3.connect(original)) as db:
+            CycleHistory(db)
+            db.execute("INSERT INTO cycle_briefs VALUES (?,?,?,?)",
+                       (sha256(body).hexdigest(), brief["finished"], brief["status"], body))
+            db.execute("UPDATE cycle_briefs SET status='forged'")
+            db.commit()
+        damaged = original.read_bytes()
+        with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+            self.create(build_id="2"*40)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(original.read_bytes(), damaged)
+        with closing(sqlite3.connect(original)) as db:
+            db.execute("UPDATE cycle_briefs SET status='Completed'")
+            db.commit()
+        manifest = self.create(build_id="2"*40)
+        self.assertEqual(verify_backup(self.backup), manifest)
+        restore_backup(self.backup, self.dest, confirmed=True)
+        self.assertEqual((self.dest / "events.sqlite3").read_bytes(), original.read_bytes())
+        damaged_backup = self.backup / "events.sqlite3"
+        with closing(sqlite3.connect(damaged_backup)) as db:
+            db.execute("UPDATE cycle_briefs SET status='forged'")
+            db.commit()
+        raw = damaged_backup.read_bytes()
+        files = [dict(row, bytes=len(raw), sha256=sha256(raw).hexdigest())
+                 if row["name"] == "events.sqlite3" else row for row in manifest["files"]]
+        updated = _manifest(files, manifest["runtime_state"], "2"*40)
+        (self.backup / MANIFEST).write_bytes((_json(updated)+"\n").encode("ascii"))
+        with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+            verify_backup(self.backup)
+        other = self.root / "rejected"
+        with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+            restore_backup(self.backup, other, confirmed=True)
+        self.assertFalse(other.exists())
+        self.assertEqual(damaged_backup.read_bytes(), raw)
+
 if __name__=="__main__":
     unittest.main()

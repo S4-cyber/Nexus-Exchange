@@ -86,3 +86,18 @@ Pass `--build-id <exact-lowercase-40-character-git-commit>` to the backup comman
 ## Combined snapshot journal semantics (review candidate)
 
 V2 now also runs the existing bounded event projection on the copied events database during creation, verification and restore. SQLite quick_check and matching file hashes alone cannot detect invalid task-state transitions. Valid interrupted or unconfirmed tasks remain intact; no digest is synthesized, no automatic replay or resume. This does not authenticate history, establish report-to-journal agreement, or validate every other database's application schema. V1 behavior is unchanged. New tests cover invalid transitions in the original and rehashed backup, plus abrupt process exit followed by halted recovery and separate restore. They are written but not locally executed; direct checkout DNS failed. Native recovery and independent acceptance remain outstanding.
+
+
+## Combined snapshot historical archive validation (review candidate)
+
+V2 also validates every retained cycle_briefs record in the events database,
+including the oldest row hidden by the desktop's 29-entry selector. At most
+30 records are permitted; validate each bounded report, hash, status, and
+timestamp metadata using the same read-only decoder as the desktop. A missing
+archive table is valid for legacy data and is not created. A malformed archive
+or unexpected schema object rejects combined creation, verification and restore;
+preserve the original data for inspection. V1 remains unchanged. This is
+local structural/content integrity, not authentication or report-to-journal
+agreement. Six focused tests and three existing history tests passed locally
+on Python 3.13.5; combined-backup integration test and hosted/native verification
+of this increment are pending.

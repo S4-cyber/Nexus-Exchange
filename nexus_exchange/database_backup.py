@@ -17,7 +17,7 @@ import stat
 from .runtime_guard import _lock, MAX_REVISION
 from .event_store import read_projection
 from .scout import _timestamp
-from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report
+from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report, validate_archive
 
 FORMAT="nexus-local-database-backup-v1"
 REPORT_FORMAT="nexus-local-database-backup-v2"
@@ -209,6 +209,7 @@ def _database(path,name,*,validate_journal=False):
                     # SQLite quick_check validates pages, not event transitions.
                     # Preserve valid interrupted/unconfirmed history without replay.
                     read_projection(db)
+                    validate_archive(db)
                 return state
         finally:
             pass
