@@ -90,8 +90,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         raise CycleMaintenanceRequired("Scout cycle storage requires maintenance. Automatic engagement paused.") from None
     task = uuid4().hex
     activity = None
+    def write_activity(rows):
+        now = clock()
+        recovery.write_activity(lambda: activity.put(task, rows, now))
     def stages(rows):
-        activity.put(task, [(task + "/" + key, state, title, detail) for key, state, title, detail in rows], clock())
+        write_activity([(task + "/" + key, state, title, detail) for key, state, title, detail in rows])
     def stage(key, state, title, detail=""):
         stages([(key, state, title, detail)])
     def journal(state):
@@ -224,7 +227,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                 stage(source, "Needs attention", label, detail)
                 outcomes.append(dict(source=source, status="Not saved", detail=detail, found=0, saved=0))
                 continue
-            activity.put(task, [finding_row(source, label, lead) for lead in report["leads"]], clock())
+            write_activity([finding_row(source, label, lead) for lead in report["leads"]])
             stage(source, "Completed", label, f"{report['returned']} notices returned · {saved} observations saved.")
             outcomes.append(dict(source=source, status="Searched", found=report["returned"], saved=saved))
         ensure_active(stopped)

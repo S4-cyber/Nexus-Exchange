@@ -30,6 +30,13 @@ class CycleRecovery:
         except _STORAGE_ERRORS:
             raise CycleMaintenanceRequired(_MESSAGE) from None
 
+    def write_activity(self, write):
+        """Treat unverified activity writes as storage maintenance, never retry."""
+        try:
+            return write()
+        except _STORAGE_ERRORS:
+            raise CycleMaintenanceRequired(_MESSAGE) from None
+
     def publish(self, publish):
         """Keep explicit cancellation distinct from storage permission errors."""
         def check_active():

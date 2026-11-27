@@ -202,3 +202,49 @@ class CycleContinuityTests(unittest.TestCase):
                              ["queued", "running", "succeeded", "queued", "running", "cancelled"])
         finally:
             events.close()
+
+    def test_initial_activity_write_fault_stops_before_discovery(self):
+        prior = self.directory / engagement.BRIEF
+        prior.write_text("prior")
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            ActivityFeed(events.db)
+            events.db.execute("CREATE TRIGGER reject_pending BEFORE INSERT ON scout_activity "
+                              "WHEN NEW.state='Pending' BEGIN SELECT RAISE(ABORT, 'private fixture'); END")
+        finally:
+            events.close()
+        with self.assertRaises(engagement.CycleMaintenanceRequired) as error:
+            self.run_cycle()
+        self.assertNotIn("private fixture", str(error.exception))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(prior.read_text(), "prior")
+        self.assertEqual(list(folder(self.directory, OUTPUTS).iterdir()), [])
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([r["state"] for r in events.read()], ["queued", "running", "failed"])
+        finally:
+            events.close()
+
+    def test_finding_activity_write_fault_preserves_archived_evidence_and_stops_next_source(self):
+        prior = self.directory / engagement.BRIEF
+        prior.write_text("prior")
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            ActivityFeed(events.db)
+            events.db.execute("CREATE TRIGGER reject_finding BEFORE INSERT ON scout_activity "
+                              "WHEN NEW.state='Finding' BEGIN SELECT RAISE(ABORT, 'private fixture'); END")
+        finally:
+            events.close()
+        with self.assertRaises(engagement.CycleMaintenanceRequired) as error:
+            self.run_cycle()
+        self.assertNotIn("private fixture", str(error.exception))
+        self.assertEqual(self.calls, ["uk_tender"])
+        self.assertEqual(prior.read_text(), "prior")
+        self.assertEqual(list(folder(self.directory, OUTPUTS).iterdir()), [])
+        with lead_store.LeadStore(self.dbfile) as store:
+            self.assertEqual(store.browse(now=NOW, halted=False)["matched"], 1)
+        events = EventStore(self.directory / "events.sqlite3")
+        try:
+            self.assertEqual([r["state"] for r in events.read()], ["queued", "running", "failed"])
+        finally:
+            events.close()
