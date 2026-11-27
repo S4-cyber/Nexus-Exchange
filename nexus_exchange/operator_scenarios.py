@@ -288,3 +288,46 @@ class OperatorScenario:
         self._recheck(draft,supplier)
         self._allowed()
         return result
+
+    def quote_compare(self, plan_id, entries, *, confirmed=None):
+        """Compare explicit declarations against independently loaded local records.
+
+        The reply digest binds a local simulated event, not the truth of the
+        declared prices. This read-only projection is not a purchase decision.
+        """
+        self._allowed()
+        if confirmed is not True:
+            raise PermissionError("explicit local quotation review required")
+        from .operator_drafts import _shape
+        from .quote_comparison import compare_quotes, MAX_QUOTES
+        _hash(plan_id)
+        if type(entries) is not list or not 2 <= len(entries) <= MAX_QUOTES:
+            raise ValueError("two to sixteen scoped declarations required")
+        for entry in entries:
+            _shape(entry, {"draft_id", "recipient_id", "supplier", "declaration"})
+            _hash(entry["draft_id"])
+            _hash(entry["recipient_id"])
+
+        def load(entry):
+            self._allowed()
+            draft, recipient = self._thread_scope(
+                plan_id, entry["draft_id"], entry["recipient_id"])
+            self._recheck(draft, entry["supplier"])
+            thread = self.thread_history(plan_id, entry["draft_id"], entry["recipient_id"])
+            if thread is None:
+                raise ValueError("saved simulated correspondence required")
+            self._allowed()
+            return dict(draft=draft, recipient=recipient, thread=thread,
+                        declaration=entry["declaration"])
+
+        snapshots = [load(entry) for entry in entries]
+        # Validate bounded declarations before another database pass.
+        compare_quotes(snapshots, now=self._time(), halted=self.halt_check())
+        # Bracket the comparison with current scope and history checks. These
+        # separate databases are not a distributed atomic snapshot.
+        current = [load(entry) for entry in entries]
+        if current != snapshots:
+            raise ValueError("quotation scope or correspondence changed; review again")
+        result = compare_quotes(current, now=self._time(), halted=self.halt_check())
+        self._allowed()
+        return result

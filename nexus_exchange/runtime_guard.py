@@ -436,6 +436,7 @@ class RuntimeGuard:
                 "recipient_save":{"draft_id","supplier","recipient","evidence_path","expected_recipient_id","confirmed"},
                 "recipient_history":{"draft_id","limit"},
                 "thread_history":{"draft_id","recipient_id"},
+                "quote_compare":{"entries","confirmed"},
                 "thread_open":{"draft_id","recipient_id","supplier","confirmed"},
                 "thread_append":{"draft_id","recipient_id","supplier","kind","evidence_path","expected_head","expected_evidence","confirmed"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
@@ -450,6 +451,7 @@ class RuntimeGuard:
                         "recipient_preview":adapter.recipient_preview,"recipient_save":adapter.recipient_save,
                         "recipient_history":adapter.recipient_history,
                         "thread_history":adapter.thread_history,"thread_open":adapter.thread_open,
+                        "quote_compare":adapter.quote_compare,
                         "thread_append":adapter.thread_append}
             result=operations[action](plan_id,**inputs)
             if self.is_set():
