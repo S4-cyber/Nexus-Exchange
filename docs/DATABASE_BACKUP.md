@@ -78,3 +78,7 @@ or resume automatically. Only use a verified pre-upgrade backup with its matchin
 build for rollback; otherwise retain the data and use the compatible newer reader
 until a reviewed migration exists. All acceptance and legal/authority safeguards
 remain in force. No user data is uploaded or shared.
+
+## Optional combined snapshot v2 (candidate)
+
+Pass `--build-id <exact-lowercase-40-character-git-commit>` to the backup command to opt in to a combined closed-instance snapshot. This is an operator-asserted build identity, not a verified executable signature or downgrade guarantee. The manifest explicitly records whether the latest Scout report exists; when present it is copied byte-for-byte, bounded to 1 MiB, validated by the existing strict report decoder, hashed, and rechecked under the same runtime lock as the databases. Restore verifies actual destination hashes, preserves raw legacy encodings, and never resumes automatically. Invalid reports fail closed without replacing original data. Preserve malformed files separately for review. Existing v1 database-only manifests and commands remain readable and unchanged; v1 does not include the report. User evidence and exports remain excluded. A report digest is local integrity evidence, not source authenticity, verified successful task completion or permission. No directory-level power-loss or adversarial filesystem guarantee. Test a separate restore with the matching build before relying on it. Full native recovery drill and independent review remain outstanding.

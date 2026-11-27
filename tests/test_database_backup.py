@@ -132,5 +132,63 @@ class DatabaseBackupTests(unittest.TestCase):
             verify_backup(self.backup)
 
 
+    def test_v2_exact_report_bytes_and_declared_build(self):
+        import json
+        from hashlib import sha256
+        from nexus_exchange.cycle_history import BRIEF
+        raw=json.dumps(dict(format="nexus-engagement-brief-v1",status="completed",
+                            finished=self.now.isoformat(),jobs={},notes=["é"],
+                            shortlist=[],sources=[]),ensure_ascii=False).encode("utf-16")
+        (self.source/BRIEF).write_bytes(raw)
+        result=self.create(build_id="a"*40)
+        self.assertEqual(result["application_commit_asserted"],"a"*40)
+        self.assertTrue(result["latest_report_present"])
+        self.assertEqual(result["format"],"nexus-local-database-backup-v2")
+        row=next(r for r in result["files"] if r["name"]==BRIEF)
+        self.assertEqual(row["sha256"],sha256(raw).hexdigest())
+        self.assertEqual(verify_backup(self.backup),result)
+        restore_backup(self.backup,self.dest,confirmed=True)
+        self.assertEqual((self.dest/BRIEF).read_bytes(),raw)
+        self.assertEqual((self.source/BRIEF).read_bytes(),raw)
+
+    def test_v2_absent_report_and_bad_build_id(self):
+        for value in ("",True,"A"*40,"a"*39):
+            with self.assertRaises(ValueError):
+                self.create(build_id=value)
+        self.assertFalse(self.backup.exists())
+        result=self.create(build_id="b"*40)
+        self.assertFalse(result["latest_report_present"])
+        self.assertEqual(verify_backup(self.backup),result)
+
+    def test_v2_invalid_report_preserves_original(self):
+        from nexus_exchange.cycle_history import BRIEF
+        path=self.source/BRIEF
+        path.write_bytes(b'{"invalid":true}')
+        with self.assertRaises(ValueError):
+            self.create(build_id="c"*40)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(path.read_bytes(),b'{"invalid":true}')
+
+    def test_v2_report_tampering_rejected_before_restore(self):
+        import json
+        from nexus_exchange.cycle_history import BRIEF
+        raw=json.dumps(dict(format="nexus-engagement-brief-v1",status="completed",
+                            finished=self.now.isoformat(),jobs={},notes=[],
+                            shortlist=[],sources=[])).encode()
+        (self.source/BRIEF).write_bytes(raw)
+        self.create(build_id="d"*40)
+        (self.backup/BRIEF).write_bytes(raw+b" ")
+        with self.assertRaises(ValueError):
+            restore_backup(self.backup,self.dest,confirmed=True)
+        self.assertFalse(self.dest.exists())
+
+    def test_v1_report_exclusion_remains_explicit(self):
+        from nexus_exchange.cycle_history import BRIEF
+        (self.source/BRIEF).write_bytes(b"legacy excluded bytes")
+        result=self.create()
+        self.assertEqual(result["kind"],"LOCAL_DATABASES_ONLY")
+        self.assertFalse((self.backup/BRIEF).exists())
+
+
 if __name__=="__main__":
     unittest.main()
