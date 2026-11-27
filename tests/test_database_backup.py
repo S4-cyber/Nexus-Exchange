@@ -190,5 +190,98 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertFalse((self.backup/BRIEF).exists())
 
 
+
+    def test_v2_semantically_invalid_journal_rejected_without_source_change(self):
+        import json
+        import sqlite3
+        from contextlib import closing
+        path=self.source/"events.sqlite3"
+        # Valid SQLite pages, but a terminal event without a predecessor.
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("INSERT INTO events(payload) VALUES (?)", (json.dumps(
+                dict(task_id="orphan",target="synthetic",state="succeeded",
+                     timestamp=self.now.isoformat())),))
+            db.commit()
+        original=path.read_bytes()
+        with self.assertRaisesRegex(ValueError,"invalid transition"):
+            self.create(build_id="e"*40)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(path.read_bytes(),original)
+
+    def test_v2_rehashed_invalid_journal_rejected_on_verify_and_restore(self):
+        import json
+        import sqlite3
+        from contextlib import closing
+        from hashlib import sha256
+        from nexus_exchange.database_backup import _manifest, _json
+        manifest=self.create(build_id="f"*40)
+        path=self.backup/"events.sqlite3"
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("INSERT INTO events(payload) VALUES (?)", (json.dumps(
+                dict(task_id="orphan",target="synthetic",state="succeeded",
+                     timestamp=self.now.isoformat())),))
+            db.commit()
+        raw=path.read_bytes()
+        files=[dict(row,bytes=len(raw),sha256=sha256(raw).hexdigest())
+               if row["name"]=="events.sqlite3" else row for row in manifest["files"]]
+        updated=_manifest(files,manifest["runtime_state"],"f"*40)
+        (self.backup/MANIFEST).write_bytes((_json(updated)+"\n").encode("ascii"))
+        with self.assertRaisesRegex(ValueError,"invalid transition"):
+            verify_backup(self.backup)
+        with self.assertRaisesRegex(ValueError,"invalid transition"):
+            restore_backup(self.backup,self.dest,confirmed=True)
+        self.assertFalse(self.dest.exists())
+        self.assertEqual(path.read_bytes(),raw)
+
+    def test_v2_abrupt_owner_exit_recovery_then_restore_stays_halted(self):
+        import subprocess
+        import sys
+        from nexus_exchange.cycle_history import BRIEF
+        from nexus_exchange.dashboard_events import project
+        script=(
+            "from nexus_exchange.runtime_guard import RuntimeGuard\n"
+            "from nexus_exchange.cycle_history import BRIEF\n"
+            "from datetime import datetime, timezone\n"
+            "from pathlib import Path\n"
+            "import json, os, sys\n"
+            "n=datetime(2026,11,24,12,tzinfo=timezone.utc)\n"
+            "g=RuntimeGuard(sys.argv[1],clock=lambda:n)\n"
+            "g.resume()\n"
+            "for state in ('queued','running'):\n"
+            "    g.events.append(dict(task_id='a'*32,target='Autonomous Scout cycle',"
+            "state=state,timestamp=n.isoformat()))\n"
+            "raw=json.dumps(dict(format='nexus-engagement-brief-v1',status='completed',"
+            "cycle_id='a'*32,finished=n.isoformat(),jobs={},notes=[],shortlist=[],sources=[])).encode()\n"
+            "with (Path(sys.argv[1])/BRIEF).open('wb') as handle:\n"
+            "    handle.write(raw); handle.flush(); os.fsync(handle.fileno())\n"
+            "os._exit(17)\n"
+        )
+        result=subprocess.run([sys.executable,"-c",script,str(self.source)],
+                              capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,17,result.stderr.decode(errors="replace"))
+        original=(self.source/BRIEF).read_bytes()
+        with self.assertRaises(ValueError):
+            self.create(build_id="1"*40)
+        self.assertFalse(self.backup.exists())
+        self.now+=timedelta(seconds=1)
+        with RuntimeGuard(self.source,clock=self.clock) as guard:
+            self.assertTrue(guard.is_set())
+            self.assertEqual(guard.recovered_count,1)
+            view=project(guard.events.read())
+            self.assertEqual(view["history"][-1].state,"interrupted")
+            self.assertEqual(view["successful_tasks"],0)
+        self.create(build_id="1"*40)
+        restore_backup(self.backup,self.dest,confirmed=True)
+        self.assertEqual((self.dest/BRIEF).read_bytes(),original)
+        self.now+=timedelta(seconds=1)
+        with RuntimeGuard(self.dest,clock=self.clock) as guard:
+            self.assertTrue(guard.is_set())
+            self.assertEqual(guard.recovered_count,0)
+            view=project(guard.events.read())
+            self.assertEqual(len(view["history"]),3)
+            self.assertEqual(view["history"][-1].state,"interrupted")
+            self.assertEqual(view["successful_tasks"],0)
+            self.assertFalse(guard.status()["external_authority"])
+
 if __name__=="__main__":
     unittest.main()

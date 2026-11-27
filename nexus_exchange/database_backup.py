@@ -15,6 +15,7 @@ import sqlite3
 import stat
 
 from .runtime_guard import _lock, MAX_REVISION
+from .event_store import read_projection
 from .scout import _timestamp
 from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report
 
@@ -187,7 +188,7 @@ def _state(raw):
     return raw
 
 
-def _database(path,name):
+def _database(path,name,*,validate_journal=False):
     """Read only, with no SQLite sidecars. Requires a closed trusted snapshot."""
     uri=path.resolve(strict=True).as_uri()+"?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri,uri=True,timeout=5)) as db:
@@ -203,7 +204,12 @@ def _database(path,name):
                 rows=db.execute("SELECT slot,state,reason,revision,changed_at FROM runtime_guard_v1").fetchall()
                 if len(rows)!=1 or rows[0][0]!=1:
                     raise ValueError("invalid runtime state")
-                return _state(dict(zip(("state","reason","revision","changed_at"),rows[0][1:])))
+                state=_state(dict(zip(("state","reason","revision","changed_at"),rows[0][1:])))
+                if validate_journal:
+                    # SQLite quick_check validates pages, not event transitions.
+                    # Preserve valid interrupted/unconfirmed history without replay.
+                    read_projection(db)
+                return state
         finally:
             pass
     return None
@@ -249,12 +255,12 @@ def _metadata(raw):
         raise ValueError("invalid backup manifest") from None
 
 
-def _validate_snapshot(path,name):
+def _validate_snapshot(path,name,*,validate_journal=False):
     if name==BRIEF:
         _,raw=_stream(path,MAX_REPORT_BYTES,retain=True)
         decode_report(raw)
         return None
-    return _database(path,name)
+    return _database(path,name,validate_journal=validate_journal)
 
 
 def verify_backup(directory):
@@ -268,7 +274,8 @@ def verify_backup(directory):
         observed,_=_stream(path/row["name"],_maximum(row["name"]))
         if observed!={k:row[k] for k in ("bytes","sha256")}:
             raise ValueError("backup file digest mismatch")
-        state=_validate_snapshot(path/row["name"],row["name"])
+        state=_validate_snapshot(path/row["name"],row["name"],
+                                 validate_journal=manifest["format"]==REPORT_FORMAT)
         if row["name"]==REQUIRED and state!=manifest["runtime_state"]:
             raise ValueError("backup halt state mismatch")
     return manifest
@@ -321,7 +328,7 @@ def create_backup(source,destination,*,confirmed=None,build_id=None):
                 target=destination/name
                 created.append(target)
                 observed=_copy_new(source/name,target)
-                if _validate_snapshot(target,name)!= (state if name==REQUIRED else None):
+                if _validate_snapshot(target,name,validate_journal=include_report)!= (state if name==REQUIRED else None):
                     raise ValueError("copied runtime state mismatch")
                 files.append(dict(name=name,**observed))
             if _scan(source,include_report=include_report)!=names or _database(source/REQUIRED,REQUIRED)!=state:
@@ -362,7 +369,8 @@ def restore_backup(source,destination,*,confirmed=None):
             observed,_=_stream(target,_maximum(row["name"]))
             if observed!=expected:
                 raise ValueError("restored file digest mismatch")
-            state=_validate_snapshot(target,row["name"])
+            state=_validate_snapshot(target,row["name"],
+                                     validate_journal=manifest["format"]==REPORT_FORMAT)
             if row["name"]==REQUIRED and state!=manifest["runtime_state"]:
                 raise ValueError("restored halt state mismatch")
         if verify_backup(source)!=manifest or _scan(destination,include_report=manifest["format"]==REPORT_FORMAT)!=[r["name"] for r in manifest["files"]]:
