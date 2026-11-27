@@ -53,3 +53,28 @@ Existing deterministic Genesis test exercises full copied recovery. CI source
 and frozen Genesis smoke require the same recovery path. No local test run
 claimed. Main gate acceptance unchanged 0/42. Next: dependency/license and
 independent security review, native maintenance usability, verified RC build.
+
+## Scout report compatibility and downgrade precautions (review candidate)
+
+The database-only backup does not include engagement-latest.json, even though
+new Scout terminal journal events may carry a SHA-256 digest of its report.
+Preserve this file separately with the closed instance, along with user evidence
+and artifacts; do not advertise the database backup alone as a complete Scout
+history snapshot. The latest report can be absent or unconfirmed after an
+interrupted publication. Do not synthesize a digest, terminal success or report
+from incomplete records. A readable legacy JSON report may exceed the archive
+limit after canonical encoding; preserve the original bytes for review rather
+than repeatedly retrying or manually truncating it.
+
+Before an upgrade, halt, close and drain the application, verify the existing
+backup using the documented source CLI, preserve non-database files in a
+separate protected location while the instance remains closed, and record the
+exact application build identity. Use a distinct new test directory for any
+restore; keep original data and backup untouched. This manual procedure is not
+a transactionally verified combined snapshot and has not completed a downgrade
+drill. Older builds may reject digest-bearing journal records or newer schemas.
+Do not point an older build at upgraded data, strip event fields, edit the journal,
+or resume automatically. Only use a verified pre-upgrade backup with its matching
+build for rollback; otherwise retain the data and use the compatible newer reader
+until a reviewed migration exists. All acceptance and legal/authority safeguards
+remain in force. No user data is uploaded or shared.

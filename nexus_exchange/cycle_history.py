@@ -151,6 +151,11 @@ class CycleHistory:
                 previous = None
             if previous is not None:
                 old = encode(previous)
+                # A readable legacy encoding can expand when canonicalized.
+                # Do not replace the only readable copy with an archive that
+                # exceeds the read limit, or evict any older entries for it.
+                if len(old) > MAX_BYTES:
+                    raise ValueError("Saved cycle archive exceeds the size limit.")
                 expected = (sha256(old).hexdigest(), previous["finished"], previous["status"], old)
                 self.db.execute("BEGIN IMMEDIATE")
                 try:
