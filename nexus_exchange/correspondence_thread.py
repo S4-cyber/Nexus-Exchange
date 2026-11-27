@@ -171,6 +171,19 @@ class ThreadStore:
                 self.db.execute("ROLLBACK")
             raise
 
+    def _guard_write(self):
+        # A temporary shadow could make read-back succeed without durable storage.
+        if self.db.execute("SELECT type FROM main.sqlite_master WHERE name=? COLLATE NOCASE",
+                (_TABLE,)).fetchone() != ("table",):
+            raise ValueError("thread storage schema missing")
+        if self.db.execute("SELECT 1 FROM sqlite_temp_master WHERE name=? COLLATE NOCASE "
+                "AND type IN ('table','view') LIMIT 1", (_TABLE,)).fetchone() is not None:
+            raise ValueError("unexpected thread storage shadow")
+        for catalog in ("sqlite_master", "sqlite_temp_master"):
+            if self.db.execute("SELECT 1 FROM "+catalog+" WHERE type='trigger' "
+                    "AND tbl_name=? COLLATE NOCASE LIMIT 1", (_TABLE,)).fetchone() is not None:
+                raise ValueError("unexpected thread storage trigger")
+
     @staticmethod
     def _scope(draft, recipient):
         candidate = _for_draft(draft, recipient)
@@ -211,6 +224,7 @@ class ThreadStore:
     def open(self, draft, recipient, *, now, confirmed=None, halted=None):
         proposed = open_thread(draft, recipient, now=now, confirmed=confirmed, halted=halted)
         with self._transaction():
+            self._guard_write()
             current = self._read(draft, recipient)
             if current is not None:
                 last = current["events"][-1]["recorded_at"] if current["events"] else current["created_at"]
@@ -219,7 +233,9 @@ class ThreadStore:
                 return current
             if self.db.execute("SELECT COUNT(*) FROM operator_threads_v1").fetchone()[0] >= MAX_THREADS:
                 raise ValueError("thread storage capacity review required")
-            self.db.execute("INSERT INTO operator_threads_v1 VALUES (?,?,?,?,?,?)", self._row(proposed))
+            inserted = self.db.execute("INSERT INTO operator_threads_v1 VALUES (?,?,?,?,?,?)", self._row(proposed))
+            if inserted.rowcount != 1 or self._read(draft, recipient) != proposed:
+                raise ValueError("thread storage publication mismatch")
             return proposed
 
     def append(self, draft, recipient, *, kind, evidence_reference, now,
@@ -229,6 +245,7 @@ class ThreadStore:
             raise PermissionError("explicit local event confirmation required")
         _hash(expected_head)
         with self._transaction():
+            self._guard_write()
             current = self._read(draft, recipient)
             if current is None:
                 raise ValueError("saved correspondence thread required")
@@ -242,4 +259,6 @@ class ThreadStore:
                 (row[3], row[4], row[5], row[0], row[1], row[2], expected_head))
             if changed.rowcount != 1:
                 raise ValueError("thread head changed; inspect again")
+            if self._read(draft, recipient) != updated:
+                raise ValueError("thread storage publication mismatch")
             return updated
