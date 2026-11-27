@@ -9,6 +9,7 @@ class TaskState:
     target: str
     state: str
     timestamp: str
+    report_sha256: str | None = None
 
 _TRANSITIONS = {None: {"queued"}, "queued": {"running", "cancelled", "interrupted"},
                 "running": {"succeeded", "failed", "cancelled", "interrupted"}}
@@ -27,15 +28,25 @@ def _event_text(value, limit):
 
 def validate_event(event):
     """Validate bounded event fields independently of transition history."""
-    if (type(event) is not dict or len(event) != 4
+    fields = {"task_id","target","state","timestamp"}
+    if (type(event) is not dict or len(event) not in (4, 5)
             or any(type(key) is not str for key in event)
-            or set(event) != {"task_id","target","state","timestamp"}):
+            or set(event) not in (fields, fields | {"report_sha256"})):
         raise ValueError("invalid event")
     task = _event_text(event["task_id"],128)
     target = _event_text(event["target"],256)
     state = _event_text(event["state"],32)
     if state not in {"queued","running","succeeded","failed","cancelled","interrupted"}:
         raise ValueError("invalid event state")
+    if "report_sha256" in event:
+        digest = event["report_sha256"]
+        if (type(digest) is not str or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)
+                or event["target"] != "Autonomous Scout cycle"
+                or event["task_id"] != task or len(task) != 32
+                or any(c not in "0123456789abcdef" for c in task)
+                or event["state"] not in ("succeeded", "failed")):
+            raise ValueError("invalid report digest metadata")
     stamp = _timestamp(_event_text(event["timestamp"],64))
     return task, target, state, stamp
 
@@ -53,7 +64,7 @@ def project(events, page=1):
             raise ValueError("invalid transition")
         if old and old.target != target:
             raise ValueError("target changed")
-        record = TaskState(task,target,state,stamp.isoformat())
+        record = TaskState(task,target,state,stamp.isoformat(),event.get("report_sha256"))
         states[task] = record
         history.append(record)
         previous_time = stamp

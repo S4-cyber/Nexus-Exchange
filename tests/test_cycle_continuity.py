@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -178,8 +179,11 @@ class CycleContinuityTests(unittest.TestCase):
         self.assertEqual(latest(self.directory), first)
         events = EventStore(self.directory / "events.sqlite3")
         try:
-            self.assertEqual([r["state"] for r in events.read()],
+            records = events.read()
+            self.assertEqual([r["state"] for r in records],
                              ["queued", "running", "succeeded", "queued", "running", "failed"])
+            self.assertEqual(records[2]["report_sha256"], sha256(prior).hexdigest())
+            self.assertNotIn("report_sha256", records[-1])
         finally:
             events.close()
 
@@ -198,8 +202,11 @@ class CycleContinuityTests(unittest.TestCase):
         self.assertEqual((self.directory / engagement.BRIEF).read_bytes(), prior)
         events = EventStore(self.directory / "events.sqlite3")
         try:
-            self.assertEqual([r["state"] for r in events.read()],
+            records = events.read()
+            self.assertEqual([r["state"] for r in records],
                              ["queued", "running", "succeeded", "queued", "running", "cancelled"])
+            self.assertEqual(records[2]["report_sha256"], sha256(prior).hexdigest())
+            self.assertNotIn("report_sha256", records[-1])
         finally:
             events.close()
 

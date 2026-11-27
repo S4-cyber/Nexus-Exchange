@@ -43,7 +43,7 @@ class CycleRecovery:
             if self._stopped() is not False:
                 raise _PublicationHalted('Engagement halted.')
         try:
-            publish(check_active)
+            return publish(check_active)
         except _PublicationHalted:
             raise
         except _STORAGE_ERRORS + (RecursionError,):

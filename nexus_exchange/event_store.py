@@ -41,6 +41,17 @@ def _interruption(item, stamp):
                 state="interrupted",timestamp=stamp)
 
 
+def _reserved_terminal_bytes(item):
+    interrupted = _interruption(item, _RECOVERY_STAMP_EXAMPLE)
+    if (item.state == "running" and item.target == "Autonomous Scout cycle"
+            and len(item.task_id) == 32 and all(c in "0123456789abcdef" for c in item.task_id)):
+        # The Scout UTC clock uses at most six fractional digits. Reserve the
+        # larger published terminal event without fabricating a digest.
+        return max(len(_encode(interrupted).encode("utf-8")),
+                   len(_encode(dict(interrupted, state="succeeded", report_sha256="0"*64)).encode("utf-8")))
+    return len(_encode(interrupted).encode("utf-8"))
+
+
 def _check_byte_budget(rows, payloads, reserved_bytes=0):
     total=reserved_bytes+sum(len(row[1].encode("utf-8")) for row in rows)
     for payload in payloads:
@@ -122,8 +133,7 @@ class EventStore:
             # Reserve both rows and exact serialized bytes for every active task.
             if len(rows)+1+len(active)>MAX_RECOVERY_EVENTS:
                 raise ValueError("journal recovery capacity review required")
-            reserved=sum(len(_encode(_interruption(item,_RECOVERY_STAMP_EXAMPLE)).encode("utf-8"))
-                         for item in active)
+            reserved=sum(_reserved_terminal_bytes(item) for item in active)
             _check_byte_budget(rows,(payload,),reserved)
             self.db.execute("INSERT INTO events(payload) VALUES (?)", (payload,))
             self._verify_append(rows,(payload,))

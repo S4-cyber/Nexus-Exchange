@@ -1935,8 +1935,8 @@ def main(*, data_directory=None, gui_smoke=False):
         open_brief()
         if tabs.select() != str(reports) or review.tabs.select() != str(review.summary):
             raise RuntimeError("Home did not open the full-window report")
-        if ("Journal: succeeded (cycle ID match only)" not in review.text.get("1.0", "end")
-                or "Journal: succeeded (cycle ID match only)" not in cycle_status.cget("text")):
+        if ("Journal: succeeded (report digest matches; local evidence only)" not in review.text.get("1.0", "end")
+                or "Journal: succeeded (report digest matches; local evidence only)" not in cycle_status.cget("text")):
             raise RuntimeError("Current report did not distinguish the task journal outcome")
         review.tabs.select(review.files)
         root.update_idletasks()

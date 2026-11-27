@@ -142,3 +142,4 @@ class CycleHistory:
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
+        return sha256(raw).hexdigest()

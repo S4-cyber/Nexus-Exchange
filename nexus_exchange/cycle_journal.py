@@ -1,6 +1,8 @@
 """Read-only correlation of a saved Scout brief with validated journal events."""
 from datetime import datetime
 import sqlite3
+from hashlib import sha256
+from .cycle_history import encode, decode
 
 
 _EXPECTED = {
@@ -22,7 +24,7 @@ def _stamp(value):
 
 
 def describe_outcome(brief, read_history):
-    """Correlate IDs and timing; never attest report contents or grant authority.
+    """Correlate IDs, timing and optional local content hash; never grant authority.
 
     read_history must return the independently validated, bounded journal history.
     No storage writes, retries or guessed terminal transitions are performed.
@@ -54,4 +56,14 @@ def describe_outcome(brief, read_history):
             raise ValueError('timestamp order')
     except (ValueError, OverflowError, StopIteration):
         return 'Journal: timing mismatch — completion unconfirmed'
-    return f'Journal: {last.state} (cycle ID match only)'
+    digest = getattr(last, "report_sha256", None)
+    if digest is None:
+        return f'Journal: {last.state} (cycle ID match only)'
+    try:
+        raw = encode(brief)
+        decode(raw)
+    except (ValueError, TypeError, RecursionError, OverflowError):
+        return 'Journal: invalid report — completion unconfirmed'
+    if sha256(raw).hexdigest() != digest:
+        return 'Journal: digest mismatch — completion unconfirmed'
+    return f'Journal: {last.state} (report digest matches; local evidence only)'

@@ -90,6 +90,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
         raise CycleMaintenanceRequired("Scout cycle storage requires maintenance. Automatic engagement paused.") from None
     task = uuid4().hex
     activity = None
+    report_digest = None
     def write_activity(rows):
         now = clock()
         recovery.write_activity(lambda: activity.put(task, rows, now))
@@ -98,8 +99,11 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
     def stage(key, state, title, detail=""):
         stages([(key, state, title, detail)])
     def journal(state):
-        event.append(dict(task_id=task, target="Autonomous Scout cycle", state=state,
-                          timestamp=clock().isoformat()))
+        item = dict(task_id=task, target="Autonomous Scout cycle", state=state,
+                    timestamp=clock().isoformat())
+        if report_digest is not None and state in ("succeeded", "failed"):
+            item["report_sha256"] = report_digest
+        event.append(item)
     def settle(failed):
         if activity is not None:
             activity.settle(task, failed=failed)
@@ -269,7 +273,7 @@ def cycle(directory, stopped, progress, *, default_search=search_default, clock=
                      sources=outcomes, jobs=jobs, notes=notes, shortlist=rows,
                      shortlist_available=shortlist_issue is None, external_actions=0)
         recovery.settle()
-        recovery.publish(lambda check: CycleHistory(event.db).publish(directory, brief, check))
+        report_digest = recovery.publish(lambda check: CycleHistory(event.db).publish(directory, brief, check))
         recovery.record("failed" if research_issue or (outcomes and not succeeded) else "succeeded")
         return brief
     except Exception as error:
