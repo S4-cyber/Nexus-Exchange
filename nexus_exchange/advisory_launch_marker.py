@@ -49,6 +49,24 @@ def pending(db):
     return _read(db) is not None
 
 
+
+def validate_snapshot(db):
+    """Validate an optional offline marker without initializing or clearing it."""
+    schema = db.execute("SELECT type FROM sqlite_master WHERE name=?",
+                        ("advisory_launch_v1",)).fetchone()
+    if schema is None:
+        return False
+    if schema != ("table",) or db.execute("PRAGMA table_xinfo(advisory_launch_v1)").fetchall() != [
+        (0, "slot", "INTEGER", 0, None, 1, 0),
+        (1, "reservation_id", "TEXT", 1, None, 0, 0),
+    ]:
+        raise ValueError("invalid advisory launch schema")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                  "AND tbl_name='advisory_launch_v1' LIMIT 1").fetchone():
+        raise ValueError("unexpected advisory launch trigger")
+    return pending(db)
+
+
 @contextmanager
 def _mutation(db):
     _autocommit(db)

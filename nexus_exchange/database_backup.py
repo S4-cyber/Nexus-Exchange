@@ -212,12 +212,7 @@ def _database(path,name,*,validate_journal=False):
                     # Preserve valid interrupted/unconfirmed history without replay.
                     read_projection(db)
                     validate_archive(db)
-                    marker = db.execute("SELECT type FROM sqlite_master WHERE name=?",
-                                        ("advisory_launch_v1",)).fetchone()
-                    if marker is not None:
-                        if marker != ("table",):
-                            raise ValueError("invalid advisory launch schema")
-                        advisory_launch_marker.pending(db)
+                    advisory_launch_marker.validate_snapshot(db)
                 return state
             if name == "local-advisory.sqlite3" and validate_journal:
                 validate_ledger_snapshot(db)

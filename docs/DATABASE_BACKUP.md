@@ -115,3 +115,14 @@ permit retry, clear quarantine, authorize resume or authenticate history.
 V1 behavior is unchanged. Two new integration methods exercise source and
 rehashed backup corruption, restore preservation and malformed launch markers.
 Local checkout DNS failed; hosted regression and independent review pending.
+
+
+## Combined snapshot quarantine schema (review candidate)
+
+V2 validates the optional launch-marker table shape (including hidden columns,
+primary key and NOT NULL metadata), rejects triggers attached to it even when
+empty, and uses the bounded token reader without initialization, repair or
+clearing. This is a targeted check, not exhaustive database schema attestation,
+authentication or worker-exit evidence. Legacy absence remains valid. V1 is
+unchanged. Four focused SQLite tests passed locally; full backup integration
+and native verification remain pending.

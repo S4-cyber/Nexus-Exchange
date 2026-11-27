@@ -398,5 +398,42 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertFalse(rejected.exists())
         self.assertEqual(path.read_bytes(), invalid)
 
+    def test_v2_marker_trigger_rejected_on_create_verify_and_restore(self):
+        import sqlite3
+        from contextlib import closing
+        from hashlib import sha256
+        from nexus_exchange.database_backup import _manifest, _json
+        name = "events.sqlite3"
+        path = self.source / name
+        trigger = ("CREATE TRIGGER broken AFTER INSERT ON advisory_launch_v1 "
+                   "BEGIN DELETE FROM advisory_launch_v1; END")
+        with closing(sqlite3.connect(path)) as db:
+            db.execute(trigger)
+            db.commit()
+        damaged = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "advisory launch trigger"):
+            self.create(build_id="5"*40)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(path.read_bytes(), damaged)
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("DROP TRIGGER broken")
+            db.commit()
+        manifest = self.create(build_id="5"*40)
+        target = self.backup / name
+        with closing(sqlite3.connect(target)) as db:
+            db.execute(trigger)
+            db.commit()
+        raw = target.read_bytes()
+        files = [dict(row, bytes=len(raw), sha256=sha256(raw).hexdigest())
+                 if row["name"] == name else row for row in manifest["files"]]
+        updated = _manifest(files, manifest["runtime_state"], "5"*40)
+        (self.backup / MANIFEST).write_bytes((_json(updated)+"\n").encode("ascii"))
+        with self.assertRaisesRegex(ValueError, "advisory launch trigger"):
+            verify_backup(self.backup)
+        with self.assertRaisesRegex(ValueError, "advisory launch trigger"):
+            restore_backup(self.backup, self.dest, confirmed=True)
+        self.assertFalse(self.dest.exists())
+        self.assertEqual(target.read_bytes(), raw)
+
 if __name__=="__main__":
     unittest.main()
