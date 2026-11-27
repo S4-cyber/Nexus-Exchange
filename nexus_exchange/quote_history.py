@@ -127,10 +127,14 @@ def inspect_receipt(data):
     if type(rows) is not list or not 2 <= len(rows) <= MAX_QUOTES:
         raise ValueError("invalid historical quotation count")
     parties, references, lengths = set(), set(), set()
+    identities = {key: set() for key in ("draft_id", "recipient_id", "thread_id", "reply_sha256")}
     for row in rows:
         _shape(row, _ROW_FIELDS)
-        for key in ("draft_id", "recipient_id", "thread_id", "reply_sha256"):
-            _hash(row[key])
+        for key, seen in identities.items():
+            identity = _hash(row[key])
+            if identity in seen:
+                raise ValueError("duplicate historical quotation identity")
+            seen.add(identity)
         _shape(row["supplier"], {"scheme", "identifier"})
         party = (_scheme(row["supplier"]["scheme"]), _text(row["supplier"]["identifier"], 128))
         reference = row["evidence_reference"]

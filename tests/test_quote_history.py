@@ -7,7 +7,7 @@ from nexus_exchange.operator_drafts import _digest, _json
 from nexus_exchange.quote_comparison import compare_quotes
 from nexus_exchange.quote_history import (historical_receipt, inspect_receipt,
     index_receipts, MAX_RECEIPT_BYTES, MAX_INDEX_RECEIPTS)
-from test_quote_comparison import QuoteComparisonTests as _Fixture
+import test_quote_comparison as fixtures
 from test_operator_drafts import NOW
 
 
@@ -22,7 +22,7 @@ def rehash(value, key):
 
 class QuoteHistoryInspectionTests(unittest.TestCase):
     def setUp(self):
-        self.entries = _Fixture().pair()
+        self.entries = fixtures.QuoteComparisonTests().pair()
         self.original = compare_quotes(self.entries, now=NOW, halted=False)
         self.scope = self.original["scope_sha256"]
 
@@ -91,3 +91,29 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
             rehash(receipt, "receipt_sha256")
             with self.subTest(change=change), self.assertRaises(ValueError):
                 inspect_receipt(encode(receipt))
+
+    def test_rehashed_duplicate_quotation_identities_rejected(self):
+        for key in ("draft_id", "recipient_id", "thread_id", "reply_sha256"):
+            receipt = self.receipt()
+            result = receipt["comparison"]
+            first, second = result["rows"]
+            second[key] = first[key]
+            rehash(second, "declaration_sha256")
+            rehash(result, "comparison_sha256")
+            current = dict(result, compared_at=receipt["rechecked_at"])
+            rehash(current, "comparison_sha256")
+            receipt["rechecked_comparison_sha256"] = current["comparison_sha256"]
+            rehash(receipt, "receipt_sha256")
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "duplicate historical quotation identity"):
+                inspect_receipt(encode(receipt))
+
+    def test_unequal_timing_and_ties_remain_historical(self):
+        fixture = fixtures.QuoteComparisonTests()
+        for entries, expected in ((fixture.pair(delivery_days=5), None),
+                                  ([fixture.entry(), fixture.entry("SUPPLIER-2", "c")], 1175)):
+            original = compare_quotes(entries, now=NOW, halted=False)
+            current = compare_quotes(entries, now=NOW+timedelta(seconds=1), halted=False)
+            view = inspect_receipt(encode(historical_receipt(original, current)))
+            self.assertEqual(view["lowest_declared_total_cents"], expected)
+            self.assertEqual(view["current_status"], "NOT_REVALIDATED")
+            self.assertIs(view["execution_eligible"], False)

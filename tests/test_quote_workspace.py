@@ -129,7 +129,12 @@ class QuoteWorkspaceTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 self.review.export_history(target, expected_comparison=pin, confirmed=True)
             self.assertEqual(target.read_bytes(), content)
-            self.assertEqual(list(Path(directory).iterdir()), [target])
+            # Windows TEMP can use an 8.3 alias while resolve() expands it.
+            # Check the exact directory contents and file identity, not spelling.
+            entries = list(Path(directory).iterdir())
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].name, target.name)
+            self.assertTrue(entries[0].samefile(target))
 
     def test_history_rejects_changed_review_and_halt(self):
         a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
