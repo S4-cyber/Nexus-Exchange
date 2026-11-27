@@ -4,6 +4,8 @@ from tkinter import StringVar
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from .activity_panel import ActivityPanel
+from .cycle_journal import describe_outcome
+from .event_store import read_projection
 from .engagement import brief_text
 from .engagement_files import INBOX, OUTPUTS
 
@@ -110,6 +112,9 @@ class EngagementReports:
         except (ValueError, TypeError, KeyError, AttributeError, IndexError, OSError, sqlite3.Error, RecursionError):
             self.display(None, error="This cycle report could not be read. Choose another cycle.")
 
+    def journal_status(self, brief):
+        return describe_outcome(brief, lambda: read_projection(self.history.db)["history"])
+
     def display(self, brief, *, error=None):
         summary = error or "Choose Engage on Home to prepare your first brief."
         hint = error or "Completed files and anything needing attention will appear here after a cycle."
@@ -117,7 +122,7 @@ class EngagementReports:
         if brief is not None:
             if not isinstance(brief, dict):
                 raise ValueError("Invalid saved brief.")
-            summary = brief_text(brief)
+            summary = self.journal_status(brief) + "\n\nReport contents (not independently attested)\n" + brief_text(brief)
             jobs = brief["jobs"]
             if jobs.get("issue"):
                 hint = jobs["issue"]

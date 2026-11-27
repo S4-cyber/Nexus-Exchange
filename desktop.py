@@ -1657,7 +1657,7 @@ def main(*, data_directory=None, gui_smoke=False):
     def summarize(brief):
         found = sum(item["found"] for item in brief["sources"])
         jobs = brief["jobs"]
-        return (f"{brief['status']} · Notices {found} · {engagement.shortlist_summary(brief)}"
+        return (f"{review.journal_status(brief)}\nReport: {brief['status']} · Notices {found} · {engagement.shortlist_summary(brief)}"
                 f" · Files created {jobs['produced']} · Files held {jobs['held']}")
 
     def open_brief():
@@ -1935,6 +1935,9 @@ def main(*, data_directory=None, gui_smoke=False):
         open_brief()
         if tabs.select() != str(reports) or review.tabs.select() != str(review.summary):
             raise RuntimeError("Home did not open the full-window report")
+        if ("Journal: succeeded (cycle ID match only)" not in review.text.get("1.0", "end")
+                or "Journal: succeeded (cycle ID match only)" not in cycle_status.cget("text")):
+            raise RuntimeError("Current report did not distinguish the task journal outcome")
         review.tabs.select(review.files)
         root.update_idletasks()
         if (not review.listing.winfo_ismapped() or len(review.items) != 2
@@ -1944,7 +1947,8 @@ def main(*, data_directory=None, gui_smoke=False):
         picker.current(1)
         picker.event_generate("<<ComboboxSelected>>")
         root.update()
-        if review.items or "Earlier cycle fixture" not in review.text.get("1.0", "end"):
+        if (review.items or "Earlier cycle fixture" not in review.text.get("1.0", "end")
+                or "Journal: legacy report" not in review.text.get("1.0", "end")):
             raise RuntimeError("Cycle selector did not switch the brief and its file results together")
         review.update_cycles(brief)
         if not review.pinned or review.items:
