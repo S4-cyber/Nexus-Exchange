@@ -2,6 +2,7 @@
 from datetime import datetime
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -10,12 +11,43 @@ from tempfile import NamedTemporaryFile
 BRIEF = "engagement-latest.json"
 KEEP_CYCLES = 30
 MAX_BYTES = 1024 * 1024
+MAX_JSON_DEPTH = 64
+
+
+def _unique_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate cycle report field.")
+        result[key] = value
+    return result
+
+
+def _validate_json(value, depth=0):
+    # Validate before canonical encoding or handing any value to native UI.
+    if depth > MAX_JSON_DEPTH:
+        raise ValueError("Saved cycle report nesting exceeds the limit.")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key.encode("utf-8")
+            _validate_json(item, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json(item, depth + 1)
+    elif isinstance(value, str):
+        value.encode("utf-8")
+    elif isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("Nonfinite cycle report number.")
 
 
 def decode(raw):
     if len(raw) > MAX_BYTES:
         raise ValueError("Saved cycle report exceeds the size limit.")
-    brief = json.loads(raw)
+    try:
+        brief = json.loads(raw, object_pairs_hook=_unique_fields)
+        _validate_json(brief)
+    except (ValueError, RecursionError):
+        raise ValueError("Invalid saved cycle report JSON.") from None
     if (not isinstance(brief, dict) or brief.get("format") != "nexus-engagement-brief-v1"
             or not isinstance(brief.get("status"), str) or not isinstance(brief.get("finished"), str)
             or len(brief["status"]) > 64 or len(brief["finished"]) > 64
