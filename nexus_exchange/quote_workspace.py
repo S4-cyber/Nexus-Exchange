@@ -55,17 +55,40 @@ class QuoteReview:
     def clear(self):
         self._staged.clear()
 
-    def stage(self, draft_id, recipient_id, fields, raw):
+    def _scoped_correspondence(self, draft_id, fields):
         self.workspace._permit()
         _hash(draft_id)
+        draft = self.workspace.history(draft_id)["draft"]
+        request = draft["request"]
+        if "supplier_profile_sha256" not in request:
+            raise ValueError("scoped draft required")
+        correspondence = CorrespondenceWorkspace(self.workspace, draft, fields)
+        # Rebuild the exact draft through the trusted runtime, rather than
+        # waiting until comparison to discover a superseded declaration.
+        current = self.workspace._draft(self.workspace._call(
+            "prepare", supplier=correspondence.supplier,
+            region=request["region"], items=request["items"]))
+        if current != draft:
+            raise ValueError("draft scope changed; refresh the selected draft")
+        self.workspace._permit()
+        return draft, correspondence
+
+    def recipient_options(self, draft_id, fields):
+        """Bounded historical IDs for the exact current draft; no verification."""
+        _, correspondence = self._scoped_correspondence(draft_id, fields)
+        result = correspondence.history()
+        self.workspace._permit()
+        return dict(draft_id=draft_id,
+                    recipient_ids=tuple(r["candidate"]["recipient_id"] for r in result["rows"]),
+                    truncated=result["truncated"])
+
+    def stage(self, draft_id, recipient_id, fields, raw):
+        self.workspace._permit()
         _hash(recipient_id)
         if len(self._staged) >= MAX_QUOTES:
             raise ValueError("quotation review capacity reached")
-        draft = self.workspace.history(draft_id)["draft"]
-        if "supplier_profile_sha256" not in draft["request"]:
-            raise ValueError("scoped draft required")
+        draft, correspondence = self._scoped_correspondence(draft_id, fields)
         terms = parse_terms(raw, len(draft["request"]["items"]))
-        correspondence = CorrespondenceWorkspace(self.workspace, draft, fields)
         records = correspondence.history()["rows"]
         matches = [r for r in records if r["candidate"]["recipient_id"] == recipient_id]
         if len(matches) != 1:
@@ -92,6 +115,7 @@ class QuoteReview:
         return "\n\n".join(
             s["draft"]["request"]["supplier"]["identifier"] + "\nDraft: " + e["draft_id"]
             + "\nRecipient: " + e["recipient_id"] + "\nReply: " + e["declaration"]["expected_head"]
+            + "\nReply evidence: " + e["declaration"]["evidence_reference"]
             + "\nExtended line totals (cents): " + str(e["declaration"]["line_totals_cents"])
             + "\nTax/shipping/fees (cents): " + "/".join(str(e["declaration"][k]) for k in
                 ("tax_cents", "shipping_cents", "fees_cents"))
@@ -128,13 +152,18 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
 
     review = QuoteReview(workspace)
     ttk.Label(parent, text="Synthetic local comparison only. Select a saved draft in History, "
-              "reenter its supplier declaration above, and paste its saved recipient ID. "
-              "The latest simulated reply is loaded locally; terms are declarations, not verified prices.",
+              "reenter its supplier declaration above, and load saved recipients. "
+              "Choose a local recipient; the latest simulated reply is loaded locally. Terms are unverified.",
               wraplength=950).pack(anchor="w", padx=5, pady=3)
     form = ttk.Frame(parent)
     form.pack(fill="x", padx=5)
     fields = {k: tk.StringVar(master=parent) for k, _ in (("recipient", "Saved recipient ID"), *TERM_FIELDS)}
-    for i, (key, label) in enumerate((("recipient", "Saved recipient ID"), *TERM_FIELDS)):
+    ttk.Label(form, text="Saved recipient ID").grid(row=0, column=0, sticky="w", pady=1)
+    picker = ttk.Combobox(form, textvariable=fields["recipient"], width=68,
+                          state="readonly", values=())
+    picker.grid(row=0, column=1, sticky="ew", padx=4)
+    loaded = None
+    for i, (key, label) in enumerate(TERM_FIELDS, start=1):
         ttk.Label(form, text=label).grid(row=i, column=0, sticky="w", pady=1)
         ttk.Entry(form, textvariable=fields[key], width=68).grid(row=i, column=1, sticky="ew", padx=4)
     form.columnconfigure(1, weight=1)
@@ -149,8 +178,17 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         output.insert("end", text)
         output.configure(state="disabled")
 
+    def reset_picker():
+        nonlocal loaded
+        loaded = None
+        fields["recipient"].set("")
+        picker.configure(values=())
+
     def clear():
         review.clear()
+        reset_picker()
+        for key, _ in TERM_FIELDS:
+            fields[key].set("")
         write("")
         status.configure(text="Staged quotations cleared. Select and stage again.")
 
@@ -160,9 +198,36 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         if workspace.blocked_check() is not False:
             clear()
 
+    def load_recipients():
+        nonlocal loaded
+        reset_picker()
+        try:
+            draft_id = selected_draft()
+            declared = supplier_fields()
+            result = review.recipient_options(draft_id, declared)
+            if selected_draft() != draft_id or supplier_fields() != declared:
+                raise ValueError("selected draft or declaration changed")
+            ids = result["recipient_ids"]
+            loaded = (draft_id, deepcopy(declared), ids)
+            picker.configure(values=ids)
+            if len(ids) == 1:
+                fields["recipient"].set(ids[0])
+            write(review.summary())
+            status.configure(text=f"{len(ids)} local recipient declarations"
+                             + (" (truncated)" if result["truncated"] else "")
+                             + ". Select an ID and enter declared terms.")
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            reset_picker()
+            error(exc)
+
     def stage():
         try:
-            review.stage(selected_draft(), fields["recipient"].get(), supplier_fields(),
+            draft_id, declared = selected_draft(), supplier_fields()
+            recipient_id = fields["recipient"].get()
+            if (loaded is None or loaded[:2] != (draft_id, declared)
+                    or recipient_id not in loaded[2]):
+                raise ValueError("load recipients for the current draft and declaration")
+            review.stage(draft_id, recipient_id, declared,
                          {k: fields[k].get() for k, _ in TERM_FIELDS})
             write(review.summary())
             status.configure(text="Staged locally. Select another saved draft or compare.")
@@ -188,6 +253,13 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                 lines.append(row["supplier"]["identifier"] + " | USD cents: " + str(row["total_cents"])
                              + " | delivery/payment days: " + str(row["delivery_days"]) + "/"
                              + str(row["payment_days"]))
+            if result["equal_declared_timing"]:
+                lines.append("Lowest declared total (USD cents): "
+                             + str(result["lowest_declared_total_cents"]))
+                lines.append("Number tied at lowest declared cost: "
+                             + str(len(result["lowest_declared_cost_ids"])))
+            else:
+                lines.append("Cost ranking withheld: different declared delivery or payment timing.")
             lines.append("No supplier selected. No external authority.")
             write("\n".join(lines) + "\n\n" + summary)
             status.configure(text="Read-only comparison; refresh by explicitly comparing again.")
@@ -196,6 +268,8 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
 
     buttons = ttk.Frame(parent)
     buttons.pack(fill="x", padx=5)
-    for label, callback in (("Stage selected draft", stage), ("Compare staged", compare), ("Clear review", clear)):
+    for label, callback in (("Load saved recipients", load_recipients),
+                            ("Stage selected draft", stage), ("Compare staged", compare),
+                            ("Clear review", clear)):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
     return clear

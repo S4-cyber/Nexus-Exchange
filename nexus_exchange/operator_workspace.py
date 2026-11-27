@@ -283,7 +283,11 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc: error(exc)
     ttk.Button(buttons,text='Local correspondence',command=correspondence).pack(side='left',padx=4)
     from .quote_workspace import mount_quote_review
-    clear_quotes=mount_quote_review(quote_tab,workspace,lambda:displayed,fields)
+    def selected_quote_draft():
+        if displayed is None or tree.selection()!=(displayed,) or displayed not in records:
+            raise ValueError('select and inspect one saved draft')
+        return displayed
+    clear_quotes=mount_quote_review(quote_tab,workspace,selected_quote_draft,fields)
     tree.bind('<<TreeviewSelect>>',display)
     window.bind('<Destroy>',destroyed,add='+')
     for var in (*values.values(),region): var.trace_add('write',changed)
