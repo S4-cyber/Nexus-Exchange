@@ -472,7 +472,8 @@ class RuntimeGuard:
         fields={"list":set(),"retain":{"documents","confirmed"},
                 "forget":{"receipt_ids","confirmed"},
                 "recall":{"scope_sha256","limit"},
-                "reviewed_recall":{"entries","limit","confirmed"}}
+                "reviewed_recall":{"entries","limit","confirmed"},
+                "council_recall":{"entries","limit","confirmed"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported Operator history action or inputs")
         from .quote_history_store import local_history_action
@@ -488,6 +489,16 @@ class RuntimeGuard:
             if action=="recall":
                 rows=local_history_action(self._directory,"list",plan_id,permit=permit)
                 result=build_recall(rows,plan_id,inputs["scope_sha256"],limit=inputs["limit"])
+            elif action=="council_recall":
+                from .operator_scenarios import OperatorScenario
+                from .council_history_context import build_council_history_context
+                council=ScenarioCouncil(self._directory,halt_check=self.is_set,clock=self._clock)
+                adapter=OperatorScenario(self._directory,halt_check=self.is_set,clock=self._clock)
+                result=build_council_history_context(plan_id,limit=inputs["limit"],
+                    confirmed=inputs["confirmed"],inspect=lambda:council.inspect(plan_id),
+                    compare=lambda:adapter.quote_compare(plan_id,inputs["entries"],confirmed=True),
+                    read_history=lambda:local_history_action(self._directory,"list",plan_id,permit=permit),
+                    permit=permit,clock=self._clock)
             elif action=="reviewed_recall":
                 from .operator_scenarios import OperatorScenario
                 from .quote_history_reviewed import review_scoped_recall
