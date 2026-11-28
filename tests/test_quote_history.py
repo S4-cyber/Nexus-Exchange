@@ -263,6 +263,10 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                     guard.quote_history_action("list", plan)
                 guard.resume()
                 self.assertEqual(guard.quote_history_action("list", plan), [])
+                empty = guard.quote_history_action("recall", plan, scope_sha256=self.scope, limit=8)
+                self.assertEqual(empty["references"], [])
+                with self.assertRaises(ValueError):
+                    guard.quote_history_action("recall", plan, scope_sha256=self.scope[:8], limit=8)
                 self.assertFalse((root / DB_NAME).exists())
                 with self.assertRaises(PermissionError):
                     guard.quote_history_action("retain", plan, documents=[first], confirmed=1)
@@ -274,7 +278,18 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                 rows = guard.quote_history_action("retain", plan, documents=[first, second, first], confirmed=True)
                 self.assertEqual(len(rows), 2)
                 self.assertEqual(guard.quote_history_action("list", "f"*64), [])
+                recall = guard.quote_history_action("recall", plan, scope_sha256=self.scope, limit=1)
+                self.assertEqual(recall["matching_receipts"], 2)
+                self.assertEqual(recall["distinct_snapshots"], 1)
+                self.assertEqual(recall["references"][0]["receipt_sha256"], rows[0]["receipt_sha256"])
+                self.assertEqual(recall["references"][0]["observations"], 2)
+                self.assertIs(recall["external_authority"], False)
+                self.assertEqual(guard.quote_history_action("recall", "f"*64,
+                    scope_sha256=self.scope, limit=1)["references"], [])
                 with ThreadPoolExecutor(max_workers=1) as pool:
+                    with self.assertRaises(PermissionError):
+                        pool.submit(guard.quote_history_action, "recall", plan,
+                                    scope_sha256=self.scope, limit=1).result()
                     future = pool.submit(guard.quote_history_action, "list", plan)
                     with self.assertRaises(PermissionError):
                         future.result()
@@ -282,14 +297,20 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                     guard.quote_history_action("list", plan, path=root)
                 guard.set()
                 with self.assertRaises(PermissionError):
+                    guard.quote_history_action("recall", plan, scope_sha256=self.scope, limit=1)
+                with self.assertRaises(PermissionError):
                     guard.quote_history_action("forget", plan, receipt_ids=[rows[0]["receipt_sha256"]], confirmed=True)
             with RuntimeGuard(root, clock=lambda: NOW+timedelta(seconds=1)) as guard:
                 with self.assertRaises(PermissionError):
                     guard.quote_history_action("list", plan)
                 guard.resume()
                 self.assertEqual(guard.quote_history_action("list", plan), rows)
+                self.assertEqual(guard.quote_history_action("recall", plan, scope_sha256=self.scope, limit=1), recall)
                 remaining = guard.quote_history_action("forget", plan, receipt_ids=[rows[0]["receipt_sha256"]], confirmed=True)
                 self.assertEqual(len(remaining), 1)
+                updated = guard.quote_history_action("recall", plan, scope_sha256=self.scope, limit=1)
+                self.assertEqual(updated["matching_receipts"], 1)
+                self.assertNotEqual(updated["recall_sha256"], recall["recall_sha256"])
                 self.assertIs(remaining[0]["external_authority"], False)
 
 
