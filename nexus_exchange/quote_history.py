@@ -11,6 +11,7 @@ from .operator_drafts import MAX_ITEMS, _digest, _hash, _json, _scheme, _shape, 
 from .quote_comparison import MAX_QUOTES, MAX_CENTS, _FLAGS, _integer
 from .evidence import parse_reference
 from .governor import Action, decide
+from .quote_history_lineage import MAX_INDEX_RECEIPTS, annotate_history
 
 MAX_RECEIPT_BYTES = 64 * 1024
 
@@ -89,7 +90,6 @@ def publish_receipt(path, receipt, *, permit):
 
 # Historical inspection is deliberately separate from the live comparison
 # engine. No file discovery, database writes, current scope or authorization.
-MAX_INDEX_RECEIPTS = 64
 _RECEIPT_FIELDS = {"format", "historical_only", "current_decision",
     "external_authority", "execution_eligible", "rechecked_at",
     "rechecked_comparison_sha256", "comparison", "receipt_sha256"}
@@ -179,6 +179,7 @@ def inspect_receipt(data):
         raise ValueError("historical receipt integrity mismatch")
     return dict(receipt_sha256=receipt["receipt_sha256"], scope_sha256=scope,
         plan_id=plan, compared_at=original, rechecked_at=rechecked,
+        snapshot_sha256=_digest(_projection(result)),
         quote_count=len(rows), lowest_declared_total_cents=minimum,
         historical_only=True, current_status="NOT_REVALIDATED",
         external_authority=False, execution_eligible=False)
@@ -202,4 +203,4 @@ def index_receipts(documents, *, scope_sha256, halted=None):
         item = inspect_receipt(data)
         if item["scope_sha256"] == scope:
             matches[item["receipt_sha256"]] = item
-    return sorted(matches.values(), key=lambda r: (r["rechecked_at"], r["receipt_sha256"]), reverse=True)
+    return annotate_history(list(matches.values()))

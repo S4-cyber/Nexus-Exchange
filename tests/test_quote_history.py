@@ -117,3 +117,19 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
             self.assertEqual(view["lowest_declared_total_cents"], expected)
             self.assertEqual(view["current_status"], "NOT_REVALIDATED")
             self.assertIs(view["execution_eligible"], False)
+
+    def test_lineage_distinguishes_clock_only_rechecks_and_changed_declarations(self):
+        first, repeat = encode(self.receipt()), encode(self.receipt(2))
+        entries = copy.deepcopy(self.entries)
+        entries[1]["declaration"]["line_totals_cents"] = [900]
+        original = compare_quotes(entries, now=NOW, halted=False)
+        current = compare_quotes(entries, now=NOW+timedelta(seconds=3), halted=False)
+        changed = encode(historical_receipt(original, current))
+        rows = index_receipts([first, repeat, first, changed], scope_sha256=self.scope, halted=False)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1]["snapshot_sha256"], rows[2]["snapshot_sha256"])
+        self.assertNotEqual(rows[0]["snapshot_sha256"], rows[1]["snapshot_sha256"])
+        self.assertEqual([r["snapshot_observations"] for r in rows], [1, 2, 2])
+        self.assertEqual([r["scope_snapshots"] for r in rows], [2, 2, 2])
+        self.assertTrue(all(r["supersession_status"] == "NOT_ESTABLISHED" for r in rows))
+        self.assertTrue(all(r["execution_eligible"] is False for r in rows))

@@ -7,6 +7,7 @@ import sqlite3
 from .operator_drafts import _hash, _json, _stamp, _stored_stamp
 from .quote_history import (historical_receipt, publish_receipt, inspect_receipt,
                             MAX_RECEIPT_BYTES, MAX_INDEX_RECEIPTS)
+from .quote_history_lineage import annotate_history
 from .quote_comparison import MAX_QUOTES, MAX_CENTS, _FLAGS, compare_quotes
 from .correspondence_workspace import CorrespondenceWorkspace
 
@@ -182,9 +183,7 @@ class QuoteReview:
         self.workspace._permit()
         if self.workspace.plan_id != plan:
             raise ValueError("selected plan changed")
-        return sorted(matches.values(),
-                      key=lambda row: (row["rechecked_at"], row["receipt_sha256"]),
-                      reverse=True)
+        return annotate_history(list(matches.values()))
 
     def history_pin(self):
         self.workspace._permit()
@@ -365,6 +364,10 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                 total = row["lowest_declared_total_cents"]
                 lines.extend(["", "Receipt: " + row["receipt_sha256"],
                               "RFQ scope: " + row["scope_sha256"],
+                              "Snapshot: " + row["snapshot_sha256"],
+                              "Same snapshot receipts in selection: " + str(row["snapshot_observations"]),
+                              "Distinct snapshots in this RFQ scope: " + str(row["scope_snapshots"]),
+                              "Supersession: not established",
                               "Compared: " + row["compared_at"],
                               "Rechecked: " + row["rechecked_at"],
                               "Declared quotations: " + str(row["quote_count"]),
