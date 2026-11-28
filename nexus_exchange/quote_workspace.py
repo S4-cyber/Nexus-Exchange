@@ -223,6 +223,34 @@ class QuoteReview:
         self.workspace._permit()
         return rows
 
+    def council_history_context(self, *, confirmed=None):
+        """Display only freshly scoped local Council and historical references.
+
+        The runtime owns the two Council inspections and RFQ rechecks.
+        Independently reproduce the staged comparison and bounded retained
+        recall before rendering. No worker attempt or export is authorized.
+        """
+        from .council_history_display import render_history_context
+        self._last_result = None
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError("explicit Council history review required")
+        if not 2 <= len(self._staged) <= MAX_QUOTES:
+            raise ValueError("at least two staged quotations required")
+        plan = _hash(self.workspace.plan_id)
+        staged = deepcopy(self._staged)
+        result = self.workspace.action("quote_history_council_recall", plan,
+            entries=[entry for entry, _ in staged], limit=8, confirmed=True)
+        self.workspace._permit()
+        if self._staged != staged or self.workspace.plan_id != plan:
+            raise ValueError("staged declarations changed")
+        rows = self.retained_history()
+        text = render_history_context(result, plan, [snap for _, snap in staged], rows)
+        self.workspace._permit()
+        if self._staged != staged or self.workspace.plan_id != plan:
+            raise ValueError("staged declarations changed")
+        return text
+
     def retained_history(self):
         return self._persistent_history("list")
 
@@ -409,6 +437,25 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
+    def council_context():
+        try:
+            summary = review.summary()
+            if not summary:
+                raise ValueError("stage declarations first")
+            epoch = review_epoch
+            if not messagebox.askyesno("Inspect Council history",
+                    "Recheck the staged RFQ basket against the saved Council plan and "
+                    "retained historical references? This does not consume an attempt, "
+                    "select a supplier, run a model or authorize any action.",
+                    parent=parent, default="no"):
+                return
+            if review_epoch != epoch or review.summary() != summary:
+                raise ValueError("staged declarations changed; review again")
+            write(review.council_history_context(confirmed=True))
+            status.configure(text="Scoped local Council history; no attempt consumed or current decision.")
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            error(exc)
+
     def export_history():
         try:
             pin = review.history_pin()
@@ -519,6 +566,8 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                             ("Save review file", export_history),
                             ("Clear review", clear)):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
+    ttk.Button(parent, text="Inspect Council history for staged RFQ",
+               command=council_context).pack(anchor="w", padx=5, pady=2)
     ttk.Button(parent, text="Inspect historical review files",
                command=inspect_history).pack(anchor="w", padx=5, pady=2)
     search_controls = ttk.Frame(parent)

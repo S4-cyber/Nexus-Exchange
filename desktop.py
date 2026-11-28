@@ -450,7 +450,8 @@ def main(*, data_directory=None, gui_smoke=False):
         if council_blocked():
             raise PermissionError("Operator halted or desktop worker active")
         try:
-            if action in ("quote_history_list", "quote_history_retain", "quote_history_forget"):
+            if action in ("quote_history_list", "quote_history_retain", "quote_history_forget",
+                          "quote_history_council_recall"):
                 return stop.quote_history_action(action.removeprefix("quote_history_"),plan_id,**inputs)
             return stop.operator_action(action,plan_id,**inputs)
         finally:

@@ -285,3 +285,82 @@ class QuoteWorkspaceTests(unittest.TestCase):
                 self.workspace.action = Mock(return_value=[dict(row, **change)])
                 with self.subTest(change=change), self.assertRaises(ValueError):
                     self.review.retained_history()
+
+    def test_council_history_display_rechecks_exact_staged_scope_and_memory(self):
+        from nexus_exchange.advisory_attempts import DB_NAME
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        result = self.review.compare(confirmed=True)
+        original_action = self.workspace.action
+
+        def route(action, plan, **inputs):
+            if action.startswith("quote_history_"):
+                return self.guard.quote_history_action(action.removeprefix("quote_history_"), plan, **inputs)
+            return original_action(action, plan, **inputs)
+
+        self.workspace.action = route
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "receipt.json"
+            self.review.export_history(target, expected_comparison=self.review.history_pin(), confirmed=True)
+            documents, _ = self.review._read_history_files([target])
+            retained = self.review.retain_history(documents, confirmed=True)
+            for confirmed in (None, False, 1):
+                with self.assertRaises(PermissionError):
+                    self.review.council_history_context(confirmed=confirmed)
+            self.review.compare(confirmed=True)
+            text = self.review.council_history_context(confirmed=True)
+            self.assertIn("Historical matching receipts: 1", text)
+            self.assertIn(retained[0]["receipt_sha256"], text)
+            self.assertIn(result["scope_sha256"], text)
+            self.assertNotIn("quotes@example.org", text)
+            self.assertNotIn("SYNTHETIC-1", text)
+            self.assertFalse((self.fixture.fixture.directory / DB_NAME).exists())
+            with self.assertRaises(ValueError):
+                self.review.history_pin()
+            self.review.forget_history(retained[0]["receipt_sha256"], confirmed=True)
+            self.assertIn("Historical matching receipts: 0",
+                          self.review.council_history_context(confirmed=True))
+            self.guard.set()
+            with self.assertRaises(PermissionError):
+                self.review.council_history_context(confirmed=True)
+
+    def test_council_history_display_rejects_rehashed_authority_and_changed_recall(self):
+        from nexus_exchange.local_advisory import _digest
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        original = self.workspace.action
+
+        def route(action, plan, **inputs):
+            if action.startswith("quote_history_"):
+                return self.guard.quote_history_action(action.removeprefix("quote_history_"), plan, **inputs)
+            return original(action, plan, **inputs)
+
+        self.workspace.action = route
+        good = route("quote_history_council_recall", self.workspace.plan_id,
+                     entries=[a, b], limit=8, confirmed=True)
+        import copy
+        for changed in ("authority", "count", "comparison"):
+            forged = copy.deepcopy(good)
+            if changed == "authority":
+                forged["council"]["dispatch_enabled"] = True
+                packet = forged["council"]
+                packet["packet_sha256"] = _digest({k:v for k,v in packet.items() if k != "packet_sha256"})
+            else:
+                history = forged["history"]
+                if changed == "count":
+                    recall = history["recall"]
+                    recall["matching_receipts"] = 1
+                    recall["recall_sha256"] = _digest({k:v for k,v in recall.items() if k != "recall_sha256"})
+                else:
+                    history["rechecked_comparison_sha256"] = "f"*64
+                history["context_sha256"] = _digest({k:v for k,v in history.items() if k != "context_sha256"})
+            forged["context_sha256"] = _digest({k:v for k,v in forged.items() if k != "context_sha256"})
+            def substituted(action, plan, **inputs):
+                if action == "quote_history_council_recall":
+                    return forged
+                return route(action, plan, **inputs)
+            self.workspace.action = substituted
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                self.review.council_history_context(confirmed=True)
