@@ -168,3 +168,53 @@ class QuoteWorkspaceTests(unittest.TestCase):
         self.workspace.action = Mock(return_value=dict(result, lowest_declared_total_cents=800.0))
         with self.assertRaises(ValueError):
             self.review.compare(confirmed=True)
+
+    def test_inspect_selected_history_files_without_restaging_or_authority(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        result = self.review.compare(confirmed=True)
+        before = self.review.summary()
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "history.json"
+            self.review.export_history(target, expected_comparison=self.review.history_pin(),
+                                       confirmed=True)
+            original = target.read_bytes()
+            rows = self.review.inspect_history_files((target, target))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["scope_sha256"], result["scope_sha256"])
+            self.assertEqual(rows[0]["lowest_declared_total_cents"], 800)
+            self.assertEqual(rows[0]["current_status"], "NOT_REVALIDATED")
+            self.assertIs(rows[0]["execution_eligible"], False)
+            self.assertNotIn("rows", rows[0])
+            self.assertEqual(target.read_bytes(), original)
+            self.assertEqual(self.review.summary(), before)
+            with self.assertRaises(ValueError):
+                self.review.history_pin()
+            other_plan = "f"*64 if self.workspace.plan_id != "f"*64 else "e"*64
+            foreign = QuoteReview(OperatorWorkspace(other_plan, action=Mock(),
+                                  blocked_check=self.guard.is_set))
+            with self.assertRaisesRegex(ValueError, "outside selected saved plan"):
+                foreign.inspect_history_files([target])
+            foreign.workspace.action.assert_not_called()
+
+    def test_history_file_batch_rejects_invalid_inputs_and_halt(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        self.review.compare(confirmed=True)
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            good = root / "history.json"
+            self.review.export_history(good, expected_comparison=self.review.history_pin(),
+                                       confirmed=True)
+            bad = root / "bad.json"
+            bad.write_bytes(b"{}")
+            large = root / "large.json"
+            large.write_bytes(b"x" * (64*1024+1))
+            for paths in ([], [good]*65, [good, bad], [large], ["relative.json"]):
+                with self.subTest(count=len(paths)), self.assertRaises(ValueError):
+                    self.review.inspect_history_files(paths)
+            self.guard.set()
+            with self.assertRaises(PermissionError):
+                self.review.inspect_history_files([good])

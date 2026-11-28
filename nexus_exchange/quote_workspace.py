@@ -5,7 +5,8 @@ import re
 import sqlite3
 
 from .operator_drafts import _hash, _json, _stamp, _stored_stamp
-from .quote_history import historical_receipt, publish_receipt
+from .quote_history import (historical_receipt, publish_receipt, inspect_receipt,
+                            MAX_RECEIPT_BYTES, MAX_INDEX_RECEIPTS)
 from .quote_comparison import MAX_QUOTES, MAX_CENTS, _FLAGS, compare_quotes
 from .correspondence_workspace import CorrespondenceWorkspace
 
@@ -152,6 +153,38 @@ class QuoteReview:
             raise ValueError("comparison differs from staged evidence; clear and restage")
         self.workspace._permit()
         return expected
+
+    def inspect_history_files(self, paths):
+        """Read explicit bounded local receipts for this saved plan only.
+
+        Historical metadata is never used to stage terms or revalidate a supplier.
+        Different RFQ scopes stay distinct. Invalidate the export pin so a
+        historical display cannot be mistaken for a currently reviewed result.
+        """
+        from .deliverable_files import _read_local_file
+        from .digital_deliverable import JSON_SOURCE
+
+        self._last_result = None
+        self.workspace._permit()
+        if type(paths) not in (list, tuple) or not 1 <= len(paths) <= MAX_INDEX_RECEIPTS:
+            raise ValueError("select one to sixty-four local review files")
+        plan = _hash(self.workspace.plan_id)
+        matches = {}
+        for path in paths:
+            self.workspace._permit()
+            raw = _read_local_file(path, JSON_SOURCE, MAX_RECEIPT_BYTES,
+                                   False, self.workspace.blocked_check)
+            self.workspace._permit()
+            item = inspect_receipt(raw)
+            if item["plan_id"] != plan:
+                raise ValueError("historical receipt outside selected saved plan")
+            matches[item["receipt_sha256"]] = item
+        self.workspace._permit()
+        if self.workspace.plan_id != plan:
+            raise ValueError("selected plan changed")
+        return sorted(matches.values(),
+                      key=lambda row: (row["rechecked_at"], row["receipt_sha256"]),
+                      reverse=True)
 
     def history_pin(self):
         self.workspace._permit()
@@ -317,6 +350,32 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
+    def inspect_history():
+        try:
+            workspace._permit()
+            paths = filedialog.askopenfilenames(parent=parent,
+                filetypes=[("Historical quotation review", "*.json")],
+                title="Inspect selected local historical review files")
+            if not paths:
+                return
+            rows = review.inspect_history_files(paths)
+            lines = ["HISTORICAL ONLY — NOT REVALIDATED OR AUTHENTICATED",
+                     "Different RFQ scopes are not comparable. No external authority."]
+            for row in rows:
+                total = row["lowest_declared_total_cents"]
+                lines.extend(["", "Receipt: " + row["receipt_sha256"],
+                              "RFQ scope: " + row["scope_sha256"],
+                              "Compared: " + row["compared_at"],
+                              "Rechecked: " + row["rechecked_at"],
+                              "Declared quotations: " + str(row["quote_count"]),
+                              "Lowest declared USD cents: " +
+                              (str(total) if total is not None else "Ranking withheld")])
+            workspace._permit()
+            write("\n".join(lines))
+            status.configure(text=f"{len(rows)} distinct historical reviews; no current decision.")
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            error(exc)
+
     buttons = ttk.Frame(parent)
     buttons.pack(fill="x", padx=5)
     for label, callback in (("Load saved recipients", load_recipients),
@@ -324,4 +383,6 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                             ("Save review file", export_history),
                             ("Clear review", clear)):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
+    ttk.Button(parent, text="Inspect historical review files",
+               command=inspect_history).pack(anchor="w", padx=5, pady=2)
     return clear
