@@ -471,7 +471,8 @@ class RuntimeGuard:
             raise PermissionError("Operator history unavailable while halted or faulted")
         fields={"list":set(),"retain":{"documents","confirmed"},
                 "forget":{"receipt_ids","confirmed"},
-                "recall":{"scope_sha256","limit"}}
+                "recall":{"scope_sha256","limit"},
+                "reviewed_recall":{"entries","limit","confirmed"}}
         if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
             raise ValueError("unsupported Operator history action or inputs")
         from .quote_history_store import local_history_action
@@ -487,6 +488,14 @@ class RuntimeGuard:
             if action=="recall":
                 rows=local_history_action(self._directory,"list",plan_id,permit=permit)
                 result=build_recall(rows,plan_id,inputs["scope_sha256"],limit=inputs["limit"])
+            elif action=="reviewed_recall":
+                from .operator_scenarios import OperatorScenario
+                from .quote_history_reviewed import review_scoped_recall
+                adapter=OperatorScenario(self._directory,halt_check=self.is_set,clock=self._clock)
+                result=review_scoped_recall(plan_id,limit=inputs["limit"],confirmed=inputs["confirmed"],
+                    compare=lambda:adapter.quote_compare(plan_id,inputs["entries"],confirmed=True),
+                    read_history=lambda:local_history_action(self._directory,"list",plan_id,permit=permit),
+                    permit=permit)
             else:
                 result=local_history_action(self._directory,action,plan_id,permit=permit,**inputs)
             permit()

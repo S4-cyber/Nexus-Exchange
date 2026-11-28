@@ -314,6 +314,45 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                 self.assertIs(remaining[0]["external_authority"], False)
 
 
+    def test_runtime_reviewed_recall_derives_scope_and_rechecks(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from nexus_exchange.runtime_guard import RuntimeGuard
+        from nexus_exchange.operator_scenarios import OperatorScenario
+
+        plan = self.original["plan_id"]
+        later = compare_quotes(self.entries, now=NOW+timedelta(seconds=2), halted=False)
+        with tempfile.TemporaryDirectory() as directory:
+            with RuntimeGuard(Path(directory).resolve(), clock=lambda: NOW) as guard:
+                guard.resume()
+                guard.quote_history_action("retain", plan, documents=[encode(self.receipt())], confirmed=True)
+                with patch.object(OperatorScenario, "quote_compare", side_effect=[self.original, later]) as review:
+                    with self.assertRaises(PermissionError):
+                        guard.quote_history_action("reviewed_recall", plan, entries=[], limit=1, confirmed=False)
+                    with self.assertRaises(ValueError):
+                        guard.quote_history_action("reviewed_recall", plan, entries=[], limit=1,
+                                                   confirmed=True, scope_sha256=self.scope)
+                    review.assert_not_called()
+                    packet = guard.quote_history_action("reviewed_recall", plan, entries=[], limit=1, confirmed=True)
+                    self.assertEqual(review.call_count, 2)
+                    self.assertEqual(packet["recall"]["scope_sha256"], self.scope)
+                    self.assertEqual(packet["recall"]["matching_receipts"], 1)
+                    self.assertEqual(packet["rechecked_comparison_sha256"], later["comparison_sha256"])
+                    self.assertIs(packet["external_authority"], False)
+                changed = copy.deepcopy(later)
+                changed["scope_sha256"] = "f"*64
+                rehash(changed, "comparison_sha256")
+                with patch.object(OperatorScenario, "quote_compare", side_effect=[self.original, changed]):
+                    with self.assertRaises(ValueError):
+                        guard.quote_history_action("reviewed_recall", plan, entries=[], limit=1, confirmed=True)
+                self.assertEqual(len(guard.quote_history_action("list", plan)), 1)
+                guard.set()
+                with patch.object(OperatorScenario, "quote_compare") as review:
+                    with self.assertRaises(PermissionError):
+                        guard.quote_history_action("reviewed_recall", plan, entries=[], limit=1, confirmed=True)
+                    review.assert_not_called()
+
     def test_runtime_history_rejects_sidecar_unrelated_schema_and_alias(self):
         import os
         import sqlite3
