@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import json
 import re
 
-from .lead_store import _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES, _restore, MAX_AGE
+from .lead_store import ArchiveCapacityError, _json, _digest, _now, _permit, _hashes, MAX_BATCH, SOURCES, _restore, MAX_AGE
 from .scout import _timestamp
 
 LEGACY_FORMAT="nexus-scout-search-receipt-v1"
@@ -188,7 +188,7 @@ def insert_receipt(db,discovery,report,records,inserted,*,now):
     if len(encoded)>MAX_PAYLOAD:
         raise ValueError("Search receipt exceeds bound.")
     if db.execute("SELECT COUNT(*) FROM scout_search_receipts_v1").fetchone()[0]>=MAX_RECEIPTS:
-        raise ValueError("Search history capacity review required.")
+        raise ArchiveCapacityError("Search history capacity review required.")
     db.execute("INSERT INTO scout_search_receipts_v1 VALUES (?,?,?,?)",
                (payload["task_id"],payload["completed_at"],encoded,_digest(encoded)))
 

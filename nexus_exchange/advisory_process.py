@@ -43,12 +43,15 @@ def _check_halt(check):
 def _request_bytes(request):
     # Private supervisor receives trusted projections only. Public entry point
     # constructs its request from the validated Council snapshot, not this hash.
-    if (type(request) is not dict or set(request) != _REQUEST_FIELDS
+    if (type(request) is not dict or set(request) not in (_REQUEST_FIELDS, _REQUEST_FIELDS | {"history_pin"})
             or request["format"] != "nexus-local-advice-request-v1"
             or request["model_sha256"] != FIXTURE_MODEL_SHA256
             or any(request[k] is not False for k in _REQUEST_FLAGS)
             or request["request_sha256"] != _digest({k:v for k,v in request.items() if k!="request_sha256"})):
         raise ValueError("exact synthetic advisory request required")
+    if "history_pin" in request:
+        from .advisory_history_pin import validate_history_pin
+        validate_history_pin(request["history_pin"])
     raw = _json(request).encode("ascii")
     if not 1 <= len(raw) <= MAX_REQUEST_BYTES:
         raise ValueError("advisory request size")

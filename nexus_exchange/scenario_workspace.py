@@ -168,12 +168,9 @@ def open_scenario_window(parent,row,*,directory,halt_check,council_action=None,c
 
     workspace=ScenarioWorkspace(directory,context_for(row),halt_check=halt_check)
     records=workspace.list()
-    from .cockpit import install_cockpit, fit_geometry, action_menu
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Scout scenario planning")
-    window.geometry(fit_geometry(window,1100,850))
-    window.minsize(850,650)
+    from .cockpit import action_menu
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, "Nexus Exchange | Scout scenario planning", 1100, 850, minimum=(850, 650))
     ttk.Label(content,text="SCOUT — Hypothetical financial and delivery plan",
               font=("Segoe UI",18)).pack(pady=6)
     ttk.Label(content,text=row["title"],wraplength=1020).pack(padx=12)

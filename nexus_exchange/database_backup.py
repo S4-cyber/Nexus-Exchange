@@ -15,9 +15,16 @@ import sqlite3
 import stat
 
 from .runtime_guard import _lock, MAX_REVISION
+from .event_store import read_projection
+from .advisory_attempts import validate_ledger_snapshot
+from .quote_history_store import (DB_NAME as QUOTE_HISTORY_DB, MAX_DB_BYTES as MAX_QUOTE_HISTORY_DB_BYTES,
+                                  validate_history_snapshot)
+from . import advisory_launch_marker
 from .scout import _timestamp
+from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report, validate_archive
 
 FORMAT="nexus-local-database-backup-v1"
+REPORT_FORMAT="nexus-local-database-backup-v2"
 MANIFEST="BACKUP.json"
 MAX_DB_BYTES=128*1024*1024
 MAX_TOTAL_BYTES=512*1024*1024
@@ -38,6 +45,7 @@ DATABASES={
     "operator-threads.sqlite3":("operator_threads_v1",),
     "operator-obligations.sqlite3":("csv_obligations_v1","csv_obligation_notes_v1"),
     "operator-simulated-invoices.sqlite3":("sim_invoices_v1","sim_receipts_v1"),
+    QUOTE_HISTORY_DB:("quote_history_v1",),
 }
 _FLAGS=("encrypted","publisher_authenticated","independently_verified",
         "production_ready","automatic_resume","external_authority")
@@ -112,15 +120,21 @@ def _identity(info):
     return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
 
 
-def _scan(source,*,backup=False):
+def _maximum(name):
+    if name==QUOTE_HISTORY_DB:
+        return MAX_QUOTE_HISTORY_DB_BYTES
+    return MAX_REPORT_BYTES if name==BRIEF else MAX_DB_BYTES
+
+
+def _scan(source,*,backup=False,include_report=False):
     """Reject known SQLite sidecars and unknown database-like names."""
     files=[]
     for entry in source.iterdir():
         name=entry.name
         lower=name.lower()
-        if name in DATABASES:
+        if name in DATABASES or (include_report and name==BRIEF):
             info=_regular(entry)
-            if not 1<=info.st_size<=MAX_DB_BYTES:
+            if not 1<=info.st_size<=_maximum(name):
                 raise ValueError("database outside backup size bound")
             files.append(name)
         elif backup:
@@ -181,7 +195,7 @@ def _state(raw):
     return raw
 
 
-def _database(path,name):
+def _database(path,name,*,validate_journal=False):
     """Read only, with no SQLite sidecars. Requires a closed trusted snapshot."""
     uri=path.resolve(strict=True).as_uri()+"?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri,uri=True,timeout=5)) as db:
@@ -197,21 +211,36 @@ def _database(path,name):
                 rows=db.execute("SELECT slot,state,reason,revision,changed_at FROM runtime_guard_v1").fetchall()
                 if len(rows)!=1 or rows[0][0]!=1:
                     raise ValueError("invalid runtime state")
-                return _state(dict(zip(("state","reason","revision","changed_at"),rows[0][1:])))
+                state=_state(dict(zip(("state","reason","revision","changed_at"),rows[0][1:])))
+                if validate_journal:
+                    # SQLite quick_check validates pages, not event transitions.
+                    # Preserve valid interrupted/unconfirmed history without replay.
+                    read_projection(db)
+                    validate_archive(db)
+                    advisory_launch_marker.validate_snapshot(db)
+                return state
+            if name == "local-advisory.sqlite3" and validate_journal:
+                validate_ledger_snapshot(db)
+            # Receipts need semantic validation in both backup formats.
+            if name == QUOTE_HISTORY_DB:
+                validate_history_snapshot(db)
         finally:
             pass
     return None
 
 
-def _manifest(files,state):
-    if type(files) is not list or not 1<=len(files)<=len(DATABASES):
+def _manifest(files,state,build_id=None):
+    if build_id is not None and (type(build_id) is not str or not re.fullmatch("[0-9a-f]{40}",build_id)):
+        raise ValueError("exact application commit required")
+    allowed=set(DATABASES)|({BRIEF} if build_id is not None else set())
+    if type(files) is not list or not 1<=len(files)<=len(allowed):
         raise ValueError("invalid backup file list")
     names=[]
     total=0
     for row in files:
         if (type(row) is not dict or set(row)!={"name","bytes","sha256"}
-                or type(row["name"]) is not str or row["name"] not in DATABASES
-                or type(row["bytes"]) is not int or not 1<=row["bytes"]<=MAX_DB_BYTES
+                or type(row["name"]) is not str or row["name"] not in allowed
+                or type(row["bytes"]) is not int or not 1<=row["bytes"]<=_maximum(row["name"])
                 or type(row["sha256"]) is not str or not re.fullmatch("[0-9a-f]{64}",row["sha256"])):
             raise ValueError("invalid backup file descriptor")
         names.append(row["name"])
@@ -220,6 +249,9 @@ def _manifest(files,state):
         raise ValueError("invalid backup inventory")
     payload=dict(format=FORMAT,kind="LOCAL_DATABASES_ONLY",files=files,
                  total_bytes=total,runtime_state=_state(state),**dict.fromkeys(_FLAGS,False))
+    if build_id is not None:
+        payload.update(format=REPORT_FORMAT,kind="LOCAL_DATABASES_AND_LATEST_SCOUT",
+                       application_commit_asserted=build_id,latest_report_present=BRIEF in names)
     return dict(payload,manifest_sha256=_digest(payload))
 
 
@@ -228,7 +260,8 @@ def _metadata(raw):
         data=json.loads(raw.decode("ascii"),object_pairs_hook=_pairs,parse_constant=_no_constant)
         if type(data) is not dict:
             raise ValueError()
-        expected=_manifest(data.get("files"),data.get("runtime_state"))
+        expected=_manifest(data.get("files"),data.get("runtime_state"),
+                           data.get("application_commit_asserted") if data.get("format")==REPORT_FORMAT else None)
         if (_json(expected)+"\n").encode("ascii")!=raw:
             raise ValueError()
         return expected
@@ -236,18 +269,27 @@ def _metadata(raw):
         raise ValueError("invalid backup manifest") from None
 
 
+def _validate_snapshot(path,name,*,validate_journal=False):
+    if name==BRIEF:
+        _,raw=_stream(path,MAX_REPORT_BYTES,retain=True)
+        decode_report(raw)
+        return None
+    return _database(path,name,validate_journal=validate_journal)
+
+
 def verify_backup(directory):
     """Verify exact known file inventory, hashes, SQLite and halted state."""
     path=_directory(directory)
     _,raw=_stream(path/MANIFEST,MAX_MANIFEST_BYTES,retain=True)
     manifest=_metadata(raw)
-    if _scan(path,backup=True)!=[row["name"] for row in manifest["files"]]:
+    if _scan(path,backup=True,include_report=manifest["format"]==REPORT_FORMAT)!=[row["name"] for row in manifest["files"]]:
         raise ValueError("backup inventory mismatch")
     for row in manifest["files"]:
-        observed,_=_stream(path/row["name"],MAX_DB_BYTES)
+        observed,_=_stream(path/row["name"],_maximum(row["name"]))
         if observed!={k:row[k] for k in ("bytes","sha256")}:
             raise ValueError("backup file digest mismatch")
-        state=_database(path/row["name"],row["name"])
+        state=_validate_snapshot(path/row["name"],row["name"],
+                                 validate_journal=manifest["format"]==REPORT_FORMAT)
         if row["name"]==REQUIRED and state!=manifest["runtime_state"]:
             raise ValueError("backup halt state mismatch")
     return manifest
@@ -256,7 +298,7 @@ def verify_backup(directory):
 def _copy_new(source,destination,expected=None):
     """Create only a new file. Partial outputs are removed by the caller."""
     with destination.open("xb") as handle:
-        observed,_=_stream(source,MAX_DB_BYTES,output=handle)
+        observed,_=_stream(source,_maximum(source.name),output=handle)
         handle.flush()
         os.fsync(handle.fileno())
     if expected is not None and observed!=expected:
@@ -275,8 +317,11 @@ def _cleanup(path,created):
         raise ValueError("backup cleanup incomplete; inspect new directory") from None
 
 
-def create_backup(source,destination,*,confirmed=None):
+def create_backup(source,destination,*,confirmed=None,build_id=None):
     _confirm(confirmed)
+    if build_id is not None and (type(build_id) is not str or not re.fullmatch("[0-9a-f]{40}",build_id)):
+        raise ValueError("exact application commit required")
+    include_report=build_id is not None
     source=_directory(source)
     destination=_destination(destination,source)
     _regular(source/LOCK)
@@ -286,7 +331,7 @@ def create_backup(source,destination,*,confirmed=None):
         raise PermissionError("close application before backup") from None
     created=[]
     try:
-        names=_scan(source)
+        names=_scan(source,include_report=include_report)
         state=_database(source/REQUIRED,REQUIRED)
         if sum(_regular(source/name).st_size for name in names)>MAX_TOTAL_BYTES:
             raise ValueError("backup total size limit")
@@ -297,17 +342,17 @@ def create_backup(source,destination,*,confirmed=None):
                 target=destination/name
                 created.append(target)
                 observed=_copy_new(source/name,target)
-                if _database(target,name)!= (state if name==REQUIRED else None):
+                if _validate_snapshot(target,name,validate_journal=include_report)!= (state if name==REQUIRED else None):
                     raise ValueError("copied runtime state mismatch")
                 files.append(dict(name=name,**observed))
-            if _scan(source)!=names or _database(source/REQUIRED,REQUIRED)!=state:
+            if _scan(source,include_report=include_report)!=names or _database(source/REQUIRED,REQUIRED)!=state:
                 raise ValueError("source inventory or shutdown state changed")
             # Rehash while holding the cooperative runtime lock.
             for row in files:
-                observed,_=_stream(source/row["name"],MAX_DB_BYTES)
+                observed,_=_stream(source/row["name"],_maximum(row["name"]))
                 if observed!={k:row[k] for k in ("bytes","sha256")}:
                     raise ValueError("source changed during backup")
-            manifest=_manifest(files,state)
+            manifest=_manifest(files,state,build_id)
             target=destination/MANIFEST
             created.append(target)
             with target.open("xb") as handle:
@@ -335,10 +380,14 @@ def restore_backup(source,destination,*,confirmed=None):
             created.append(target)
             expected={k:row[k] for k in ("bytes","sha256")}
             _copy_new(source/row["name"],target,expected)
-            state=_database(target,row["name"])
+            observed,_=_stream(target,_maximum(row["name"]))
+            if observed!=expected:
+                raise ValueError("restored file digest mismatch")
+            state=_validate_snapshot(target,row["name"],
+                                     validate_journal=manifest["format"]==REPORT_FORMAT)
             if row["name"]==REQUIRED and state!=manifest["runtime_state"]:
                 raise ValueError("restored halt state mismatch")
-        if verify_backup(source)!=manifest or _scan(destination)!=[r["name"] for r in manifest["files"]]:
+        if verify_backup(source)!=manifest or _scan(destination,include_report=manifest["format"]==REPORT_FORMAT)!=[r["name"] for r in manifest["files"]]:
             raise ValueError("restore inventory changed")
         # Lock file is deliberately not copied; RuntimeGuard creates it on
         # first launch and persists halted startup before any operation.
@@ -358,11 +407,13 @@ def main():
         cmd.add_argument("source")
         cmd.add_argument("destination")
         cmd.add_argument("--confirm-offline",action="store_true")
+        if name=="backup":
+            cmd.add_argument("--build-id",help="Assert exact 40-character application commit; include latest Scout report")
     cmd=sub.add_parser("verify")
     cmd.add_argument("source")
     args=parser.parse_args()
     if args.operation=="backup":
-        result=create_backup(args.source,args.destination,confirmed=args.confirm_offline)
+        result=create_backup(args.source,args.destination,confirmed=args.confirm_offline,build_id=args.build_id)
     elif args.operation=="restore":
         result=restore_backup(args.source,args.destination,confirmed=args.confirm_offline)
     else:

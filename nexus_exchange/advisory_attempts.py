@@ -37,6 +37,16 @@ def _reservation(plan, entry):
         ("attempt", "request_sha256", "snapshot_sha256", "model_sha256", "reserved_at")}))
 
 
+def _ascii_field(raw):
+    """Decode only fields already bounded and type-checked by SQLite."""
+    if type(raw) is not bytes:
+        raise ValueError("invalid advisory ledger storage field")
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("invalid advisory ledger storage field") from None
+
+
 def _decode(plan, payload, digest):
     if type(payload) is not str or not 1 <= len(payload) <= MAX_PAYLOAD:
         raise ValueError("advisory ledger payload bound")
@@ -100,6 +110,37 @@ def _state(record):
                 historical_only=True, **dict.fromkeys(_FLAGS, False))
 
 
+def validate_ledger_snapshot(db):
+    """Read-only bounded semantic validation of a closed advisory snapshot.
+
+    The caller owns the offline SQLite connection. No reservations are
+    recovered or consumed, and a valid unresolved reservation stays unresolved.
+    """
+    if db.execute("SELECT type FROM sqlite_master WHERE name=?",
+                  ("advisory_attempts_v1",)).fetchone() != ("table",):
+        raise ValueError("advisory ledger schema missing")
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                  "AND tbl_name='advisory_attempts_v1' LIMIT 1").fetchone():
+        raise ValueError("unexpected advisory ledger trigger")
+    cursor = db.execute("""SELECT
+        CASE WHEN typeof(plan_id)='text'
+             AND length(CAST(plan_id AS BLOB))=64 THEN CAST(plan_id AS BLOB) END,
+        CASE WHEN typeof(payload)='text'
+             AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
+             THEN CAST(payload AS BLOB) END,
+        CASE WHEN typeof(digest)='text'
+             AND length(CAST(digest AS BLOB))=64 THEN CAST(digest AS BLOB) END
+        FROM advisory_attempts_v1 LIMIT ?""", (MAX_PAYLOAD, MAX_TASKS + 1))
+    seen = set()
+    for key, payload, digest in cursor:
+        plan = _pin(_ascii_field(key))
+        if plan in seen or len(seen) >= MAX_TASKS:
+            raise ValueError("duplicate or excessive advisory ledger identity")
+        _decode(plan, _ascii_field(payload), _ascii_field(digest))
+        seen.add(plan)
+    return len(seen)
+
+
 class AdvisoryAttemptStore:
     """Bounded SQLite ledger for a trusted coordinator; no inference or dispatch."""
     def __init__(self, path, *, existing_only=False):
@@ -141,8 +182,17 @@ class AdvisoryAttemptStore:
             raise
 
     def _read(self, plan):
-        row = self.db.execute("SELECT payload,digest FROM advisory_attempts_v1 WHERE plan_id=?", (_pin(plan),)).fetchone()
-        return None if row is None else _decode(plan, *row)
+        rows = self.db.execute("""SELECT
+            CASE WHEN typeof(payload)='text'
+                 AND length(CAST(payload AS BLOB)) BETWEEN 1 AND ?
+                 THEN CAST(payload AS BLOB) END,
+            CASE WHEN typeof(digest)='text'
+                 AND length(CAST(digest AS BLOB))=64
+                 THEN CAST(digest AS BLOB) END
+            FROM advisory_attempts_v1 WHERE plan_id=? LIMIT 2""", (MAX_PAYLOAD, _pin(plan))).fetchall()
+        if len(rows) > 1:
+            raise ValueError("duplicate advisory ledger identity")
+        return None if not rows else _decode(plan, *map(_ascii_field, rows[0]))
 
     def _require(self, plan):
         record = self._read(plan)
@@ -155,9 +205,11 @@ class AdvisoryAttemptStore:
         payload, digest = _json(record), _digest(record)
         _decode(plan, payload, digest)
         if new:
-            self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
+            cursor = self.db.execute("INSERT INTO advisory_attempts_v1 VALUES (?,?,?)", (plan, payload, digest))
         else:
-            self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+            cursor = self.db.execute("UPDATE advisory_attempts_v1 SET payload=?,digest=? WHERE plan_id=?", (payload, digest, plan))
+        if cursor.rowcount != 1 or self._read(plan) != record:
+            raise ValueError("advisory ledger write not persisted exactly")
 
     @staticmethod
     def _clock(record, now):
@@ -180,7 +232,8 @@ class AdvisoryAttemptStore:
             state = _state(record)
             return {key:state[key] for key in ("state", "attempts_used", "next_attempt")}
 
-    def reserve(self, snapshot, model, *, now, approved=None, halted=None, expected_attempt=None):
+    def reserve(self, snapshot, model, *, now, approved=None, halted=None, expected_attempt=None,
+                history_pin=None):
         _permit(approved, halted)
         if expected_attempt is not None and (type(expected_attempt) is not int
                 or not 1 <= expected_attempt <= MAX_ATTEMPTS):
@@ -203,7 +256,10 @@ class AdvisoryAttemptStore:
             n = len(record["attempts"]) + 1
             if expected_attempt is not None and n != expected_attempt:
                 raise PermissionError("advisory attempt changed since preview")
-            request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted)
+            # Keep the original unpinned call contract; only extend explicit requests.
+            history_kwargs = {} if history_pin is None else {"history_pin": history_pin}
+            request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted,
+                                    **history_kwargs)
             row = dict(attempt=n, request_sha256=request["request_sha256"], snapshot_sha256=request["snapshot_sha256"],
                        model_sha256=request["model_sha256"], reserved_at=request["created_at"], state="RESERVED",
                        reason=None, completed_at=None, response_sha256=None, review_sha256=None)
@@ -230,15 +286,17 @@ class AdvisoryAttemptStore:
                               halted=halted, worker_drained=worker_drained)
 
     def complete_current(self, ticket, request, original, current, raw, *, now,
-                         approved=None, halted=None, worker_drained=None):
+                         approved=None, halted=None, worker_drained=None,
+                         history_pin=None, current_history_pin=None):
         """Complete only after independent fresh trusted saved-plan inspection."""
         if type(current) is not dict:
             raise ValueError("fresh advisory snapshot required")
         return self._complete(ticket, request, original, raw, now=now, approved=approved,
-                              halted=halted, worker_drained=worker_drained, current=current)
+                              halted=halted, worker_drained=worker_drained, current=current,
+                              history_pin=history_pin, current_history_pin=current_history_pin)
 
     def _complete(self, ticket, request, snapshot, raw, *, now, approved, halted,
-                  worker_drained, current=None):
+                  worker_drained, current=None, history_pin=None, current_history_pin=None):
         _permit(approved, halted)
         if worker_drained is not True:
             raise PermissionError("worker drain required")
@@ -256,8 +314,12 @@ class AdvisoryAttemptStore:
                 review = review_response(raw, request, snapshot, now=now, approved=approved, halted=halted)
             else:
                 from .advisory_current_scope import review_current_response
+                # Never drop a partial pin: the reviewer must reject it.
+                history_kwargs = {}
+                if history_pin is not None or current_history_pin is not None:
+                    history_kwargs = dict(history_pin=history_pin, current_history_pin=current_history_pin)
                 review = review_current_response(raw, request, snapshot, current, now=now,
-                                                 approved=approved, halted=halted)
+                                                 approved=approved, halted=halted, **history_kwargs)
             row.update(state="REVIEWED", completed_at=now.isoformat(timespec="microseconds"),
                        response_sha256=review["response_sha256"], review_sha256=_digest(review))
             self._write(record)
@@ -295,11 +357,13 @@ class AdvisoryAttemptStore:
             return self._failure(record, row, "INTERRUPTED", now)
 
     def _runtime_plan_ids(self):
-        rows = self.db.execute("SELECT plan_id FROM advisory_attempts_v1 ORDER BY plan_id LIMIT ?",
+        rows = self.db.execute("""SELECT CASE WHEN typeof(plan_id)='text'
+            AND length(CAST(plan_id AS BLOB))=64 THEN CAST(plan_id AS BLOB) END
+            FROM advisory_attempts_v1 ORDER BY plan_id LIMIT ?""",
                                (MAX_TASKS + 1,)).fetchall()
         if len(rows) > MAX_TASKS:
             raise ValueError("advisory runtime recovery capacity exceeded")
-        return tuple(_pin(row[0]) for row in rows)
+        return tuple(_pin(_ascii_field(row[0])) for row in rows)
 
     def _runtime_pending(self, *, now):
         """Private maintenance read; caller must hold the runtime directory lock."""

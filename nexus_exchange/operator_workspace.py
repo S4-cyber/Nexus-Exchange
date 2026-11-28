@@ -129,12 +129,8 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
     from tkinter.scrolledtext import ScrolledText
 
     workspace=OperatorWorkspace(plan_id,action=action,blocked_check=blocked_check)
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title('Nexus Exchange | Operator quotation drafts')
-    window.geometry(fit_geometry(window,1160,850))
-    window.minsize(850,680)
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, 'Nexus Exchange | Operator quotation drafts', 1160, 850, minimum=(850, 680))
     ttk.Label(content,text='OPERATOR — Local quotation requests',font=('Segoe UI',18)).pack(pady=5)
     ttk.Label(content,text='Saved plan: '+plan_id,wraplength=1080).pack(padx=12)
     ttk.Label(content,text='Declared supplier only. No verified recipient, sending or purchase. Reenter the same declaration to acknowledge a saved draft.',wraplength=1050).pack(pady=4)
@@ -153,6 +149,7 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
     tabs.pack(fill='both',expand=True,padx=12,pady=4)
     compose=ttk.Frame(tabs); history=ttk.Frame(tabs)
     tabs.add(compose,text='Compose draft'); tabs.add(history,text='Saved draft history')
+    quote_tab=ttk.Frame(tabs); tabs.add(quote_tab,text='Compare quotations')
     region=tk.StringVar(master=window)
     top=ttk.Frame(compose); top.pack(fill='x',padx=5,pady=4)
     ttk.Label(top,text='Requested delivery region').pack(side='left')
@@ -175,6 +172,7 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
         displayed=None; records.clear()
         for key in tree.get_children(): tree.delete(key)
         write(current,''); write(detail,''); status.configure(text=message)
+        clear_quotes()
         ack_button.configure(state='disabled')
 
     def error(exc):
@@ -284,6 +282,12 @@ def open_operator_window(parent,*,plan_id,action,blocked_check,smoke=False):
             return open_correspondence_window(window,CorrespondenceWorkspace(workspace,record['draft'],fields()))
         except (ValueError,PermissionError,OSError,sqlite3.Error,RuntimeError) as exc: error(exc)
     ttk.Button(buttons,text='Local correspondence',command=correspondence).pack(side='left',padx=4)
+    from .quote_workspace import mount_quote_review
+    def selected_quote_draft():
+        if displayed is None or tree.selection()!=(displayed,) or displayed not in records:
+            raise ValueError('select and inspect one saved draft')
+        return displayed
+    clear_quotes=mount_quote_review(quote_tab,workspace,selected_quote_draft,fields)
     tree.bind('<<TreeviewSelect>>',display)
     window.bind('<Destroy>',destroyed,add='+')
     for var in (*values.values(),region): var.trace_add('write',changed)

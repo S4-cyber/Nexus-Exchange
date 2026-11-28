@@ -136,12 +136,8 @@ def open_evidence_window(parent,*,directory,context,plan_id,halt_check,smoke=Fal
 
     workspace=EvidenceWorkspace(directory,context,plan_id,halt_check=halt_check)
     initial=workspace.refresh()
-    from .cockpit import install_cockpit, fit_geometry
-    window=tk.Toplevel(parent)
-    content=install_cockpit(window).content
-    window.title("Nexus Exchange | Aegis assumption evidence")
-    window.geometry(fit_geometry(window,1120,820))
-    window.minsize(800,650)
+    from .workspace_host import open_workspace
+    window, content = open_workspace(parent, "Nexus Exchange | Aegis assumption evidence", 1120, 820, minimum=(800, 650))
     ttk.Label(content,text="AEGIS — Saved scenario evidence",font=("Segoe UI",18)).pack(pady=6)
     ttk.Label(content,text="Immutable plan: "+plan_id,wraplength=1020).pack(padx=12)
     ttk.Label(content,text="Select a known assumption and local file. References are unverified; a byte match does not prove commercial facts.",

@@ -41,7 +41,7 @@ def _permit(approved,halted):
         raise PermissionError("explicit local advisory consent and running state required")
 
 
-def build_request(snapshot,model_sha256,attempt,*,now,approved=None,halted=None):
+def build_request(snapshot,model_sha256,attempt,*,now,approved=None,halted=None,history_pin=None):
     """Project exact validated Council data into a reference-only request."""
     _permit(approved,halted)
     from .context_packet import build_packet
@@ -63,6 +63,9 @@ def build_request(snapshot,model_sha256,attempt,*,now,approved=None,halted=None)
         created_at=now.isoformat(timespec="microseconds"),snapshot_sha256=packet["snapshot_sha256"],
         packet_sha256=packet["packet_sha256"],source_hold=packet["data"]["summary"]["source_hold"],
         fields=fields,**dict.fromkeys(_FLAGS,False))
+    if history_pin is not None:
+        from .advisory_history_pin import pin_for_snapshot
+        payload["history_pin"] = pin_for_snapshot(history_pin, snapshot)
     result=dict(payload,request_sha256=_digest(payload))
     if len(_json(result).encode("ascii"))>MAX_REQUEST_BYTES:
         raise ValueError("advisory request exceeds byte budget")
@@ -114,14 +117,18 @@ def _parse_advice(raw,request):
         elif ref is not None:
             raise ValueError("unexpected advisory reference")
         seen.add(row["field"])
-    return dict(format="nexus-local-advice-review-v1",request_sha256=request["request_sha256"],
+    result = dict(format="nexus-local-advice-review-v1",request_sha256=request["request_sha256"],
         model_sha256=request["model_sha256"],response_sha256=sha256(raw).hexdigest(),
         advice=rows,source_hold=request["source_hold"],
         unresolved_fields=[row["field"] for row in request["fields"] if not row["reference_ids"]],
         **dict.fromkeys(_FLAGS,False))
+    if "history_pin" in request:
+        from .advisory_history_pin import validate_history_pin
+        result["history_pin"] = validate_history_pin(request["history_pin"])
+    return result
 
 
-def review_response(raw,request,snapshot,*,now,approved=None,halted=None):
+def review_response(raw,request,snapshot,*,now,approved=None,halted=None,history_pin=None):
     """Reconstruct exact request from a fresh trusted snapshot before review."""
     _permit(approved,halted)
     now=_utc(now)
@@ -134,7 +141,7 @@ def review_response(raw,request,snapshot,*,now,approved=None,halted=None):
         if not timedelta(0)<=now-_utc(datetime.fromisoformat(snapshot["evaluated_at"]))<=TTL:
             raise ValueError("current Council snapshot required")
         expected=build_request(snapshot,request.get("model_sha256"),request.get("attempt"),
-                               now=created,approved=approved,halted=halted)
+                               now=created,approved=approved,halted=halted,history_pin=history_pin)
         if _json(request)!=_json(expected):
             raise ValueError("advisory request differs from exact Council projection")
     except (KeyError,TypeError,ValueError,OverflowError,RecursionError):

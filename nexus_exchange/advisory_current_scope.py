@@ -42,7 +42,8 @@ def _compare_scope(original, current, *, created, now):
     return _digest(first)
 
 
-def review_current_response(raw, request, original, current, *, now, approved=None, halted=None):
+def review_current_response(raw, request, original, current, *, now, approved=None, halted=None,
+                            history_pin=None, current_history_pin=None):
     """Validate exact original request, then compare an independent fresh inspection.
 
     The runtime owner must obtain current from its own ScenarioCouncil after
@@ -52,10 +53,14 @@ def review_current_response(raw, request, original, current, *, now, approved=No
     reference IDs, source holds, model outputs and criterion states, must match.
     """
     review = review_response(raw, request, original, now=now,
-                             approved=approved, halted=halted)
+                             approved=approved, halted=halted, history_pin=history_pin)
     from .council_audit import validate_snapshot
     original = validate_snapshot(original)
     current = validate_snapshot(current)
     scope = _compare_scope(original, current, created=_stamp(request['created_at']), now=now)
+    from .advisory_history_pin import match_history_pins, pin_for_snapshot
+    pinned = match_history_pins(history_pin, current_history_pin)
+    if pinned is not None:
+        pin_for_snapshot(pinned, current)
     return dict(review, current_snapshot_sha256=current['snapshot_sha256'],
                 current_evaluated_at=current['evaluated_at'], current_scope_sha256=scope)

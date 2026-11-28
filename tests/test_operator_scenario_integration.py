@@ -245,3 +245,42 @@ class OperatorRuntimeTests(unittest.TestCase):
         self.guard.set()
         with self.assertRaises(PermissionError):
             self.guard.operator_action("thread_history",self.key,**scope)
+
+    def test_thread_runtime_rejects_suppressed_append_and_preserves_history(self):
+        import sqlite3
+        from contextlib import closing
+        from nexus_exchange.evidence import fingerprint
+        self.guard.resume()
+        key=self.call()["draft"]["draft_id"]
+        supplier=self.supplier()
+        path=self.directory/"thread-runtime-fixture.txt"
+        path.write_bytes(b"synthetic contact evidence")
+        recipient=dict(scheme="REGISTRY",identifier="SYNTHETIC-1",
+            organization_name="Synthetic supplier",email="quotes@example.org",
+            source_url="https://example.org/contact",observed_at=self.now.isoformat())
+        args=dict(draft_id=key,supplier=supplier,recipient=recipient,evidence_path=path)
+        preview=self.guard.operator_action("recipient_preview",self.key,**args)
+        self.guard.operator_action("recipient_save",self.key,**args,
+            expected_recipient_id=preview["recipient_id"],confirmed=True)
+        scope=dict(draft_id=key,recipient_id=preview["recipient_id"])
+        opened=self.guard.operator_action("thread_open",self.key,**scope,supplier=supplier,confirmed=True)
+        path.write_bytes(b"synthetic response")
+        event=dict(**scope,supplier=supplier,kind="SIMULATED_REPLY",evidence_path=path,
+                   expected_head=opened["head_sha256"],expected_evidence=fingerprint(path,halted=False),
+                   confirmed=True)
+        db_path=self.directory/"operator-threads.sqlite3"
+        with closing(sqlite3.connect(db_path,isolation_level=None)) as db:
+            db.execute("CREATE TRIGGER bad BEFORE UPDATE ON operator_threads_v1 "
+                       "BEGIN SELECT RAISE(IGNORE); END")
+            try:
+                with self.assertRaises(ValueError):
+                    self.guard.operator_action("thread_append",self.key,**event)
+                self.assertEqual(self.guard.operator_action("thread_history",self.key,**scope),opened)
+            finally:
+                db.execute("DROP TRIGGER bad")
+        updated=self.guard.operator_action("thread_append",self.key,**event)
+        self.assertEqual(len(updated["events"]),1)
+        self.assertFalse(updated["delivery_verified"])
+        self.assertFalse(updated["reply_authenticated"])
+        self.assertFalse(updated["send_enabled"])
+        self.assertEqual(self.guard.operator_action("thread_history",self.key,**scope),updated)

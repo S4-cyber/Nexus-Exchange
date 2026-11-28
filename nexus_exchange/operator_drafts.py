@@ -208,8 +208,20 @@ class DraftStore:
                 self.db.execute('ROLLBACK')
             raise
 
+    def _guard_write(self):
+        if self.db.execute("SELECT type FROM main.sqlite_master WHERE name=? COLLATE NOCASE",
+                           ('operator_drafts_v1',)).fetchone() != ('table',):
+            raise ValueError('draft storage schema missing')
+        if self.db.execute("SELECT 1 FROM sqlite_temp_master WHERE name=? COLLATE NOCASE "
+                           "AND type IN ('table','view') LIMIT 1", ('operator_drafts_v1',)).fetchone() is not None:
+            raise ValueError('unexpected draft storage shadow')
+        for catalog in ('main.sqlite_master', 'sqlite_temp_master'):
+            if self.db.execute("SELECT 1 FROM "+catalog+" WHERE type='trigger' "
+                               "AND tbl_name=? COLLATE NOCASE LIMIT 1", ('operator_drafts_v1',)).fetchone() is not None:
+                raise ValueError('unexpected draft storage trigger')
+
     def _read(self, key):
-        row = self.db.execute('SELECT payload,digest FROM operator_drafts_v1 WHERE draft_id=?', (_hash(key),)).fetchone()
+        row = self.db.execute('SELECT payload,digest FROM main.operator_drafts_v1 WHERE draft_id=?', (_hash(key),)).fetchone()
         return None if row is None else _decode(key, *row)
 
     def _encoded(self, record):
@@ -229,7 +241,7 @@ class DraftStore:
         _hash(plan_id)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('invalid draft history limit')
-        rows = self.db.execute("""SELECT draft_id,payload,digest FROM operator_drafts_v1
+        rows = self.db.execute("""SELECT draft_id,payload,digest FROM main.operator_drafts_v1
             WHERE json_extract(payload,'$.draft.request.plan_id')=?
             ORDER BY json_extract(payload,'$.created_at') DESC,draft_id LIMIT ?""",
             (plan_id,limit+1)).fetchall()
@@ -245,15 +257,18 @@ class DraftStore:
         key = draft['draft_id']
         stamp = _stamp(now)
         with self._transaction():
+            self._guard_write()
             record = self._read(key)
             if record is not None:
                 if stamp < (record['acknowledged_at'] or record['created_at']):
                     raise ValueError('draft clock moved backward')
                 return _view(record)
-            if self.db.execute('SELECT COUNT(*) FROM operator_drafts_v1').fetchone()[0] >= MAX_DRAFTS:
+            if self.db.execute('SELECT COUNT(*) FROM main.operator_drafts_v1').fetchone()[0] >= MAX_DRAFTS:
                 raise ValueError('draft capacity review required')
             record = dict(version=1, draft=draft, created_at=stamp, acknowledged_at=None)
-            self.db.execute('INSERT INTO operator_drafts_v1 VALUES (?,?,?)', (key, *self._encoded(record)))
+            inserted = self.db.execute('INSERT INTO main.operator_drafts_v1 VALUES (?,?,?)', (key, *self._encoded(record)))
+            if inserted.rowcount != 1 or self._read(key) != record:
+                raise ValueError('draft storage publication mismatch')
             return _view(record)
 
     def acknowledge(self, key, *, confirmed=None, now, halted=None):
@@ -262,6 +277,7 @@ class DraftStore:
             raise PermissionError('explicit local draft acknowledgment required')
         stamp = _stamp(now)
         with self._transaction():
+            self._guard_write()
             record = self._read(key)
             if record is None:
                 raise ValueError('saved draft unavailable')
@@ -269,6 +285,8 @@ class DraftStore:
                 raise ValueError('draft clock moved backward')
             if record['acknowledged_at'] is None:
                 record['acknowledged_at'] = stamp
-                self.db.execute('UPDATE operator_drafts_v1 SET payload=?,digest=? WHERE draft_id=?',
-                                (*self._encoded(record), key))
+                changed = self.db.execute('UPDATE main.operator_drafts_v1 SET payload=?,digest=? WHERE draft_id=?',
+                                          (*self._encoded(record), key))
+                if changed.rowcount != 1 or self._read(key) != record:
+                    raise ValueError('draft storage publication mismatch')
             return _view(record)
