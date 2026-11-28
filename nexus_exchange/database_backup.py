@@ -17,6 +17,8 @@ import stat
 from .runtime_guard import _lock, MAX_REVISION
 from .event_store import read_projection
 from .advisory_attempts import validate_ledger_snapshot
+from .quote_history_store import (DB_NAME as QUOTE_HISTORY_DB, MAX_DB_BYTES as MAX_QUOTE_HISTORY_DB_BYTES,
+                                  validate_history_snapshot)
 from . import advisory_launch_marker
 from .scout import _timestamp
 from .cycle_history import BRIEF, MAX_BYTES as MAX_REPORT_BYTES, decode as decode_report, validate_archive
@@ -43,6 +45,7 @@ DATABASES={
     "operator-threads.sqlite3":("operator_threads_v1",),
     "operator-obligations.sqlite3":("csv_obligations_v1","csv_obligation_notes_v1"),
     "operator-simulated-invoices.sqlite3":("sim_invoices_v1","sim_receipts_v1"),
+    QUOTE_HISTORY_DB:("quote_history_v1",),
 }
 _FLAGS=("encrypted","publisher_authenticated","independently_verified",
         "production_ready","automatic_resume","external_authority")
@@ -118,6 +121,8 @@ def _identity(info):
 
 
 def _maximum(name):
+    if name==QUOTE_HISTORY_DB:
+        return MAX_QUOTE_HISTORY_DB_BYTES
     return MAX_REPORT_BYTES if name==BRIEF else MAX_DB_BYTES
 
 
@@ -216,6 +221,9 @@ def _database(path,name,*,validate_journal=False):
                 return state
             if name == "local-advisory.sqlite3" and validate_journal:
                 validate_ledger_snapshot(db)
+            # Receipts need semantic validation in both backup formats.
+            if name == QUOTE_HISTORY_DB:
+                validate_history_snapshot(db)
         finally:
             pass
     return None

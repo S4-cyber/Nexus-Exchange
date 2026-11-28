@@ -164,3 +164,84 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                 db.execute("UPDATE quote_history_v1 SET payload=?", (b"{}",))
                 with self.assertRaises(ValueError):
                     history.list_plan(plan)
+
+
+    def test_closed_backup_preserves_history_and_restore_halt(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from contextlib import closing
+        from nexus_exchange.quote_history_store import QuoteHistoryStore, DB_NAME
+        from nexus_exchange.database_backup import create_backup, verify_backup, restore_backup
+        from nexus_exchange.runtime_guard import RuntimeGuard
+
+        plan = self.original["plan_id"]
+        first = encode(self.receipt())
+        for build_id in (None, "a"*40):
+            with self.subTest(build_id=build_id), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                source, backup, dest = (root / name for name in ("source", "backup", "restored"))
+                with RuntimeGuard(source, clock=lambda: NOW) as guard:
+                    guard.resume()
+                    with closing(sqlite3.connect(source / DB_NAME, isolation_level=None)) as db:
+                        rows = QuoteHistoryStore(db, permit=lambda: None).retain(
+                            plan, [first], confirmed=True)
+                original = (source / DB_NAME).read_bytes()
+                manifest = create_backup(source, backup, confirmed=True, build_id=build_id)
+                self.assertIn(DB_NAME, [row["name"] for row in manifest["files"]])
+                self.assertEqual(verify_backup(backup), manifest)
+                result = restore_backup(backup, dest, confirmed=True)
+                self.assertIs(result["automatic_resume"], False)
+                self.assertEqual((source / DB_NAME).read_bytes(), original)
+                self.assertEqual((dest / DB_NAME).read_bytes(), original)
+                with RuntimeGuard(dest, clock=lambda: NOW+timedelta(seconds=1)) as guard:
+                    self.assertTrue(guard.is_set())
+                    with closing(sqlite3.connect(dest / DB_NAME, isolation_level=None)) as db:
+                        self.assertEqual(QuoteHistoryStore(db, permit=lambda: None).list_plan(plan), rows)
+
+
+    def test_rehashed_history_backup_rejected_in_both_formats(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from contextlib import closing
+        from hashlib import sha256
+        from nexus_exchange.quote_history_store import QuoteHistoryStore, DB_NAME
+        from nexus_exchange.database_backup import (create_backup, verify_backup, restore_backup,
+            MANIFEST, _manifest, _json as backup_json)
+        from nexus_exchange.runtime_guard import RuntimeGuard
+
+        for build_id in (None, "b"*40):
+            with self.subTest(build_id=build_id), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                source, backup, dest = (root / name for name in ("source", "backup", "restored"))
+                with RuntimeGuard(source, clock=lambda: NOW) as guard:
+                    guard.resume()
+                    with closing(sqlite3.connect(source / DB_NAME, isolation_level=None)) as db:
+                        QuoteHistoryStore(db, permit=lambda: None).retain(
+                            self.original["plan_id"], [encode(self.receipt())], confirmed=True)
+                path = source / DB_NAME
+                valid = path.read_bytes()
+                with closing(sqlite3.connect(path, isolation_level=None)) as db:
+                    db.execute("UPDATE quote_history_v1 SET plan_id=?", ("f"*64,))
+                damaged = path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "history identity mismatch"):
+                    create_backup(source, backup, confirmed=True, build_id=build_id)
+                self.assertFalse(backup.exists())
+                self.assertEqual(path.read_bytes(), damaged)
+                path.write_bytes(valid)
+                manifest = create_backup(source, backup, confirmed=True, build_id=build_id)
+                target = backup / DB_NAME
+                with closing(sqlite3.connect(target, isolation_level=None)) as db:
+                    db.execute("UPDATE quote_history_v1 SET plan_id=?", ("f"*64,))
+                raw = target.read_bytes()
+                files = [dict(row, bytes=len(raw), sha256=sha256(raw).hexdigest())
+                         if row["name"] == DB_NAME else row for row in manifest["files"]]
+                forged = _manifest(files, manifest["runtime_state"], build_id)
+                (backup / MANIFEST).write_bytes((backup_json(forged)+"\n").encode("ascii"))
+                with self.assertRaisesRegex(ValueError, "history identity mismatch"):
+                    verify_backup(backup)
+                with self.assertRaisesRegex(ValueError, "history identity mismatch"):
+                    restore_backup(backup, dest, confirmed=True)
+                self.assertFalse(dest.exists())
+                self.assertEqual(target.read_bytes(), raw)
