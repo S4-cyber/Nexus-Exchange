@@ -133,3 +133,34 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
         self.assertEqual([r["scope_snapshots"] for r in rows], [2, 2, 2])
         self.assertTrue(all(r["supersession_status"] == "NOT_ESTABLISHED" for r in rows))
         self.assertTrue(all(r["execution_eligible"] is False for r in rows))
+
+    def test_persistent_receipts_revalidated_on_restart_and_explicit_deletion(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from contextlib import closing
+        from nexus_exchange.quote_history_store import QuoteHistoryStore
+
+        first, second = encode(self.receipt()), encode(self.receipt(2))
+        plan = self.original["plan_id"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.sqlite"
+            with closing(sqlite3.connect(path, isolation_level=None)) as db:
+                history = QuoteHistoryStore(db, permit=lambda: None)
+                with self.assertRaises(ValueError):
+                    history.retain(plan, [first, b"{}"], confirmed=True)
+                self.assertEqual(history.list_plan(plan), [])
+                rows = history.retain(plan, [first, second, first], confirmed=True)
+                self.assertEqual(len(rows), 2)
+                self.assertTrue(all(r["snapshot_observations"] == 2 for r in rows))
+            with closing(sqlite3.connect(path, isolation_level=None)) as db:
+                history = QuoteHistoryStore(db, permit=lambda: None)
+                self.assertEqual(history.list_plan(plan), rows)
+                self.assertEqual(history.list_plan("f"*64), [])
+                remaining = history.forget(plan, [rows[0]["receipt_sha256"]], confirmed=True)
+                self.assertEqual(len(remaining), 1)
+                self.assertEqual(remaining[0]["snapshot_observations"], 1)
+                self.assertIs(remaining[0]["external_authority"], False)
+                db.execute("UPDATE quote_history_v1 SET payload=?", (b"{}",))
+                with self.assertRaises(ValueError):
+                    history.list_plan(plan)
