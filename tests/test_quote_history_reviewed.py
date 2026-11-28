@@ -34,7 +34,7 @@ class ReviewedHistoryTests(unittest.TestCase):
         result = review_scoped_recall(PLAN, limit=1, confirmed=True,
                                       compare=compare, read_history=read, permit=permit)
         self.assertEqual(compare.call_count, 2)
-        read.assert_called_once_with()
+        self.assertEqual(read.call_count, 2)
         self.assertEqual(result['recall']['scope_sha256'], SCOPE)
         self.assertEqual(result['recall']['matching_receipts'], 1)
         self.assertEqual(result['reviewed_comparison_sha256'], before['comparison_sha256'])
@@ -82,3 +82,14 @@ class ReviewedHistoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             review_scoped_recall(PLAN, limit=1, confirmed=True,
                 compare=lambda: shared, read_history=read, permit=lambda: None)
+
+    def test_hidden_history_drift_with_same_visible_count_fails_closed(self):
+        older = historical()
+        older['receipt_sha256'] = '1'*64
+        newer = dict(historical(), rechecked_at=LATER)
+        changed = dict(older, receipt_sha256='2'*64)
+        read = Mock(side_effect=[[older, newer], [changed, newer]])
+        with self.assertRaisesRegex(ValueError, 'changed during RFQ review'):
+            review_scoped_recall(PLAN, limit=1, confirmed=True,
+                compare=Mock(return_value=comparison(LATER)), read_history=read, permit=Mock())
+        self.assertEqual(read.call_count, 2)

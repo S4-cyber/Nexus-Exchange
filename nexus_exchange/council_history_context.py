@@ -9,7 +9,7 @@ from .advisory_current_scope import _compare_scope, _stamp
 from .context_packet import build_packet
 from .council_audit import validate_snapshot
 from .local_advisory import _digest, _json, MAX_REQUEST_BYTES
-from .quote_history_recall import _identity
+from .quote_history_recall import _identity, build_recall
 from .quote_history_reviewed import review_scoped_recall
 
 
@@ -43,6 +43,13 @@ def build_council_history_context(plan_id, *, limit, confirmed, inspect,
     # omitted by the result limit. Do not silently treat them as observations.
     if any(_stamp(row['rechecked_at']) > checked for row in history['recall']['references']):
         raise ValueError('historical observation postdates RFQ review')
+    permit()
+    # A final scoped read after the Council inspection binds even the retained
+    # observations omitted from the bounded display. Do not retry on drift.
+    recall = history['recall']
+    if _json(recall) != _json(build_recall(read_history(), plan_id,
+                                           recall['scope_sha256'], limit=limit)):
+        raise ValueError('retained historical references changed during Council review')
     packet = build_packet(current, 'evidence', halted=False)
     payload = dict(format='nexus-council-history-context-v1', plan_id=plan_id,
                    original_snapshot_sha256=before['snapshot_sha256'],

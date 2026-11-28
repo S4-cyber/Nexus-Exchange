@@ -61,8 +61,18 @@ def build_recall(rows, plan_id, scope_sha256, *, limit=8):
             snapshot_sha256=snapshot, rechecked_at=stamp.isoformat(),
             observations=len(observations))))
     references.sort(key=lambda item: item[:2], reverse=True)
+    # Pin every matching observation, including omitted representatives and
+    # older receipts in a group. No out-of-scope rows or raw terms enter the pin.
+    members = sorted((receipt, snapshot, stamp.isoformat())
+                     for snapshot, observations in groups.items()
+                     for stamp, receipt in observations)
+    membership = dict(format='nexus-history-membership-v1', plan_id=plan_id,
+                      scope_sha256=scope_sha256, members=members)
+    membership_bytes = json.dumps(membership, sort_keys=True, separators=(',', ':'),
+                                  ensure_ascii=True).encode('ascii')
     payload = dict(format='nexus-historical-recall-v1', plan_id=plan_id,
         scope_sha256=scope_sha256, limit=limit,
+        scope_history_sha256=hashlib.sha256(membership_bytes).hexdigest(),
         matching_receipts=sum(map(len, groups.values())),
         distinct_snapshots=len(groups), truncated=len(groups) > limit,
         references=[item[2] for item in references[:limit]], historical_only=True,

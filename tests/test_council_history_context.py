@@ -40,7 +40,7 @@ class CouncilHistoryContextTests(unittest.TestCase):
         self.assertNotIn('SYNTHETIC PRIVATE LABEL', str(result))
         self.assertEqual(args['inspect'].call_count, 2)
         self.assertEqual(args['compare'].call_count, 2)
-        args['read_history'].assert_called_once_with()
+        self.assertEqual(args['read_history'].call_count, 3)
 
     def test_consent_and_halt_deny_before_history_read(self):
         for changes, error in ((dict(confirmed=1), PermissionError), (dict(limit=True), ValueError),
@@ -110,3 +110,14 @@ class CouncilHistoryContextTests(unittest.TestCase):
                     with self.assertRaises(PermissionError):
                         guard.quote_history_action('council_recall', PLAN, entries=[], limit=1, confirmed=True)
                     self.assertEqual(inspect.call_count, 2)
+
+    def test_memory_change_after_second_council_inspection_fails_closed(self):
+        original = historical()
+        original['rechecked_at'] = STAMP
+        changed = dict(original, receipt_sha256='1'*64)
+        read = Mock(side_effect=[[original], [original], [changed]])
+        args = self.inputs(read_history=read)
+        with self.assertRaisesRegex(ValueError, 'changed during Council review'):
+            build_council_history_context(PLAN, **args)
+        self.assertEqual(read.call_count, 3)
+        self.assertEqual(args['inspect'].call_count, 2)

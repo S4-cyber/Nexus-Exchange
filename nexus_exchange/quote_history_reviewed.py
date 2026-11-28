@@ -32,6 +32,9 @@ def review_scoped_recall(plan_id, *, limit, confirmed, compare, read_history, pe
     recall = build_recall(read_history(), plan_id, scope, limit=limit)
     permit()
     checked = historical_receipt(before, compare())
+    permit()
+    if _json(recall) != _json(build_recall(read_history(), plan_id, scope, limit=limit)):
+        raise ValueError('retained historical references changed during RFQ review')
     payload = dict(format='nexus-reviewed-history-context-v1',
                    reviewed_comparison_sha256=before['comparison_sha256'],
                    rechecked_comparison_sha256=checked['rechecked_comparison_sha256'],
