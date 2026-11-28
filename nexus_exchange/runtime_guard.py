@@ -460,6 +460,32 @@ class RuntimeGuard:
         finally:
             self._operator_active=False
 
+    def quote_history_action(self,action,plan_id,**inputs):
+        """Owner-thread historical memory only; never current commercial authority.
+
+        The desktop must also exclude unjournaled worker futures. A plan ID is
+        a historical filter, not an authenticated tenant or a current RFQ.
+        """
+        self._require_idle()
+        if self._faulted or self.is_set():
+            raise PermissionError("Operator history unavailable while halted or faulted")
+        fields={"list":set(),"retain":{"documents","confirmed"},
+                "forget":{"receipt_ids","confirmed"}}
+        if type(action) is not str or action not in fields or set(inputs)!=fields[action]:
+            raise ValueError("unsupported Operator history action or inputs")
+        from .quote_history_store import local_history_action
+        self._operator_active=True
+        try:
+            def permit():
+                self._require_owner()
+                if self._faulted or self.is_set():
+                    raise PermissionError("Operator history halted or faulted")
+            result=local_history_action(self._directory,action,plan_id,permit=permit,**inputs)
+            permit()
+            return result
+        finally:
+            self._operator_active=False
+
     def _csv_ready(self,confirmed):
         self._require_idle()
         if self._faulted or self.is_set():

@@ -1,11 +1,15 @@
 """Bounded local receipt retention on a caller-owned SQLite connection.
 
-Not wired into RuntimeGuard or the UI. Receipts are historical data,
+RuntimeGuard owns the local facade; native UI wiring is not yet enabled. Receipts are historical data,
 not authenticated source evidence or permission. Logical deletion does not
 remove exported files, backups or all recoverable disk bytes.
 """
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+import os
+from pathlib import Path
 import re
+import sqlite3
+import stat
 
 from .quote_history import inspect_receipt, MAX_RECEIPT_BYTES
 from .quote_history_lineage import annotate_history, MAX_INDEX_RECEIPTS
@@ -176,3 +180,99 @@ def validate_history_snapshot(db):
     if len(rows) != len(expected) or set(rows) != expected:
         raise ValueError('unexpected history snapshot schema')
     QuoteHistoryStore._read_snapshot(db)
+
+
+def _local_file(path):
+    """Inspect a dedicated trusted-directory file, not arbitrary user paths."""
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or getattr(info, 'st_file_attributes', 0) & 0x400
+            or not 1 <= info.st_size <= MAX_DB_BYTES):
+        raise ValueError('invalid local history database file')
+    return info
+
+
+def _no_sidecars(path):
+    for suffix in ('-wal', '-shm', '-journal'):
+        if os.path.lexists(path.with_name(path.name + suffix)):
+            raise ValueError('history database has unresolved SQLite sidecar')
+
+
+def local_history_action(directory, action, plan, *, permit, **inputs):
+    """Internal runtime facade for a trusted, exclusively owned directory.
+
+    No arbitrary path, implicit retention, tenant authentication, or external
+    action. Cooperating processes only; hostile filesystem races are outside
+    this local trust model. Closed-instance backup remains separately gated.
+    """
+    permit()
+    plan = _identifier(plan)
+    if action not in ('list', 'retain', 'forget'):
+        raise ValueError('unsupported history action')
+    if action == 'retain':
+        if inputs.get('confirmed') is not True:
+            raise PermissionError('explicit local history retention required')
+        documents = inputs.get('documents')
+        if type(documents) is not list or not 1 <= len(documents) <= MAX_INDEX_RECEIPTS:
+            raise ValueError('bounded receipt batch required')
+        for payload in documents:
+            if QuoteHistoryStore._inspect(payload)['plan_id'] != plan:
+                raise ValueError('receipt outside selected plan')
+    elif action == 'forget':
+        if inputs.get('confirmed') is not True:
+            raise PermissionError('explicit local history deletion required')
+        keys = inputs.get('receipt_ids')
+        if type(keys) is not list or not 1 <= len(keys) <= MAX_INDEX_RECEIPTS:
+            raise ValueError('bounded receipt identity batch required')
+        if len({_identifier(key) for key in keys}) != len(keys):
+            raise ValueError('duplicate deletion identity')
+    path = Path(directory) / DB_NAME
+    _no_sidecars(path)
+    existing = os.path.lexists(path)
+    if existing:
+        original = _local_file(path)
+    elif action == 'list':
+        permit()
+        return []
+    elif action == 'forget':
+        raise ValueError('receipt outside selected plan or missing')
+    else:
+        permit()
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            original = os.fstat(fd)
+        finally:
+            os.close(fd)
+    try:
+        with closing(sqlite3.connect(path.as_uri()+'?mode=rw', uri=True,
+                                     timeout=5, isolation_level=None)) as db:
+            current = path.lstat()
+            if not os.path.samestat(original, current):
+                raise ValueError('history database identity changed')
+            db.execute('PRAGMA trusted_schema=OFF')
+            if existing:
+                if db.execute('PRAGMA journal_mode').fetchone() != ('delete',):
+                    raise ValueError('unsupported history journal mode')
+                if db.execute('PRAGMA quick_check(1)').fetchall() != [('ok',)]:
+                    raise ValueError('history database integrity failure')
+                validate_history_snapshot(db)
+            else:
+                db.execute('PRAGMA journal_mode=DELETE')
+            db.execute('PRAGMA synchronous=FULL')
+            page_size = db.execute('PRAGMA page_size').fetchone()[0]
+            db.execute('PRAGMA max_page_count='+str(MAX_DB_BYTES // page_size))
+            history = QuoteHistoryStore(db, permit=permit)
+            if action == 'list':
+                return history.list_plan(plan)
+            if action == 'retain':
+                return history.retain(plan, **inputs)
+            return history.forget(plan, **inputs)
+    finally:
+        # Only remove our own still-empty placeholder. Never erase a database
+        # with committed history or a sidecar that needs explicit recovery.
+        if not existing and os.path.lexists(path):
+            current = path.lstat()
+            if (os.path.samestat(original, current) and current.st_size == 0
+                    and not any(os.path.lexists(path.with_name(path.name + suffix))
+                                for suffix in ('-wal', '-shm', '-journal'))):
+                path.unlink()

@@ -245,3 +245,95 @@ class QuoteHistoryInspectionTests(unittest.TestCase):
                     restore_backup(backup, dest, confirmed=True)
                 self.assertFalse(dest.exists())
                 self.assertEqual(target.read_bytes(), raw)
+
+
+    def test_runtime_owned_history_restart_scope_and_deletion(self):
+        import tempfile
+        from pathlib import Path
+        from concurrent.futures import ThreadPoolExecutor
+        from nexus_exchange.runtime_guard import RuntimeGuard
+        from nexus_exchange.quote_history_store import DB_NAME
+
+        plan = self.original["plan_id"]
+        first, second = encode(self.receipt()), encode(self.receipt(2))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with RuntimeGuard(root, clock=lambda: NOW) as guard:
+                with self.assertRaises(PermissionError):
+                    guard.quote_history_action("list", plan)
+                guard.resume()
+                self.assertEqual(guard.quote_history_action("list", plan), [])
+                self.assertFalse((root / DB_NAME).exists())
+                with self.assertRaises(PermissionError):
+                    guard.quote_history_action("retain", plan, documents=[first], confirmed=1)
+                with self.assertRaises(ValueError):
+                    guard.quote_history_action("retain", "f"*64, documents=[first], confirmed=True)
+                with self.assertRaises(ValueError):
+                    guard.quote_history_action("retain", plan, documents=[first, b"{}"], confirmed=True)
+                self.assertFalse((root / DB_NAME).exists())
+                rows = guard.quote_history_action("retain", plan, documents=[first, second, first], confirmed=True)
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(guard.quote_history_action("list", "f"*64), [])
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(guard.quote_history_action, "list", plan)
+                    with self.assertRaises(PermissionError):
+                        future.result()
+                with self.assertRaises(ValueError):
+                    guard.quote_history_action("list", plan, path=root)
+                guard.set()
+                with self.assertRaises(PermissionError):
+                    guard.quote_history_action("forget", plan, receipt_ids=[rows[0]["receipt_sha256"]], confirmed=True)
+            with RuntimeGuard(root, clock=lambda: NOW+timedelta(seconds=1)) as guard:
+                with self.assertRaises(PermissionError):
+                    guard.quote_history_action("list", plan)
+                guard.resume()
+                self.assertEqual(guard.quote_history_action("list", plan), rows)
+                remaining = guard.quote_history_action("forget", plan, receipt_ids=[rows[0]["receipt_sha256"]], confirmed=True)
+                self.assertEqual(len(remaining), 1)
+                self.assertIs(remaining[0]["external_authority"], False)
+
+
+    def test_runtime_history_rejects_sidecar_unrelated_schema_and_alias(self):
+        import os
+        import sqlite3
+        import tempfile
+        from contextlib import closing
+        from pathlib import Path
+        from nexus_exchange.runtime_guard import RuntimeGuard
+        from nexus_exchange.quote_history_store import DB_NAME
+
+        plan = self.original["plan_id"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / DB_NAME
+            with RuntimeGuard(root, clock=lambda: NOW) as guard:
+                guard.resume()
+                sidecar = root / (DB_NAME+"-journal")
+                sidecar.write_bytes(b"unresolved")
+                with self.assertRaisesRegex(ValueError, "sidecar"):
+                    guard.quote_history_action("list", plan)
+                self.assertFalse(path.exists())
+                sidecar.unlink()
+                with closing(sqlite3.connect(path, isolation_level=None)) as db:
+                    db.execute("CREATE TABLE unrelated(value TEXT)")
+                original = path.read_bytes()
+                with self.assertRaisesRegex(ValueError, "schema"):
+                    guard.quote_history_action("list", plan)
+                self.assertEqual(path.read_bytes(), original)
+                path.unlink()
+                path.mkdir()
+                with self.assertRaisesRegex(ValueError, "database file"):
+                    guard.quote_history_action("list", plan)
+                path.rmdir()
+                guard.quote_history_action("retain", plan, documents=[encode(self.receipt())], confirmed=True)
+                alias = root / "alias"
+                try:
+                    os.link(path, alias)
+                except OSError:
+                    return  # Filesystem does not support hardlinks.
+                try:
+                    with self.assertRaisesRegex(ValueError, "database file"):
+                        guard.quote_history_action("list", plan)
+                finally:
+                    alias.unlink()
+                self.assertEqual(len(guard.quote_history_action("list", plan)), 1)
