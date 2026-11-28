@@ -41,11 +41,16 @@ class AdvisoryHistoryIntegrationTests(unittest.TestCase):
                 result = _supervise(request, halt_check=lambda: False, timeout_ms=12000)
                 self.assertEqual(result['review']['history_pin'], original)
                 raw = result['response']
-                for current_pin in (None, drift):
-                    with self.assertRaises(ValueError):
-                        store.complete_current(ticket, request, snap, snap, raw,
-                            now=NOW, approved=True, halted=False, worker_drained=True,
-                            history_pin=original, current_history_pin=current_pin)
+                for first_pin, current_pin in ((original, None), (original, drift),
+                                               (None, original), (None, None)):
+                    with self.subTest(first_pin=first_pin, current_pin=current_pin):
+                        with self.assertRaises(ValueError):
+                            store.complete_current(ticket, request, snap, snap, raw,
+                                now=NOW, approved=True, halted=False, worker_drained=True,
+                                history_pin=first_pin, current_history_pin=current_pin)
+                        state = store.status(PLAN, halted=False)
+                        self.assertEqual(state['state'], 'RESERVED')
+                        self.assertEqual(state['attempts_used'], 1)
                 with self.assertRaises(ValueError):
                     store.complete(ticket, request, snap, raw, now=NOW,
                                    approved=True, halted=False, worker_drained=True)

@@ -256,8 +256,10 @@ class AdvisoryAttemptStore:
             n = len(record["attempts"]) + 1
             if expected_attempt is not None and n != expected_attempt:
                 raise PermissionError("advisory attempt changed since preview")
+            # Keep the original unpinned call contract; only extend explicit requests.
+            history_kwargs = {} if history_pin is None else {"history_pin": history_pin}
             request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted,
-                                    history_pin=history_pin)
+                                    **history_kwargs)
             row = dict(attempt=n, request_sha256=request["request_sha256"], snapshot_sha256=request["snapshot_sha256"],
                        model_sha256=request["model_sha256"], reserved_at=request["created_at"], state="RESERVED",
                        reason=None, completed_at=None, response_sha256=None, review_sha256=None)
@@ -312,9 +314,12 @@ class AdvisoryAttemptStore:
                 review = review_response(raw, request, snapshot, now=now, approved=approved, halted=halted)
             else:
                 from .advisory_current_scope import review_current_response
+                # Never drop a partial pin: the reviewer must reject it.
+                history_kwargs = {}
+                if history_pin is not None or current_history_pin is not None:
+                    history_kwargs = dict(history_pin=history_pin, current_history_pin=current_history_pin)
                 review = review_current_response(raw, request, snapshot, current, now=now,
-                                                 approved=approved, halted=halted, history_pin=history_pin,
-                                                 current_history_pin=current_history_pin)
+                                                 approved=approved, halted=halted, **history_kwargs)
             row.update(state="REVIEWED", completed_at=now.isoformat(timespec="microseconds"),
                        response_sha256=review["response_sha256"], review_sha256=_digest(review))
             self._write(record)
