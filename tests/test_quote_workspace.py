@@ -218,3 +218,59 @@ class QuoteWorkspaceTests(unittest.TestCase):
             self.guard.set()
             with self.assertRaises(PermissionError):
                 self.review.inspect_history_files([good])
+
+
+    def test_retained_history_controls_use_exact_plan_and_confirmation(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        self.review.compare(confirmed=True)
+        original_action = self.workspace.action
+
+        def route(action, plan, **inputs):
+            if action.startswith("quote_history_"):
+                return self.guard.quote_history_action(action.removeprefix("quote_history_"), plan, **inputs)
+            return original_action(action, plan, **inputs)
+
+        self.workspace.action = route
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "receipt.json"
+            self.review.export_history(target, expected_comparison=self.review.history_pin(), confirmed=True)
+            documents, preview = self.review._read_history_files([target])
+            self.assertEqual(self.review.retained_history(), [])
+            for confirmation in (None, False, 1):
+                with self.assertRaises(PermissionError):
+                    self.review.retain_history(documents, confirmed=confirmation)
+            self.assertEqual(self.review.retained_history(), [])
+            target.write_bytes(b"{}")  # Retention uses the exact inspected bytes, not a second file read.
+            rows = self.review.retain_history(documents, confirmed=True)
+            self.assertEqual(rows, preview)
+            self.assertEqual(self.review.retained_history(), preview)
+            self.assertEqual(self.review.retain_history(documents, confirmed=True), preview)
+            key = rows[0]["receipt_sha256"]
+            with self.assertRaises(PermissionError):
+                self.review.forget_history(key, confirmed=1)
+            with self.assertRaises(ValueError):
+                self.review.history_pin()
+            self.assertEqual(self.review.forget_history(key, confirmed=True), [])
+            self.assertEqual(self.review.retained_history(), [])
+            self.assertEqual(target.read_bytes(), b"{}")
+            self.guard.set()
+            with self.assertRaises(PermissionError):
+                self.review.retained_history()
+
+    def test_retained_projection_rejects_forged_authority_or_lineage(self):
+        a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
+        self.stage(a)
+        self.stage(b)
+        self.review.compare(confirmed=True)
+        with TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / "receipt.json"
+            self.review.export_history(target, expected_comparison=self.review.history_pin(), confirmed=True)
+            row = self.review.inspect_history_files([target])[0]
+            for change in ({"external_authority": True}, {"plan_id": "f"*64},
+                           {"snapshot_observations": True}, {"scope_snapshots": 2},
+                           {"supersession_status": "CURRENT"}, {"quote_count": True}):
+                self.workspace.action = Mock(return_value=[dict(row, **change)])
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    self.review.retained_history()

@@ -155,7 +155,7 @@ class QuoteReview:
         self.workspace._permit()
         return expected
 
-    def inspect_history_files(self, paths):
+    def _read_history_files(self, paths):
         """Read explicit bounded local receipts for this saved plan only.
 
         Historical metadata is never used to stage terms or revalidate a supplier.
@@ -171,6 +171,7 @@ class QuoteReview:
             raise ValueError("select one to sixty-four local review files")
         plan = _hash(self.workspace.plan_id)
         matches = {}
+        documents = []
         for path in paths:
             self.workspace._permit()
             raw = _read_local_file(path, JSON_SOURCE, MAX_RECEIPT_BYTES,
@@ -180,10 +181,70 @@ class QuoteReview:
             if item["plan_id"] != plan:
                 raise ValueError("historical receipt outside selected saved plan")
             matches[item["receipt_sha256"]] = item
+            documents.append(raw)
         self.workspace._permit()
         if self.workspace.plan_id != plan:
             raise ValueError("selected plan changed")
-        return annotate_history(list(matches.values()))
+        return documents, annotate_history(list(matches.values()))
+
+    def inspect_history_files(self, paths):
+        return self._read_history_files(paths)[1]
+
+    def _persistent_history(self, action, **inputs):
+        """Only the dedicated trusted runtime may retain or delete local history."""
+        self._last_result = None
+        self.workspace._permit()
+        plan = _hash(self.workspace.plan_id)
+        rows = self.workspace.action("quote_history_" + action, plan, **inputs)
+        self.workspace._permit()
+        if self.workspace.plan_id != plan or type(rows) is not list or len(rows) > MAX_INDEX_RECEIPTS:
+            raise ValueError("invalid retained history projection")
+        fields = {"receipt_sha256", "scope_sha256", "plan_id", "compared_at",
+                  "rechecked_at", "snapshot_sha256", "quote_count",
+                  "lowest_declared_total_cents", "historical_only", "current_status",
+                  "external_authority", "execution_eligible"}
+        lineage = {"snapshot_observations", "scope_snapshots", "supersession_status"}
+        plain = []
+        for row in rows:
+            if type(row) is not dict or set(row) != fields | lineage or row["plan_id"] != plan:
+                raise ValueError("retained history scope mismatch")
+            for key in ("receipt_sha256", "scope_sha256", "snapshot_sha256"):
+                _hash(row[key])
+            if _stored_stamp(row["compared_at"]) > _stored_stamp(row["rechecked_at"]):
+                raise ValueError("retained history chronology mismatch")
+            total = row["lowest_declared_total_cents"]
+            if (type(row["quote_count"]) is not int or not 2 <= row["quote_count"] <= MAX_QUOTES
+                    or (total is not None and (type(total) is not int or not 1 <= total <= MAX_CENTS))):
+                raise ValueError("invalid retained history totals")
+            plain.append({key: row[key] for key in fields})
+        if _json(annotate_history(plain)) != _json(rows):
+            raise ValueError("retained history lineage mismatch")
+        self.workspace._permit()
+        return rows
+
+    def retained_history(self):
+        return self._persistent_history("list")
+
+    def retain_history(self, documents, *, confirmed=None):
+        self._last_result = None
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError("explicit local retention required")
+        if type(documents) is not list or not 1 <= len(documents) <= MAX_INDEX_RECEIPTS:
+            raise ValueError("bounded receipt batch required")
+        plan = _hash(self.workspace.plan_id)
+        for raw in documents:
+            if inspect_receipt(raw)["plan_id"] != plan:
+                raise ValueError("historical receipt outside selected saved plan")
+        return self._persistent_history("retain", documents=list(documents), confirmed=True)
+
+    def forget_history(self, receipt_id, *, confirmed=None):
+        self._last_result = None
+        self.workspace._permit()
+        if confirmed is not True:
+            raise PermissionError("explicit local deletion required")
+        key = _hash(receipt_id)
+        return self._persistent_history("forget", receipt_ids=[key], confirmed=True)
 
     def history_pin(self):
         self.workspace._permit()
@@ -229,6 +290,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
                           state="readonly", values=())
     picker.grid(row=0, column=1, sticky="ew", padx=4)
     loaded = None
+    review_epoch = 0
     for i, (key, label) in enumerate(TERM_FIELDS, start=1):
         ttk.Label(form, text=label).grid(row=i, column=0, sticky="w", pady=1)
         ttk.Entry(form, textvariable=fields[key], width=68).grid(row=i, column=1, sticky="ew", padx=4)
@@ -239,6 +301,8 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
     output.pack(fill="both", expand=True, padx=5, pady=3)
 
     def write(text):
+        forget_id.set("")
+        forget_picker.configure(values=())
         output.configure(state="normal")
         output.delete("1.0", "end")
         output.insert("end", text)
@@ -251,6 +315,8 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         picker.configure(values=())
 
     def clear():
+        nonlocal review_epoch
+        review_epoch += 1
         review.clear()
         reset_picker()
         for key, _ in TERM_FIELDS:
@@ -349,6 +415,75 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
+    def display_history(rows, *, retained=False):
+        lines = ["HISTORICAL ONLY — NOT REVALIDATED OR AUTHENTICATED",
+                 "Different RFQ scopes are not comparable. No external authority."]
+        for row in rows:
+            total = row["lowest_declared_total_cents"]
+            lines.extend(["", "Receipt: " + row["receipt_sha256"],
+                          "RFQ scope: " + row["scope_sha256"],
+                          "Snapshot: " + row["snapshot_sha256"],
+                          "Same snapshot receipts: " + str(row["snapshot_observations"]),
+                          "Distinct snapshots in this RFQ scope: " + str(row["scope_snapshots"]),
+                          "Supersession: not established",
+                          "Compared: " + row["compared_at"],
+                          "Rechecked: " + row["rechecked_at"],
+                          "Declared quotations: " + str(row["quote_count"]),
+                          "Lowest declared USD cents: " +
+                          (str(total) if total is not None else "Ranking withheld")])
+        workspace._permit()
+        write("\n".join(lines))
+        forget_id.set("")
+        forget_picker.configure(values=tuple(row["receipt_sha256"] for row in rows) if retained else ())
+        status.configure(text=f"{len(rows)} distinct historical reviews; no current decision.")
+
+    def refresh_retained():
+        try:
+            display_history(review.retained_history(), retained=True)
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            forget_id.set("")
+            forget_picker.configure(values=())
+            error(exc)
+
+    def retain_files():
+        try:
+            workspace._permit()
+            paths = filedialog.askopenfilenames(parent=parent,
+                filetypes=[("Historical quotation review", "*.json")],
+                title="Select local historical reviews to retain")
+            if not paths:
+                return
+            documents, rows = review._read_history_files(paths)
+            display_history(rows)
+            epoch = review_epoch
+            if not messagebox.askyesno("Retain local history",
+                    f"Retain these {len(rows)} distinct reviewed receipts in local history? "
+                    "They may be included in future backups. No external authority.", parent=parent):
+                return
+            if review_epoch != epoch:
+                raise ValueError("history review cleared; inspect again")
+            display_history(review.retain_history(documents, confirmed=True), retained=True)
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            error(exc)
+
+    def forget_selected():
+        try:
+            workspace._permit()
+            key = _hash(forget_id.get())
+            if key not in forget_picker.cget("values"):
+                raise ValueError("refresh retained history and select one receipt")
+            if not messagebox.askyesno("Delete retained review",
+                    "Logically delete this exact local receipt? Exported files, backups and "
+                    "recoverable disk contents are not erased.\n" + key, parent=parent):
+                return
+            if forget_id.get() != key:
+                raise ValueError("selected retained receipt changed")
+            display_history(review.forget_history(key, confirmed=True), retained=True)
+        except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
+            forget_id.set("")
+            forget_picker.configure(values=())
+            error(exc)
+
     def inspect_history():
         try:
             workspace._permit()
@@ -358,24 +493,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
             if not paths:
                 return
             rows = review.inspect_history_files(paths)
-            lines = ["HISTORICAL ONLY — NOT REVALIDATED OR AUTHENTICATED",
-                     "Different RFQ scopes are not comparable. No external authority."]
-            for row in rows:
-                total = row["lowest_declared_total_cents"]
-                lines.extend(["", "Receipt: " + row["receipt_sha256"],
-                              "RFQ scope: " + row["scope_sha256"],
-                              "Snapshot: " + row["snapshot_sha256"],
-                              "Same snapshot receipts in selection: " + str(row["snapshot_observations"]),
-                              "Distinct snapshots in this RFQ scope: " + str(row["scope_snapshots"]),
-                              "Supersession: not established",
-                              "Compared: " + row["compared_at"],
-                              "Rechecked: " + row["rechecked_at"],
-                              "Declared quotations: " + str(row["quote_count"]),
-                              "Lowest declared USD cents: " +
-                              (str(total) if total is not None else "Ranking withheld")])
-            workspace._permit()
-            write("\n".join(lines))
-            status.configure(text=f"{len(rows)} distinct historical reviews; no current decision.")
+            display_history(rows)
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
@@ -388,4 +506,12 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
     ttk.Button(parent, text="Inspect historical review files",
                command=inspect_history).pack(anchor="w", padx=5, pady=2)
+    retained_controls = ttk.Frame(parent)
+    retained_controls.pack(fill="x", padx=5, pady=2)
+    ttk.Button(retained_controls, text="Retain review files", command=retain_files).pack(side="left", padx=3)
+    ttk.Button(retained_controls, text="Refresh retained history", command=refresh_retained).pack(side="left", padx=3)
+    forget_id = tk.StringVar(master=parent)
+    forget_picker = ttk.Combobox(retained_controls, textvariable=forget_id, state="readonly", width=36, values=())
+    forget_picker.pack(side="left", padx=3, fill="x", expand=True)
+    ttk.Button(retained_controls, text="Delete selected receipt", command=forget_selected).pack(side="left", padx=3)
     return clear
