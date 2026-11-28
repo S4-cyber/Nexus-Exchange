@@ -8,6 +8,7 @@ from .operator_drafts import _hash, _json, _stamp, _stored_stamp
 from .quote_history import (historical_receipt, publish_receipt, inspect_receipt,
                             MAX_RECEIPT_BYTES, MAX_INDEX_RECEIPTS)
 from .quote_history_lineage import annotate_history
+from .quote_history_search import filter_history, normalize_history_query
 from .quote_comparison import MAX_QUOTES, MAX_CENTS, _FLAGS, compare_quotes
 from .correspondence_workspace import CorrespondenceWorkspace
 
@@ -225,6 +226,15 @@ class QuoteReview:
     def retained_history(self):
         return self._persistent_history("list")
 
+    def search_retained_history(self, query):
+        """Fresh guarded read; search only the selected saved plan's validated metadata."""
+        self._last_result = None
+        self.workspace._permit()
+        query = normalize_history_query(query)
+        rows = filter_history(self.retained_history(), query)
+        self.workspace._permit()
+        return rows
+
     def retain_history(self, documents, *, confirmed=None):
         self._last_result = None
         self.workspace._permit()
@@ -318,6 +328,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         nonlocal review_epoch
         review_epoch += 1
         review.clear()
+        search_id.set("")
         reset_picker()
         for key, _ in TERM_FIELDS:
             fields[key].set("")
@@ -415,7 +426,7 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             error(exc)
 
-    def display_history(rows, *, retained=False):
+    def display_history(rows, *, retained=False, query=""):
         lines = ["HISTORICAL ONLY — NOT REVALIDATED OR AUTHENTICATED",
                  "Different RFQ scopes are not comparable. No external authority."]
         for row in rows:
@@ -435,11 +446,15 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         write("\n".join(lines))
         forget_id.set("")
         forget_picker.configure(values=tuple(row["receipt_sha256"] for row in rows) if retained else ())
-        status.configure(text=f"{len(rows)} distinct historical reviews; no current decision.")
+        search_id.set(query)
+        status.configure(text=f"{len(rows)} distinct historical reviews"
+                         + (" matching ID prefix" if query else "")
+                         + "; lineage counts cover the unfiltered batch; no current decision.")
 
     def refresh_retained():
         try:
-            display_history(review.retained_history(), retained=True)
+            query = normalize_history_query(search_id.get())
+            display_history(review.search_retained_history(query), retained=True, query=query)
         except (ValueError, PermissionError, OSError, sqlite3.Error, RuntimeError) as exc:
             forget_id.set("")
             forget_picker.configure(values=())
@@ -506,6 +521,12 @@ def mount_quote_review(parent, workspace, selected_draft, supplier_fields):
         ttk.Button(buttons, text=label, command=callback).pack(side="left", padx=3)
     ttk.Button(parent, text="Inspect historical review files",
                command=inspect_history).pack(anchor="w", padx=5, pady=2)
+    search_controls = ttk.Frame(parent)
+    search_controls.pack(fill="x", padx=5, pady=2)
+    ttk.Label(search_controls, text="Receipt / RFQ / snapshot ID prefix (8–64 hex; blank = all)").pack(side="left")
+    search_id = tk.StringVar(master=parent)
+    ttk.Entry(search_controls, textvariable=search_id, width=32).pack(side="left", padx=3, fill="x", expand=True)
+    ttk.Button(search_controls, text="Search retained history", command=refresh_retained).pack(side="left", padx=3)
     retained_controls = ttk.Frame(parent)
     retained_controls.pack(fill="x", padx=5, pady=2)
     ttk.Button(retained_controls, text="Retain review files", command=retain_files).pack(side="left", padx=3)

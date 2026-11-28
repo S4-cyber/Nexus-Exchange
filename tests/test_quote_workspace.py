@@ -246,6 +246,15 @@ class QuoteWorkspaceTests(unittest.TestCase):
             rows = self.review.retain_history(documents, confirmed=True)
             self.assertEqual(rows, preview)
             self.assertEqual(self.review.retained_history(), preview)
+            for field in ("receipt_sha256", "scope_sha256", "snapshot_sha256"):
+                self.assertEqual(self.review.search_retained_history(rows[0][field][:8]), preview)
+            self.assertEqual(self.review.search_retained_history(""), preview)
+            missing = next(c*64 for c in "0123456789abcdef"
+                           if all(c*64 != rows[0][field] for field in
+                                  ("receipt_sha256", "scope_sha256", "snapshot_sha256")))
+            self.assertEqual(self.review.search_retained_history(missing), [])
+            with self.assertRaises(ValueError):
+                self.review.search_retained_history("invalid")
             self.assertEqual(self.review.retain_history(documents, confirmed=True), preview)
             key = rows[0]["receipt_sha256"]
             with self.assertRaises(PermissionError):
@@ -258,6 +267,8 @@ class QuoteWorkspaceTests(unittest.TestCase):
             self.guard.set()
             with self.assertRaises(PermissionError):
                 self.review.retained_history()
+            with self.assertRaises(PermissionError):
+                self.review.search_retained_history("")
 
     def test_retained_projection_rejects_forged_authority_or_lineage(self):
         a, b = self.fixture.entry(1, 1000), self.fixture.entry(2, 800)
