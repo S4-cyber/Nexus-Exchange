@@ -232,7 +232,8 @@ class AdvisoryAttemptStore:
             state = _state(record)
             return {key:state[key] for key in ("state", "attempts_used", "next_attempt")}
 
-    def reserve(self, snapshot, model, *, now, approved=None, halted=None, expected_attempt=None):
+    def reserve(self, snapshot, model, *, now, approved=None, halted=None, expected_attempt=None,
+                history_pin=None):
         _permit(approved, halted)
         if expected_attempt is not None and (type(expected_attempt) is not int
                 or not 1 <= expected_attempt <= MAX_ATTEMPTS):
@@ -255,7 +256,8 @@ class AdvisoryAttemptStore:
             n = len(record["attempts"]) + 1
             if expected_attempt is not None and n != expected_attempt:
                 raise PermissionError("advisory attempt changed since preview")
-            request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted)
+            request = build_request(snapshot, model, n, now=now, approved=approved, halted=halted,
+                                    history_pin=history_pin)
             row = dict(attempt=n, request_sha256=request["request_sha256"], snapshot_sha256=request["snapshot_sha256"],
                        model_sha256=request["model_sha256"], reserved_at=request["created_at"], state="RESERVED",
                        reason=None, completed_at=None, response_sha256=None, review_sha256=None)
@@ -282,15 +284,17 @@ class AdvisoryAttemptStore:
                               halted=halted, worker_drained=worker_drained)
 
     def complete_current(self, ticket, request, original, current, raw, *, now,
-                         approved=None, halted=None, worker_drained=None):
+                         approved=None, halted=None, worker_drained=None,
+                         history_pin=None, current_history_pin=None):
         """Complete only after independent fresh trusted saved-plan inspection."""
         if type(current) is not dict:
             raise ValueError("fresh advisory snapshot required")
         return self._complete(ticket, request, original, raw, now=now, approved=approved,
-                              halted=halted, worker_drained=worker_drained, current=current)
+                              halted=halted, worker_drained=worker_drained, current=current,
+                              history_pin=history_pin, current_history_pin=current_history_pin)
 
     def _complete(self, ticket, request, snapshot, raw, *, now, approved, halted,
-                  worker_drained, current=None):
+                  worker_drained, current=None, history_pin=None, current_history_pin=None):
         _permit(approved, halted)
         if worker_drained is not True:
             raise PermissionError("worker drain required")
@@ -309,7 +313,8 @@ class AdvisoryAttemptStore:
             else:
                 from .advisory_current_scope import review_current_response
                 review = review_current_response(raw, request, snapshot, current, now=now,
-                                                 approved=approved, halted=halted)
+                                                 approved=approved, halted=halted, history_pin=history_pin,
+                                                 current_history_pin=current_history_pin)
             row.update(state="REVIEWED", completed_at=now.isoformat(timespec="microseconds"),
                        response_sha256=review["response_sha256"], review_sha256=_digest(review))
             self._write(record)
